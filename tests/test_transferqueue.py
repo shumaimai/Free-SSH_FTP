@@ -114,6 +114,8 @@ class _FakeRemoteFile(io.BytesIO):
     def close(self):
         if "a" in self.mode:
             self.store[self.path] = self._append_base + self.getvalue()
+        elif "w" in self.mode:
+            self.store[self.path] = self.getvalue()
         super().close()
 
 
@@ -177,13 +179,12 @@ def test_download_resume_appends_from_offset(worker, tmp_path):
     assert progress and progress[0][0] > 300 and progress[-1] == (len(data), len(data))
 
 
-def test_download_without_partial_falls_back_to_full(worker, tmp_path):
+def test_download_without_partial_transfers_full(worker, tmp_path):
     data = b"abc" * 50
     worker.sftp.files["/r/g.bin"] = data
     local = tmp_path / "g.bin"
     worker._download_file("/r/g.bin", str(local), len(data), None, resume=True)
-    assert local.read_bytes() == data
-    assert worker.sftp.full_gets == ["/r/g.bin"]  # 部分ファイルなし → 通常転送
+    assert local.read_bytes() == data  # 部分ファイルなし → 先頭から全体を取得
 
 
 def test_upload_resume_appends_remote(worker, tmp_path):
@@ -197,14 +198,46 @@ def test_upload_resume_appends_remote(worker, tmp_path):
     assert worker.sftp.full_puts == []
 
 
-def test_upload_resume_remote_larger_falls_back(worker, tmp_path):
+def test_upload_resume_remote_larger_overwrites(worker, tmp_path):
     """リモートが既にローカル以上のサイズなら通常の上書きにする。"""
     local = tmp_path / "v.bin"
     local.write_bytes(b"a" * 100)
     worker.sftp.files["/r/v.bin"] = b"b" * 200
     worker._upload_file(str(local), "/r/v.bin", None, resume=True)
     assert worker.sftp.files["/r/v.bin"] == b"a" * 100
-    assert worker.sftp.full_puts == ["/r/v.bin"]
+
+
+def test_download_cancel_stops_midway(worker, tmp_path):
+    """実行中の転送はチャンクごとにキャンセル判定され、途中で中断する。"""
+    from hashi.filebrowser import STREAM_CHUNK, _Cancelled
+
+    data = b"z" * (STREAM_CHUNK * 3)
+    worker.sftp.files["/r/big.bin"] = data
+    local = tmp_path / "big.bin"
+
+    def cb(done, _total):
+        # 最初のチャンク書き込み後にキャンセル要求が来た状況を再現
+        worker._cancel = True
+
+    with pytest.raises(_Cancelled):
+        worker._download_file("/r/big.bin", str(local), len(data), cb)
+    # 全量ではなく途中まで(1 チャンク)しか書かれていない
+    assert 0 < local.stat().st_size < len(data)
+
+
+def test_upload_cancel_stops_midway(worker, tmp_path):
+    from hashi.filebrowser import STREAM_CHUNK, _Cancelled
+
+    data = b"y" * (STREAM_CHUNK * 3)
+    local = tmp_path / "u.bin"
+    local.write_bytes(data)
+
+    def cb(done, _total):
+        worker._cancel = True
+
+    with pytest.raises(_Cancelled):
+        worker._upload_file(str(local), "/r/u.bin", cb)
+    assert 0 < len(worker.sftp.files.get("/r/u.bin", b"")) < len(data)
 
 
 def test_cancel_job_skips_waiting(worker):

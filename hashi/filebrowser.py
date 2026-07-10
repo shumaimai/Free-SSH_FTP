@@ -142,7 +142,7 @@ def expand_local(paths: list[str], remote_dir: str):
 
 IDLE_PROGRESS = {"label": "", "done": 0, "total": 0}
 
-RESUME_CHUNK = 32768  # レジューム転送の読み書き単位
+STREAM_CHUNK = 262144  # 転送の読み書き単位(256KB)。全体をメモリへ載せない
 
 
 class ExternalFileMonitor(QObject):
@@ -357,9 +357,15 @@ class SftpWorker(QThread):
         else:
             op()
 
-    # -- レジューム転送 -------------------------------------------------
+    # -- チャンク転送(レジューム対応)-----------------------------------
     def _download_file(self, remote, local, size, callback, resume=False):
-        """ダウンロード 1 ファイル。resume 時は部分ファイルの続きから取得。"""
+        """ダウンロード 1 ファイルをチャンク単位で書き出す。
+
+        paramiko の get はファイル全体をプリフェッチしてメモリへ載せるため、
+        大容量ファイルでメモリが肥大し UI が固まりキャンセルも効かなくなる。
+        ここでは 256KB ずつ逐次転送し、チャンクごとにキャンセルを判定する。
+        resume 時は部分ファイルの続きから取得する。
+        """
         offset = 0
         if resume:
             try:
@@ -367,21 +373,23 @@ class SftpWorker(QThread):
             except OSError:
                 offset = 0
         if not (0 < offset < (size or 0)):
-            self._get_ov(remote, local, callback)
-            return
+            offset = 0
+        mode = "ab" if offset else "wb"
 
         def op():
-            with self.sftp.open(remote, "rb") as rf, open(local, "ab") as lf:
-                rf.seek(offset)
+            with self.sftp.open(remote, "rb") as rf, open(local, mode) as lf:
+                if offset:
+                    rf.seek(offset)
                 done = offset
-                while done < size:
-                    data = rf.read(min(RESUME_CHUNK, size - done))
+                while size == 0 or done < size:
+                    self._check_cancel()
+                    data = rf.read(STREAM_CHUNK)
                     if not data:
                         break
                     lf.write(data)
                     done += len(data)
                     if callback:
-                        callback(done, size)
+                        callback(done, size or done)
 
         if self.perm_override:
             self.pm.with_read_access(remote, op)
@@ -389,7 +397,11 @@ class SftpWorker(QThread):
             op()
 
     def _upload_file(self, local, remote, callback, resume=False):
-        """アップロード 1 ファイル。resume 時はリモートの続きへ追記。"""
+        """アップロード 1 ファイルをチャンク単位で送信する。
+
+        ダウンロードと同様、全体をメモリへ載せずに 256KB ずつ送り、
+        チャンクごとにキャンセルを判定する。resume 時はリモートの続きへ追記。
+        """
         size = os.path.getsize(local) if os.path.exists(local) else 0
         offset = 0
         if resume:
@@ -398,15 +410,17 @@ class SftpWorker(QThread):
             except IOError:
                 offset = 0
         if not (0 < offset < size):
-            self._put_ov(local, remote, callback)
-            return
+            offset = 0
+        mode = "ab" if offset else "wb"
 
         def op():
-            with open(local, "rb") as lf, self.sftp.open(remote, "ab") as rf:
-                lf.seek(offset)
+            with open(local, "rb") as lf, self.sftp.open(remote, mode) as rf:
+                if offset:
+                    lf.seek(offset)
                 done = offset
                 while True:
-                    data = lf.read(RESUME_CHUNK)
+                    self._check_cancel()
+                    data = lf.read(STREAM_CHUNK)
                     if not data:
                         break
                     rf.write(data)
