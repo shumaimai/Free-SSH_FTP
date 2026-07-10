@@ -268,11 +268,22 @@ class SessionTab(QWidget):
                 # 直前に自動入力した直後の再要求 = おそらく誤り。手動に委ねる
                 self._flash("パスワードが違うようです。手動で入力してください", warn=True)
                 return
+            answer = QMessageBox.question(
+                self,
+                "sudo パスワードの送信",
+                "リモート側のプログラムは sudo プロンプトを偽装できます。\n"
+                "保存済みの sudo パスワードをこの端末へ送信しますか?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                self._flash("sudo パスワードは送信しませんでした")
+                return
             pw = self.secret_ctx.get_sudo_password()
             if pw:
                 self._last_autofill_ts = now
                 self.terminal.send_password(pw)
-                self._flash("🔑 sudo パスワードを自動入力しました")
+                self._flash("🔑 sudo パスワードを送信しました")
         elif kind in ("password", "passphrase"):
             # 別ホストの可能性があるので自動送信しない(手動送信は可能)
             self._flash("パスワード要求: 右クリック→送信 で保存済みを送れます")
