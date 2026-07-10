@@ -1,0 +1,149 @@
+# CLAUDE.md — Hashi 開発ガイド(Claude Code 引き継ぎ用)
+
+このファイルは Claude Code(や新しく参加する人)が**会話履歴なしで**このプロジェクトを
+続けられるように書いてある。まずここを読むこと。
+
+## これは何か
+
+**Hashi**(橋 = ローカルとリモートをつなぐ)は、Windows で「まともに使える」SSH ターミナル +
+SFTP ファイルブラウザを 1 つに統合したデスクトップアプリ。コンセプトは **PuTTY + WinSCP を
+別々に開かなくていい**こと。1 接続 = 1 タブで、ターミナルと SFTP ブラウザが横並びになる。
+
+- 技術選定: **Python 3.10+ / PySide6 / paramiko / pyte / wcwidth**(Electron は重いので不採用)。
+- UI・コメント・コミットメッセージは**日本語**で統一している。踏襲すること。
+- 作者は Linux サーバー運用・iOS/Flask/Discord bot 開発の経験がある高校生。直接的で
+  実践的な説明を好み、技術的な制約は正直に明示してほしいタイプ。忖度した「できます」より
+  「ここは未検証」とはっきり言うほうが喜ばれる。
+
+## セットアップ / 実行 / テスト
+
+```bash
+python -m venv .venv && . .venv/bin/activate      # 任意
+pip install -r requirements-dev.txt               # 実行 + 開発(pytest, pyinstaller, ruff)
+python main.py                                     # 起動
+
+QT_QPA_PLATFORM=offscreen pytest                   # テスト(GUI はオフスクリーン)
+python -m compileall main.py hashi tools           # 構文チェック
+```
+
+- **ヘッドレス環境で GUI を触るときは必ず `QT_QPA_PLATFORM=offscreen`**。xcb は入っていない
+  ことが多い。pytest の `qapp` フィクスチャが自動で offscreen にする。
+- パッケージング: `pyinstaller --noconfirm Hashi.spec` → `dist/Hashi.exe`。
+
+## リポジトリ構成 / モジュール責務
+
+```
+main.py                エントリポイント(main() あり)。Fusion ダークテーマを適用。
+hashi/__init__.py      __version__(バージョンの単一ソース)。config が参照。
+hashi/config.py        Profile / Settings / ProfileStore / KnownHosts(TOFU)の永続化。
+hashi/credentials.py   認証情報保存。keyring 優先 → Fernet 暗号化ファイルにフォールバック。
+hashi/ssh_core.py      paramiko Transport 直叩き。認証・TOFU・exec_command・run_sudo。GUI 非依存。
+hashi/terminal.py      pyte HistoryScreen + 自前 QPainter 描画。IME / 全角 / 選択即コピー /
+                       右クリック貼付 / パスワードプロンプト検知。
+hashi/privilege.py     権限無視スイッチのコア。共有 PermManager(ロック+参照カウント+専用
+                       SFTP チャネル)。一時 chmod → 操作 → 復元。sudo フォールバック。
+hashi/permjournal.py   権限変更のジャーナル。緩める前に fsync 記録し、クラッシュ後に復元。
+                       pid 生存判定で他セッションの誤爆を防ぐ。
+hashi/editor.py        内蔵コードエディタ。行番号・簡易ハイライト・検索。Ctrl+S でリモート保存。
+hashi/forward.py       ローカルポートフォワード(-L)。
+hashi/filebrowser.py   SFTP ブラウザ。SftpWorker(nav/xfer の 2 スレッド・別チャネル)、
+                       2 段階確認、権限無視統合、エディタ連携。★このファイルが一番大きい。
+hashi/dialogs.py       接続 / ホスト鍵 / 秘密入力 / 設定 / トンネル ダイアログ。
+hashi/mainwindow.py    サイドバー + セッションタブ + ConnectWorker + 自動入力の配線 +
+                       SecretContext(sudo/パスワード供給源)。
+tools/doctor.py        CLI 接続診断(TCP→ホスト鍵→認証→SFTP→シェル)。
+tests/                 pytest(ネットワーク不要。フェイク SSH を conftest に用意)。
+```
+
+## スレッドモデル(重要)
+
+- **GUI スレッド**: すべての QWidget。
+- **ConnectWorker(QThread)**: 接続処理。秘密情報の入力は GUI に Signal で依頼し、
+  `threading.Event` でブロック待機して受け取る(`provide()`)。
+- **SftpWorker(QThread)× 2**: `nav`(一覧・操作)と `xfer`(転送)。それぞれ**別の SFTP
+  チャネル**を持つ。ジョブキュー方式。`_dispatch` が `_job_<kind>` を呼ぶだけなので、
+  新しい操作は `_job_xxx` メソッドを足して `enqueue({"kind":"xxx", ...})` すればよい。
+- paramiko の 1 チャネルはスレッド安全でない。**共有 PermManager は専用チャネルを 1 本持ち、
+  その利用をすべて自前の RLock で直列化する**。実転送はワーカー自身のチャネルなので並行可。
+
+## 設計上の「効いた」判断とハマりどころ(消さない・壊さないこと)
+
+1. **paramiko 5 の鍵ロード**: `PKey.from_path` は `password` が bytes 必須。パスフレーズ未指定でも
+   cryptography が `TypeError("password must be bytes")` を投げる。`ssh_core.load_private_key` は
+   常に bytes を渡し、`"unexpected keyword"` で 3.x 互換分岐、それ以外の TypeError は
+   `PasswordRequiredException` に変換。パスフレーズ誤りは再入力ループ。ここは触ると壊れやすい。
+2. **権限無視の書き込みビットは a+w(0o222)**。接続ユーザーは対象ファイルの所有者とは限らない
+   (むしろ所有者でないから権限無視が要る)。u+w だと他人所有ファイルに効かない。**一時付与→
+   即復元なので広めでも実害は最小**、という設計思想。
+3. **ジャーナルの順序**: `record()`(fsync)を **chmod で緩める前**に行う。復元は「元の権限に戻す」
+   だけなので**冪等**。どの段階でプロセスが死んでも安全(緩める前=まだ元のまま/緩めた後=次回戻す/
+   戻した後=もう一度戻すだけ)。
+4. **pid ゲート復元**: 各エントリに記録元 pid を持たせ、復元対象は「その pid がもう生きていない」
+   ものだけ。これで**同じサーバーへ同時接続している生存セッションが今まさに緩めている最中の
+   ファイルを別インスタンスが横から戻す事故**を防ぐ。`permjournal.pid_alive` は Windows は
+   OpenProcess、POSIX は `os.kill(pid,0)`。
+5. **復元にも権限が要る**: root 所有ファイルを緩めるのに sudo を使った以上、戻すのにも sudo が要る。
+   起動時は保存済み sudo パスワードで自動復元し、戻せない件数(stuck)が残れば
+   `recover_incomplete` シグナルでユーザーに sudo を促す。復元は**深いパスから順に**行う
+   (親ディレクトリの x を先に外して子へ辿れなくなるのを防ぐ)。
+6. **右クリック貼り付け**: 右クリック=貼り付け(PuTTY 流)。メニューは **Shift+右クリック**。
+   左で選択したら即コピー。
+7. **パスワード自動入力**: プロンプト検知は保守的な正規表現(`terminal._PW_PATTERNS`)。
+   **sudo プロンプトのときだけ自動送信**(password/passphrase は別ホストの可能性があるので手動)。
+   誤りループ防止に **8 秒クールダウン**。手動送信は右クリックメニュー(→ `password_prompt.emit("manual")`)。
+8. **オフスクリーン Qt**: ヘッドレスでの検証は `QT_QPA_PLATFORM=offscreen`。
+
+## テスト方針 / 検証済みと未検証
+
+- **pytest(ネットワーク不要)**: `tests/`。ジャーナル・参照カウント・クラッシュ復元・
+  認証情報の暗号化往復・Settings/Profile/TOFU・パスワードプロンプト検知をカバー。
+  フェイク SSH は `tests/conftest.py`。
+- **実 SSH 結合(手動)**: コンテナ内に sshd を立てて検証してきた。おおよそ:
+  ```bash
+  useradd -m tester && echo 'tester:testpass' | chpasswd && usermod -aG sudo tester
+  mkdir -p /home/tester/.ssh && cp key.pub /home/tester/.ssh/authorized_keys
+  mkdir -p /run/sshd && /usr/sbin/sshd -D -p 2222 -o ListenAddress=127.0.0.1 &
+  # 権限無視の検証用: root 所有・mode 000 のファイル等を用意
+  echo secret > /srv/secret.txt && chown root:root /srv/secret.txt && chmod 000 /srv/secret.txt
+  ```
+  過去の実機検証で確認済み: 鍵認証+パスフレーズ+TOFU、再帰アップロード/ダウンロード/削除、
+  2 段階確認、**権限無視の読み(000→復元)・新規作成・上書き(いずれも sudo chmod + 元へ復元)**、
+  日本語ファイル名の描画/選択コピー。
+- **未検証(実機で要確認)**: **ローカルポートフォワード(-L)のライブ動作**。実装は
+  paramiko の `direct-tcpip` + select ポンプで標準的だが、実サーバーでの通し確認は未。
+  最初に実機を触れるときに確認してほしい。
+
+## ビルド & リリース手順
+
+1. `hashi/__init__.py` の `__version__` を上げる。
+2. `CHANGELOG.md` に追記(`[Unreleased]` → 新バージョン)。
+3. コミットして **`vX.Y.Z` タグ**を push(タグは `__version__` と一致必須。CI が検証する)。
+   ```bash
+   git tag v0.2.0 && git push origin main --tags
+   ```
+4. `.github/workflows/release.yml` が windows-latest で PyInstaller ビルド → GitHub Release を
+   作成し `Hashi.exe` を添付する(GITHUB_TOKEN は自動。secret 設定不要)。
+5. CHANGELOG のリンク行にある `USER` を実際の GitHub ユーザー名に置換すること(pyproject も同様)。
+
+- keyring は凍結時にバックエンドを取りこぼすため `Hashi.spec` で `collect_submodules("keyring")` と
+  `win32ctypes` を明示収集している。Windows の資格情報マネージャ backend が動かない症状が出たら
+  まずここを疑う。
+
+## ロードマップ / 未着手(優先度つき)
+
+- [ ] **ポートフォワードの実機検証**(最優先。上記「未検証」)。
+- [ ] リモート(-R)/ ダイナミック(-D)フォワード。
+- [ ] `~/.ssh/config` の読み込み(Host エイリアス、ProxyJump)。
+- [ ] 外部アプリで開いたファイルの変更監視 → 自動再アップロード(内蔵エディタは対応済み。
+      「関連付けアプリで開く」経路が未対応)。
+- [ ] 転送キューの一覧 UI とレジューム。
+- [ ] ターミナルの xterm 互換強化(代替スクリーン、マウスレポート、ブラケットペースト)。
+- [ ] terminal / editor のテスト拡充(描画・IME は手動確認中心)。
+- [ ] exe への署名、アイコン(`Hashi.spec` の `icon=`)。
+
+## お作法
+
+- 変更したら **`pytest` と `compileall` を通す**。GUI を絡む変更は offscreen で起動確認。
+- 権限無視まわり(`privilege.py` / `permjournal.py`)は**必ず対応するテストを足す/更新する**。
+  ここは事故るとサーバー側のファイル権限を壊しかねない箇所なので慎重に。
+- 日本語 UI / コメントを維持。ユーザーへの説明は簡潔・率直に。未検証は未検証と書く。
