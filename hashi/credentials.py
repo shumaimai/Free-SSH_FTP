@@ -12,12 +12,10 @@ kind は "password" / "passphrase" / "sudo" のいずれか。
 """
 from __future__ import annotations
 
-import base64
 import json
 import os
-from pathlib import Path
 
-from .config import config_dir, Profile
+from .config import Profile, config_dir
 
 SERVICE = "Hashi"
 _KINDS = ("password", "passphrase", "sudo")

@@ -7,11 +7,10 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, asdict, fields
+from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
 APP_NAME = "Hashi"
-from . import __version__ as APP_VERSION  # 単一のバージョン源
 
 AUTH_KEY = "key"
 AUTH_PASSWORD = "password"

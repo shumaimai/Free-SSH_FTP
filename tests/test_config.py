@@ -8,7 +8,7 @@ def test_settings_roundtrip(tmp_config):
 
 
 def test_profile_store_roundtrip(tmp_config):
-    from hashi.config import ProfileStore, Profile
+    from hashi.config import Profile, ProfileStore
     st = ProfileStore()
     st.profiles.append(Profile(name="srv", host="h", username="u",
                                save_secrets=True))

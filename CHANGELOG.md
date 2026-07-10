@@ -3,7 +3,15 @@
 このプロジェクトは [Semantic Versioning](https://semver.org/lang/ja/) に緩く従います。
 
 ## [Unreleased]
-- (次の作業をここに)
+### 修正
+- 内蔵エディタの検索(Ctrl+F / F3 / 次へ / 前へ)が `AttributeError` でクラッシュしていた
+  (`QPlainTextEdit.FindFlag` → 正しくは `QTextDocument.FindFlag`)。
+
+### 追加
+- ローカルポートフォワード(-L)を実 sshd で通し検証し、`tests/test_forward.py` に
+  ユニット + ライブ結合テストとして恒久化(#1)。
+- terminal / editor のテスト拡充(選択コピー・全角幅・プロンプト重複抑止・改行変換・
+  タイトル通知 / 言語判定・ハイライト・検索回り込み・保存フロー)(#7)。
 
 ## [0.2.0] - 2026-07-10
 ### 追加

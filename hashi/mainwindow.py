@@ -9,23 +9,36 @@ from __future__ import annotations
 
 import threading
 
-from PySide6.QtCore import Qt, QThread, Signal, QTimer
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QListWidget, QListWidgetItem, QPushButton,
-    QVBoxLayout, QHBoxLayout, QSplitter, QTabWidget, QMessageBox, QMenu,
-    QLabel, QToolButton,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QSplitter,
+    QTabWidget,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
 )
 
-from .config import Profile, ProfileStore, KnownHosts, APP_VERSION, Settings
-from .ssh_core import SshSession, ConnectCancelled
-from .terminal import TerminalWidget
-from .filebrowser import SftpBrowser
+from .config import APP_VERSION, KnownHosts, Profile, ProfileStore, Settings
 from .credentials import CredentialStore
-from .forward import LocalForward
 from .dialogs import (
-    ConnectDialog, HostKeyDialog, SecretDialog, SettingsDialog, TunnelDialog,
-    ask_secret,
+    ConnectDialog,
+    HostKeyDialog,
+    SecretDialog,
+    SettingsDialog,
+    TunnelDialog,
 )
+from .filebrowser import SftpBrowser
+from .forward import LocalForward
+from .ssh_core import ConnectCancelled, SshSession
+from .terminal import TerminalWidget
 
 
 class ConnectWorker(QThread):

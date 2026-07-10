@@ -1,6 +1,6 @@
 from hashi.permjournal import PermJournal
 from hashi.privilege import PermManager
-from tests.conftest import FakeSFTP, FakeSession
+from tests.conftest import FakeSession, FakeSFTP
 
 
 def test_refcount_single_grant_and_restore(tmp_path):
