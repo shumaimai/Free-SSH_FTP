@@ -1,11 +1,11 @@
 # Hashi — SSH / SFTP クライアント v0.2.0
 
-![CI](https://github.com/USER/hashi/actions/workflows/ci.yml/badge.svg)
-![Release](https://img.shields.io/github/v/release/USER/hashi?sort=semver)
+![CI](https://github.com/shumaimai/hashi/actions/workflows/ci.yml/badge.svg)
+![Release](https://img.shields.io/github/v/release/shumaimai/hashi?sort=semver)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-> リポジトリを作ったら上の `USER` を自分の GitHub ユーザー名に置き換えてください。
+
 
 橋 (bridge)。ローカルとリモートをつなぐ、Windows でまともに使える SSH ターミナル + SFTP ファイルブラウザ.
 PuTTY + WinSCP を別々に開かなくていいのがコンセプト。1 接続 = 1 タブで、ターミナルとファイル操作が横に並ぶ。
