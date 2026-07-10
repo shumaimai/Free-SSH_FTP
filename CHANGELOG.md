@@ -3,6 +3,11 @@
 このプロジェクトは [Semantic Versioning](https://semver.org/lang/ja/) に緩く従います。
 
 ## [Unreleased]
+### 変更
+- **sudo パスワードの自動送信を廃止し、ワンタップ送信ボタンに変更**。リモート側は
+  sudo プロンプトを偽装して保存済みパスワードを釣れるため、送る判断は常に人間が行う
+  (検知したらボタンを表示 → ワンタップで送信)。設定項目は「送信ボタンを表示」に読み替え。
+
 ### 修正
 - 内蔵エディタの検索(Ctrl+F / F3 / 次へ / 前へ)が `AttributeError` でクラッシュしていた
   (`QPlainTextEdit.FindFlag` → 正しくは `QTextDocument.FindFlag`)。
