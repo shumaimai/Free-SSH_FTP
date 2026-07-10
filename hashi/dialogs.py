@@ -9,12 +9,23 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
-    QDialog, QDialogButtonBox, QLabel, QLineEdit, QVBoxLayout, QFormLayout,
-    QComboBox, QSpinBox, QPushButton, QHBoxLayout, QFileDialog, QWidget,
-    QInputDialog, QCheckBox,
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
+    QFormLayout,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
 )
 
-from .config import Profile, AUTH_KEY, AUTH_PASSWORD, AUTH_AGENT
+from .config import AUTH_AGENT, AUTH_KEY, AUTH_PASSWORD, Profile
 
 
 class DoubleCheckDialog(QDialog):

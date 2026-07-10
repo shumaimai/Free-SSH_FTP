@@ -13,13 +13,16 @@ import re
 import threading
 
 import pyte
-from wcwidth import wcwidth
-
-from PySide6.QtCore import Qt, QTimer, Signal, QObject, QRectF, QRect, QSize, QPoint
+from PySide6.QtCore import QObject, QPoint, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
-    QPainter, QColor, QFont, QFontMetricsF, QGuiApplication, QPalette,
+    QColor,
+    QFont,
+    QFontMetricsF,
+    QGuiApplication,
+    QPainter,
 )
-from PySide6.QtWidgets import QWidget, QMenu
+from PySide6.QtWidgets import QMenu, QWidget
+from wcwidth import wcwidth
 
 # ---- カラーパレット (One Half Dark ベース) ---------------------------------
 DEFAULT_FG = QColor("#dcdfe4")

@@ -16,8 +16,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from hashi.config import Profile, KnownHosts, AUTH_KEY, AUTH_PASSWORD, AUTH_AGENT  # noqa: E402
-from hashi.ssh_core import SshSession, ConnectCancelled, ConnectError  # noqa: E402
+from hashi.config import AUTH_AGENT, AUTH_KEY, AUTH_PASSWORD, KnownHosts, Profile  # noqa: E402
+from hashi.ssh_core import ConnectCancelled, ConnectError, SshSession  # noqa: E402
 
 
 class ConsoleUI:

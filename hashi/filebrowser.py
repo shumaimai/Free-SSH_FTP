@@ -21,18 +21,31 @@ import tempfile
 import time
 from datetime import datetime
 
-from PySide6.QtCore import Qt, QThread, Signal, QUrl, QTimer
+from PySide6.QtCore import Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit, QTreeWidget,
-    QTreeWidgetItem, QLabel, QProgressBar, QMessageBox, QInputDialog,
-    QFileDialog, QMenu, QStyle, QFrame, QAbstractItemView,
+    QAbstractItemView,
+    QFileDialog,
+    QFrame,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QMenu,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QStyle,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
 )
 
 from .dialogs import DoubleCheckDialog
-from .privilege import PermManager, is_permission_error, OverrideError
-from .permjournal import PermJournal
 from .editor import EditorWindow
+from .permjournal import PermJournal
+from .privilege import OverrideError, PermManager
 
 OPEN_SIZE_WARN = 50 * 1024 * 1024  # ダブルクリックで開く際の警告サイズ
 EDIT_SIZE_LIMIT = 8 * 1024 * 1024  # 内蔵エディタで開く上限

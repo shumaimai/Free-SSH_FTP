@@ -11,7 +11,7 @@ import socket
 
 import paramiko
 
-from .config import Profile, KnownHosts, AUTH_KEY, AUTH_PASSWORD, AUTH_AGENT
+from .config import AUTH_AGENT, AUTH_KEY, KnownHosts, Profile
 
 
 class ConnectCancelled(Exception):
