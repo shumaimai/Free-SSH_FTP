@@ -232,7 +232,7 @@ class SessionTab(QWidget):
         self.bt_files.toggled.connect(self._apply_visibility)
         self.terminal.password_prompt.connect(self._on_password_prompt)
 
-        # トースト(自動入力などの通知)
+        # トースト(通知)
         self._toast = QLabel(self)
         self._toast.setStyleSheet(
             "background:#2d333f; color:#dcdfe4; border:1px solid #444c56;"
@@ -241,6 +241,20 @@ class SessionTab(QWidget):
         self._toast_timer = QTimer(self)
         self._toast_timer.setSingleShot(True)
         self._toast_timer.timeout.connect(lambda: self._toast.setVisible(False))
+
+        # sudo ワンタップ送信ボタン。リモートはプロンプトを偽装できるため
+        # 自動送信はしない(送る判断は常に人間)。ただしワンタップで済むようにする。
+        self._sudo_btn = QPushButton("🔑 sudo パスワードを送信", self)
+        self._sudo_btn.setStyleSheet(
+            "QPushButton { background:#3b5a3b; color:#fff; border:1px solid #4f7a4f;"
+            "border-radius:6px; padding:6px 14px; }"
+            "QPushButton:hover { background:#487048; }")
+        self._sudo_btn.setCursor(Qt.PointingHandCursor)
+        self._sudo_btn.setVisible(False)
+        self._sudo_btn.clicked.connect(self._send_sudo_password)
+        self._sudo_btn_timer = QTimer(self)
+        self._sudo_btn_timer.setSingleShot(True)
+        self._sudo_btn_timer.timeout.connect(lambda: self._sudo_btn.setVisible(False))
 
         # シェル開始
         ch = session.open_shell()
@@ -265,17 +279,34 @@ class SessionTab(QWidget):
                 return
             now = time.monotonic()
             if now - self._last_autofill_ts < 8.0:
-                # 直前に自動入力した直後の再要求 = おそらく誤り。手動に委ねる
+                # 送信直後の再要求 = おそらく誤り。同じものを再送しても無駄なので
+                # ボタンは出さず手動に委ねる
                 self._flash("パスワードが違うようです。手動で入力してください", warn=True)
                 return
-            pw = self.secret_ctx.get_sudo_password()
-            if pw:
-                self._last_autofill_ts = now
-                self.terminal.send_password(pw)
-                self._flash("🔑 sudo パスワードを自動入力しました")
+            self._show_sudo_button()
         elif kind in ("password", "passphrase"):
             # 別ホストの可能性があるので自動送信しない(手動送信は可能)
             self._flash("パスワード要求: 右クリック→送信 で保存済みを送れます")
+
+    def _show_sudo_button(self):
+        self._sudo_btn.adjustSize()
+        self._sudo_btn.move(
+            max(12, (self.width() - self._sudo_btn.width()) // 2), 40)
+        self._sudo_btn.setVisible(True)
+        self._sudo_btn.raise_()
+        self._sudo_btn_timer.start(20000)  # プロンプトが流れた頃に自動で消す
+
+    def _send_sudo_password(self):
+        import time
+        self._sudo_btn.setVisible(False)
+        self._sudo_btn_timer.stop()
+        pw = self.secret_ctx.get_sudo_password()
+        if pw:
+            self._last_autofill_ts = time.monotonic()
+            self.terminal.send_password(pw)
+            self._flash("🔑 sudo パスワードを送信しました")
+        else:
+            self._flash("送信できる sudo パスワードがありません", warn=True)
 
     def _flash(self, text: str, warn: bool = False):
         self._toast.setText(text)
