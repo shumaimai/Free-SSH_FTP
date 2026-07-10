@@ -12,14 +12,29 @@ from __future__ import annotations
 import os
 import re
 
-from PySide6.QtCore import Qt, QRect, QSize, Signal
+from PySide6.QtCore import QRect, QSize, Qt, Signal
 from PySide6.QtGui import (
-    QColor, QFont, QPainter, QSyntaxHighlighter, QTextCharFormat,
-    QTextFormat, QTextCursor, QKeySequence, QShortcut, QPalette,
+    QColor,
+    QFont,
+    QKeySequence,
+    QPainter,
+    QPalette,
+    QShortcut,
+    QSyntaxHighlighter,
+    QTextCharFormat,
+    QTextCursor,
+    QTextDocument,
+    QTextFormat,
 )
 from PySide6.QtWidgets import (
-    QPlainTextEdit, QWidget, QTextEdit, QMainWindow, QLineEdit, QLabel,
-    QHBoxLayout, QToolBar, QMessageBox, QStatusBar,
+    QLineEdit,
+    QMainWindow,
+    QMessageBox,
+    QPlainTextEdit,
+    QStatusBar,
+    QTextEdit,
+    QToolBar,
+    QWidget,
 )
 
 # ---- シンタックスハイライト規則 -------------------------------------------------
@@ -320,18 +335,15 @@ class EditorWindow(QMainWindow):
         text = self.find_edit.text()
         if not text:
             return
-        flags = QTextCursor.MoveAnchor
-        found = self.editor.find(
-            text, QPlainTextEdit.FindFlag(0) if forward
-            else QPlainTextEdit.FindFlag.FindBackward)
-        if not found:
+        # FindFlag は QPlainTextEdit ではなく QTextDocument 側にある
+        flags = (QTextDocument.FindFlags() if forward
+                 else QTextDocument.FindFlag.FindBackward)
+        if not self.editor.find(text, flags):
             # 端まで来たら先頭/末尾へ回り込み
             cur = self.editor.textCursor()
             cur.movePosition(QTextCursor.Start if forward else QTextCursor.End)
             self.editor.setTextCursor(cur)
-            self.editor.find(
-                text, QPlainTextEdit.FindFlag(0) if forward
-                else QPlainTextEdit.FindFlag.FindBackward)
+            self.editor.find(text, flags)
 
     # ---- 保存 ---------------------------------------------------------------
     def save(self):
