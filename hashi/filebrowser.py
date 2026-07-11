@@ -24,7 +24,7 @@ import time
 from datetime import datetime
 from html import escape
 
-from PySide6.QtCore import Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtCore import QFileSystemWatcher, QObject, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -142,6 +142,84 @@ def expand_local(paths: list[str], remote_dir: str):
 IDLE_PROGRESS = {"label": "", "done": 0, "total": 0}
 
 
+class ExternalFileMonitor(QObject):
+    """外部アプリで開いた一時ファイルの変更を検知する。"""
+
+    changed = Signal(str, str)  # remote, local
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._watcher = QFileSystemWatcher(self)
+        self._watcher.fileChanged.connect(self._schedule_check)
+        self._remotes: dict[str, str] = {}
+        self._signatures: dict[str, tuple[int, int] | None] = {}
+        self._debounce: dict[str, QTimer] = {}
+        self._poll = QTimer(self)
+        self._poll.setInterval(1000)
+        self._poll.timeout.connect(self._poll_files)
+
+    @staticmethod
+    def _signature(path: str) -> tuple[int, int] | None:
+        try:
+            st = os.stat(path)
+            return st.st_mtime_ns, st.st_size
+        except OSError:
+            return None
+
+    def watch(self, remote: str, local: str):
+        local = os.path.abspath(local)
+        self._remotes[local] = remote
+        self._signatures[local] = self._signature(local)
+        if os.path.exists(local) and local not in self._watcher.files():
+            self._watcher.addPath(local)
+        if not self._poll.isActive():
+            self._poll.start()
+
+    def unwatch(self, local: str):
+        local = os.path.abspath(local)
+        if local in self._watcher.files():
+            self._watcher.removePath(local)
+        timer = self._debounce.pop(local, None)
+        if timer is not None:
+            timer.stop()
+            timer.deleteLater()
+        self._remotes.pop(local, None)
+        self._signatures.pop(local, None)
+        if not self._remotes:
+            self._poll.stop()
+
+    def stop(self):
+        for local in list(self._remotes):
+            self.unwatch(local)
+
+    def _schedule_check(self, local: str):
+        local = os.path.abspath(local)
+        if local not in self._remotes:
+            return
+        timer = self._debounce.get(local)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(lambda path=local: self._emit_if_changed(path))
+            self._debounce[local] = timer
+        timer.start(600)
+
+    def _poll_files(self):
+        watched = set(self._watcher.files())
+        for local in self._remotes:
+            if os.path.exists(local) and local not in watched:
+                self._watcher.addPath(local)
+            if self._signature(local) != self._signatures.get(local):
+                self._schedule_check(local)
+
+    def _emit_if_changed(self, local: str):
+        signature = self._signature(local)
+        if signature is None or signature == self._signatures.get(local):
+            return
+        self._signatures[local] = signature
+        self.changed.emit(self._remotes[local], local)
+
+
 class SftpWorker(QThread):
     """ジョブキュー方式の SFTP ワーカー。sftp チャネルはこのスレッド内で開く。"""
 
@@ -152,9 +230,10 @@ class SftpWorker(QThread):
     status = Signal(str)
     error = Signal(str)
     job_done = Signal(str)              # kind
-    opened_temp = Signal(str)           # local path
+    opened_temp = Signal(str, str)      # remote, local
     opened_for_edit = Signal(str, str)  # remote, local
     editor_save_result = Signal(str, bool, str)  # remote, ok, message
+    external_save_result = Signal(str, str, bool, str)  # remote, local, ok, message
     recover_incomplete = Signal(int)    # 未復元件数(sudo が必要)
     worker_failed = Signal(str)
 
@@ -441,7 +520,7 @@ class SftpWorker(QThread):
 
         self._get_ov(remote, local, cb)
         self.progress.emit(IDLE_PROGRESS)
-        self.opened_temp.emit(local)
+        self.opened_temp.emit(remote, local)
 
     def _job_open_edit(self, job):
         """内蔵エディタ用に一時 DL。テキストかどうか判定してシグナル。"""
@@ -468,7 +547,7 @@ class SftpWorker(QThread):
             is_binary = False
         if is_binary:
             self.status.emit("バイナリのため関連付けアプリで開きます")
-            self.opened_temp.emit(local)
+            self.opened_temp.emit(remote, local)
         else:
             self.opened_for_edit.emit(remote, local)
 
@@ -480,6 +559,15 @@ class SftpWorker(QThread):
             self.editor_save_result.emit(remote, True, "")
         except (OverrideError, IOError, OSError) as e:
             self.editor_save_result.emit(remote, False, str(e))
+
+    def _job_external_save(self, job):
+        """外部アプリによる変更を put (権限無視は尊重)。"""
+        remote, local = job["remote"], job["local"]
+        try:
+            self._put_ov(local, remote, None)
+            self.external_save_result.emit(remote, local, True, "")
+        except (OverrideError, IOError, OSError) as e:
+            self.external_save_result.emit(remote, local, False, str(e))
 
 
 class _SortItem(QTreeWidgetItem):
@@ -550,6 +638,8 @@ class SftpBrowser(QWidget):
         self._show_hidden = False
         self._editors: dict[str, EditorWindow] = {}   # remote -> window
         self._edit_saves: dict[str, object] = {}       # remote -> done_cb
+        self._external_monitor = ExternalFileMonitor(self)
+        self._external_monitor.changed.connect(self._save_external_file)
 
         self._build_ui()
 
@@ -574,6 +664,7 @@ class SftpBrowser(QWidget):
         self.xfer.opened_temp.connect(self._on_opened_temp)
         self.xfer.opened_for_edit.connect(self._on_opened_for_edit)
         self.xfer.editor_save_result.connect(self._on_editor_saved)
+        self.xfer.external_save_result.connect(self._on_external_saved)
         self.nav.recover_incomplete.connect(self._on_recover_incomplete)
         self._recover_prompted = False
         self.nav.start()
@@ -876,9 +967,29 @@ class SftpBrowser(QWidget):
             if w is win:
                 del self._editors[remote]
 
-    def _on_opened_temp(self, local: str):
-        self._on_status(f"一時コピーを開きます (編集は保存されません): {os.path.basename(local)}")
-        QDesktopServices.openUrl(QUrl.fromLocalFile(local))
+    def _on_opened_temp(self, remote: str, local: str):
+        self._external_monitor.watch(remote, local)
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(local)):
+            self._external_monitor.unwatch(local)
+            QMessageBox.warning(
+                self, "関連付けアプリ", f"ファイルを開けませんでした:\n{local}")
+            return
+        self._on_status(
+            f"関連付けアプリで開きました (変更は自動保存): {os.path.basename(local)}")
+
+    def _save_external_file(self, remote: str, local: str):
+        self._on_status(f"変更を検出しました。アップロード中: {posixpath.basename(remote)}")
+        self.xfer.enqueue({"kind": "external_save", "remote": remote, "local": local})
+
+    def _on_external_saved(self, remote: str, _local: str, ok: bool, message: str):
+        if not ok:
+            QMessageBox.warning(
+                self, "自動アップロード",
+                f"変更をリモートへ保存できませんでした:\n{remote}\n\n{message}")
+            return
+        self._on_status(f"変更をリモートへ保存しました: {remote}")
+        if self.cwd and posixpath.dirname(remote) == self.cwd:
+            self.refresh()
 
     # ---- フォルダ作成 / リネーム ------------------------------------------------
     def make_dir(self):
@@ -1147,6 +1258,7 @@ class SftpBrowser(QWidget):
     def shutdown(self):
         for win in list(self._editors.values()):
             win.close()
+        self._external_monitor.stop()
         self.xfer.cancel()
         self.nav.stop()
         self.xfer.stop()
