@@ -177,7 +177,7 @@ class _TerminalScreen(pyte.HistoryScreen):
             self.cursor.x, self.cursor.y = self._saved_cursor
             self.ensure_hbounds()
             self.ensure_vbounds()
-            self._saved_cursor = None
+        self._saved_cursor = None
 
 
 class TerminalWidget(QWidget):
