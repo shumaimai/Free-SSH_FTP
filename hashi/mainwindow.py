@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QSplitter,
     QTabWidget,
@@ -32,12 +33,14 @@ from .credentials import CredentialStore
 from .dialogs import (
     ConnectDialog,
     HostKeyDialog,
+    KeygenDialog,
     SecretDialog,
     SettingsDialog,
     TunnelDialog,
 )
 from .filebrowser import SftpBrowser
 from .forward import DynamicForward, Forward, LocalForward, RemoteForward
+from .keygen import generate_key, register_public_key
 from .ssh_core import ConnectCancelled, SshSession
 from .terminal import TerminalWidget
 
@@ -146,6 +149,45 @@ class ConnectWorker(QThread):
             self.fail.emit(str(e))
 
 
+class KeygenWorker(QThread):
+    """鍵生成と公開鍵登録を GUI スレッド外で実行する。"""
+
+    ok = Signal(str, bool)
+    fail = Signal(str)
+
+    def __init__(self, settings: dict, session: SshSession | None = None):
+        super().__init__()
+        self.settings = settings
+        self.session = session
+
+    def run(self):
+        saved = False
+        try:
+            generated = generate_key(
+                self.settings["key_type"],
+                self.settings["bits"],
+                self.settings["passphrase"],
+                self.settings["comment"],
+            )
+            generated.write_private_key(
+                self.settings["path"], self.settings["passphrase"]
+            )
+            saved = True
+            registered = False
+            if self.settings["register"] and self.session is not None:
+                registered = register_public_key(self.session, generated.public_line)
+            self.ok.emit(self.settings["path"], registered)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("SSH 鍵の生成または登録に失敗しました", exc_info=True)
+            if saved:
+                self.fail.emit(
+                    "秘密鍵の保存は完了しました。公開鍵の登録のみ失敗しました。\n"
+                    f"{e}"
+                )
+            else:
+                self.fail.emit(str(e))
+
+
 class SecretContext:
     """1 接続分の秘密情報を集約(sudo 提供・パスワード自動入力の供給源)。"""
 
@@ -185,6 +227,35 @@ class SecretContext:
                 self.credentials.set(self.profile, "sudo", pw)
         self._sudo_pw = pw
         return pw
+
+
+class ConnectingWidget(QWidget):
+    """接続処理中と結果を表示するページ。"""
+
+    def __init__(self, profile: Profile, parent=None):
+        super().__init__(parent)
+        root = QVBoxLayout(self)
+        root.setAlignment(Qt.AlignCenter)
+        root.setSpacing(12)
+
+        self.message = QLabel(f"{profile.label()} に接続しています…")
+        self.message.setAlignment(Qt.AlignCenter)
+        self.message.setStyleSheet("font-size:16px;")
+        root.addWidget(self.message)
+
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 0)
+        self.progress.setFixedWidth(280)
+        root.addWidget(self.progress, 0, Qt.AlignCenter)
+
+    def show_error(self, message: str):
+        if message:
+            text = f"接続に失敗しました:\n{message}"
+        else:
+            text = "接続を中止しました"
+        self.message.setText(text)
+        self.message.setStyleSheet("color:#e06c75; font-size:16px;")
+        self.progress.hide()
 
 
 class SessionTab(QWidget):
@@ -242,6 +313,7 @@ class SessionTab(QWidget):
 
         self.bt_term.toggled.connect(self._apply_visibility)
         self.bt_files.toggled.connect(self._apply_visibility)
+        self.browser.terminal_input.connect(self.terminal.send_text)
         self.terminal.password_prompt.connect(self._on_password_prompt)
 
         # トースト(通知)
@@ -378,6 +450,7 @@ class MainWindow(QMainWindow):
         self.settings = Settings()
         self.credentials = CredentialStore()
         self._workers: list[ConnectWorker] = []
+        self._keygen_workers: list[KeygenWorker] = []
 
         # サイドバー
         side = QWidget()
@@ -408,6 +481,7 @@ class MainWindow(QMainWindow):
         placeholder.setAlignment(Qt.AlignCenter)
         placeholder.setStyleSheet("color:#8a919e; font-size:14px;")
         self.tabs.addTab(placeholder, "ようこそ")
+        self._welcome_page = placeholder
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(side)
@@ -439,6 +513,7 @@ class MainWindow(QMainWindow):
         m_sess = self.menuBar().addMenu("セッション")
         m_sess.addAction("ポートフォワードを追加…", self._add_tunnel)
         m_sess.addAction("ポートフォワード一覧…", self._list_tunnels)
+        m_sess.addAction("SSH 鍵を生成…", self._generate_key)
         m_sess.addSeparator()
         m_sess.addAction("この接続の保存パスワードを削除", self._forget_credentials)
 
@@ -482,6 +557,31 @@ class MainWindow(QMainWindow):
         self.credentials.clear_profile(prof)
         self.statusBar().showMessage(
             f"{prof.label()} の保存パスワードを削除しました", 5000)
+
+    def _generate_key(self):
+        tab = self._current_tab()
+        dlg = KeygenDialog(self, can_register=tab is not None)
+        if not dlg.exec():
+            return
+        worker = KeygenWorker(dlg.result_settings(), tab.session if tab else None)
+        worker.ok.connect(self._on_keygen_ok)
+        worker.fail.connect(
+            lambda message: QMessageBox.warning(self, "SSH 鍵の生成", message)
+        )
+        worker.finished.connect(lambda w=worker: self._keygen_workers.remove(w))
+        self._keygen_workers.append(worker)
+        self.statusBar().showMessage("SSH 鍵を生成しています…")
+        worker.start()
+
+    def _on_keygen_ok(self, path: str, registered: bool):
+        message = f"秘密鍵を保存しました:\n{path}"
+        if registered:
+            message += "\n公開鍵を接続先の authorized_keys に登録しました。"
+        self.statusBar().showMessage(
+            "SSH 鍵を生成しました" + ("（公開鍵を登録しました）" if registered else ""),
+            5000,
+        )
+        QMessageBox.information(self, "SSH 鍵の生成", message)
 
     def _font_delta(self, d: int):
         tab = self.tabs.currentWidget()
@@ -550,6 +650,9 @@ class MainWindow(QMainWindow):
     # ---- 接続 --------------------------------------------------------------
     def _connect_profile(self, profile: Profile):
         self.statusBar().showMessage(f"{profile.label()} に接続中…")
+        connecting = ConnectingWidget(profile)
+        connect_idx = self.tabs.addTab(connecting, f"接続中: {profile.label()}")
+        self.tabs.setCurrentIndex(connect_idx)
         worker = ConnectWorker(profile, self.known_hosts, self.credentials)
         worker.ask_secret.connect(
             lambda prompt, ds, cs, w=worker:
@@ -558,23 +661,38 @@ class MainWindow(QMainWindow):
         worker.ask_hostkey.connect(
             lambda info, w=worker: w.provide(HostKeyDialog.ask(self, info))
         )
-        worker.ok.connect(lambda s, w=worker: self._on_connected(s, w))
-        worker.fail.connect(self._on_connect_failed)
+        worker.ok.connect(
+            lambda s, w=worker, page=connecting: self._on_connected(s, w, page)
+        )
+        worker.fail.connect(
+            lambda msg, page=connecting, p=profile:
+            self._on_connect_failed(msg, page, p)
+        )
         worker.finished.connect(lambda w=worker: self._workers.remove(w))
         self._workers.append(worker)
         worker.start()
 
-    def _on_connected(self, session: SshSession, worker: ConnectWorker):
-        # 初回接続でようこそタブを消す
-        if self.tabs.count() == 1 and not isinstance(self.tabs.widget(0), SessionTab):
-            self.tabs.removeTab(0)
+    def _on_connected(self, session: SshSession, worker: ConnectWorker,
+                      connecting: ConnectingWidget | None = None):
+        if self._welcome_page is not None:
+            welcome_idx = self.tabs.indexOf(self._welcome_page)
+            if welcome_idx >= 0:
+                self.tabs.removeTab(welcome_idx)
+            self._welcome_page.deleteLater()
+            self._welcome_page = None
         ctx = SecretContext(session.profile, self.credentials,
                             self.settings, self)
         if worker.used_password:
             ctx.note_login_password(worker.used_password)
         tab = SessionTab(session, self.settings, ctx)
         label = session.profile.label()
-        idx = self.tabs.addTab(tab, label)
+        idx = self.tabs.indexOf(connecting) if connecting is not None else -1
+        if idx >= 0:
+            self.tabs.removeTab(idx)
+            connecting.deleteLater()
+            idx = self.tabs.insertTab(idx, tab, label)
+        else:
+            idx = self.tabs.addTab(tab, label)
         self.tabs.setCurrentIndex(idx)
         tab.terminal.session_closed.connect(
             lambda i=idx: self._mark_disconnected(tab)
@@ -586,10 +704,22 @@ class MainWindow(QMainWindow):
         if idx >= 0:
             self.tabs.setTabText(idx, self.tabs.tabText(idx) + " (切断)")
 
-    def _on_connect_failed(self, msg: str):
-        self.statusBar().showMessage("接続を中止しました", 4000)
-        if msg:
+    def _on_connect_failed(self, msg: str,
+                           connecting: ConnectingWidget | None = None,
+                           profile: Profile | None = None):
+        connecting_idx = -1
+        if connecting is not None:
+            connecting_idx = self.tabs.indexOf(connecting)
+            if connecting_idx >= 0:
+                connecting.show_error(msg)
+                if profile is not None:
+                    state = "接続失敗" if msg else "接続中止"
+                    self.tabs.setTabText(
+                        connecting_idx, f"{state}: {profile.label()}")
+        if msg and connecting_idx < 0:
             QMessageBox.warning(self, "接続エラー", msg)
+        self.statusBar().showMessage(
+            "接続に失敗しました" if msg else "接続を中止しました", 4000)
 
     # ---- タブ/終了 -----------------------------------------------------------
     def _close_tab(self, index: int):
