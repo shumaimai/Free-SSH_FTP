@@ -3,7 +3,17 @@
 このプロジェクトは [Semantic Versioning](https://semver.org/lang/ja/) に緩く従います。
 
 ## [Unreleased]
-- (次の作業をここに)
+### 追加
+- **ProxyJump(踏み台経由の多段接続)に対応**。接続ダイアログの「踏み台 (ProxyJump)」欄
+  または `~/.ssh/config` の ProxyJump から指定(OpenSSH 書式 `[user@]host[:port]`、
+  カンマ区切りで多段、IPv6 は `[::1]:22`)。踏み台ごとに TOFU のホスト鍵確認と認証
+  (config の IdentityFile → エージェント → パスワードの順)を行う。踏み台への
+  パスワードプロンプトには「踏み台」を明示し、**接続先の保存済みパスワードを踏み台へ
+  自動送信しない/踏み台の秘密は保存しない**。実 sshd 2〜3 台での実機検証済み
+  (1 段・2 段チェーン / exec / SFTP 2MB 整合性 / シェル / close 後の全 Transport 解放)。
+  `tests/test_proxyjump.py` にユニット + ライブ結合テスト(`HASHI_LIVE_SSH=1`)として恒久化。
+- ProxyCommand は引き続き未対応(外部コマンド実行が絡むため)。検出時はエラーで明示し、
+  ProxyJump への移行を案内する(黙って直接接続はしない)。
 
 ## [0.3.0] - 2026-07-11
 ### 変更
