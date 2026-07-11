@@ -11,6 +11,9 @@
 ### 修正
 - 内蔵エディタの検索(Ctrl+F / F3 / 次へ / 前へ)が `AttributeError` でクラッシュしていた
   (`QPlainTextEdit.FindFlag` → 正しくは `QTextDocument.FindFlag`)。
+- 悪意ある SFTP サーバーのファイル名で、選択した保存先の外へ書き込めるパストラバーサルを防止。
+- 確認ダイアログへ表示するファイル名を HTML エスケープ。
+- 接続診断ツールのコマンドライン引数から秘密情報を渡せる隠しオプションを削除。
 
 ### 追加
 - **`~/.ssh/config` の読み込み**(#3): ホスト欄の Host エイリアスから HostName / User /

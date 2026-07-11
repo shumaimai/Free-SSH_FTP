@@ -23,13 +23,10 @@ from hashi.ssh_core import ConnectCancelled, ConnectError, SshSession  # noqa: E
 class ConsoleUI:
     """ssh_core が要求する ui コールバックのコンソール版。"""
 
-    def __init__(self, auto_yes: bool = False, secret: str | None = None):
+    def __init__(self, auto_yes: bool = False):
         self.auto_yes = auto_yes
-        self.secret = secret
 
     def get_secret(self, prompt: str):
-        if self.secret is not None:
-            return self.secret
         try:
             return getpass.getpass(prompt.replace("\n", " ") + ": ")
         except (EOFError, KeyboardInterrupt):
@@ -55,7 +52,6 @@ def main() -> int:
     ap.add_argument("--password", action="store_true", help="パスワード認証を使う")
     ap.add_argument("--agent", action="store_true", help="SSH エージェント認証を使う")
     ap.add_argument("--yes", action="store_true", help="ホスト鍵を自動で信頼(検証用)")
-    ap.add_argument("--secret", default=None, help=argparse.SUPPRESS)  # テスト用
     args = ap.parse_args()
 
     if args.agent:
@@ -72,7 +68,7 @@ def main() -> int:
     print(f"[1] 接続先: {args.user}@{args.host}:{args.port}  認証: {method}")
 
     session = SshSession(profile, KnownHosts())
-    ui = ConsoleUI(auto_yes=args.yes, secret=args.secret)
+    ui = ConsoleUI(auto_yes=args.yes)
     t0 = time.time()
     try:
         session.connect(ui)

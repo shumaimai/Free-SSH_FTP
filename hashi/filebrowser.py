@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import logging
+import ntpath
 import os
 import posixpath
 import queue
@@ -21,6 +22,7 @@ import stat as statmod
 import tempfile
 import time
 from datetime import datetime
+from html import escape
 
 from PySide6.QtCore import Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
@@ -59,6 +61,35 @@ TEXT_EXTS = {
     "rb", "php", "pl", "sql", "csv", "tsv", "env", "service", "rules", "list",
     "gitignore", "dockerfile", "makefile", "properties",
 }
+
+
+def _safe_local_child(root: str, parent: str, name: str) -> str:
+    if not isinstance(name, str) or not name or name in (".", ".."):
+        raise ValueError("不正なリモートファイル名です")
+    drive, _ = ntpath.splitdrive(name)
+    if drive or "/" in name or "\\" in name or "\x00" in name:
+        raise ValueError(f"保存できないリモートファイル名です: {name!r}")
+
+    root_abs = os.path.abspath(root)
+    parent_abs = os.path.abspath(parent)
+    try:
+        if os.path.commonpath((root_abs, parent_abs)) != root_abs:
+            raise ValueError("保存先フォルダの外には書き込めません")
+    except ValueError as e:
+        raise ValueError("保存先フォルダの外には書き込めません") from e
+
+    root_real = os.path.realpath(root_abs)
+    parent_real = os.path.realpath(parent_abs)
+    try:
+        if os.path.commonpath((root_real, parent_real)) != root_real:
+            raise ValueError("保存先内のシンボリックリンクが外部を指しています")
+    except ValueError as e:
+        raise ValueError("保存先内のシンボリックリンクが外部を指しています") from e
+
+    candidate = os.path.join(parent_abs, name)
+    if os.path.lexists(candidate) and os.path.islink(candidate):
+        raise ValueError(f"シンボリックリンクには上書きできません: {name}")
+    return candidate
 
 
 class _Cancelled(Exception):
@@ -325,24 +356,26 @@ class SftpWorker(QThread):
         self.status.emit(f"アップロード完了 ({len(files)} ファイル)")
         self.job_done.emit("upload")
 
-    def _walk_remote(self, rpath: str, lpath: str, out: list):
+    def _walk_remote(self, rpath: str, lpath: str, root: str, out: list):
         os.makedirs(lpath, exist_ok=True)
         for attr in self._listdir_ov(rpath):
             self._check_cancel()
             r = posixpath.join(rpath, attr.filename)
-            l = os.path.join(lpath, attr.filename)
+            local = _safe_local_child(root, lpath, attr.filename)
             mode = attr.st_mode or 0
             if statmod.S_ISDIR(mode):
-                self._walk_remote(r, l, out)
+                self._walk_remote(r, local, root, out)
             else:
-                out.append((r, l, attr.st_size or 0))
+                out.append((r, local, attr.st_size or 0))
 
     def _job_download(self, job):
         plan: list[tuple[str, str, int]] = []  # (remote, local, size)
-        for remote, local, is_dir in job["items"]:
+        destination = job["destination"]
+        for remote, name, is_dir in job["items"]:
             self._check_cancel()
+            local = _safe_local_child(destination, destination, name)
             if is_dir:
-                self._walk_remote(remote, local, plan)
+                self._walk_remote(remote, local, destination, plan)
             else:
                 try:
                     size = self.sftp.stat(remote).st_size or 0
@@ -882,7 +915,7 @@ class SftpBrowser(QWidget):
         if not sel:
             return
         names = [e["name"] for e in sel]
-        shown = "<br>".join(f"・{n}" for n in names[:8])
+        shown = "<br>".join(f"・{escape(n)}" for n in names[:8])
         if len(names) > 8:
             shown += f"<br>… ほか {len(names) - 8} 件"
         # 1 段階目: 対象の一覧を見せて確認
@@ -939,7 +972,7 @@ class SftpBrowser(QWidget):
         rows = []
         for c in conflicts[:8]:
             rows.append(
-                f"・{posixpath.basename(c['remote'])} "
+                f"・{escape(posixpath.basename(c['remote']))} "
                 f"(リモート {human_size(c['r_size'])} {fmt_mtime(c['r_mtime'])}"
                 f" → 新 {human_size(c['l_size'])})"
             )
@@ -988,16 +1021,21 @@ class SftpBrowser(QWidget):
             return
         items = []
         conflicts = []
-        for e in sel:
-            remote = posixpath.join(self.cwd, e["name"])
-            local = os.path.join(dest, e["name"])
-            is_dir = e["is_dir"] and not e["is_link"]
-            if os.path.exists(local):
-                conflicts.append((e["name"], is_dir))
-            items.append((remote, local, is_dir))
+        try:
+            for e in sel:
+                remote = posixpath.join(self.cwd, e["name"])
+                is_dir = e["is_dir"] and not e["is_link"]
+                local = _safe_local_child(dest, dest, e["name"])
+                if os.path.exists(local):
+                    conflicts.append((e["name"], is_dir))
+                items.append((remote, e["name"], is_dir))
+        except ValueError as e:
+            QMessageBox.warning(self, "ダウンロード", str(e))
+            return
         if conflicts:
             shown = "<br>".join(
-                f"・{n}{' (フォルダ: 統合され同名ファイルは上書き)' if d else ''}"
+                f"・{escape(n)}"
+                f"{' (フォルダ: 統合され同名ファイルは上書き)' if d else ''}"
                 for n, d in conflicts[:8]
             )
             if len(conflicts) > 8:
@@ -1021,7 +1059,11 @@ class SftpBrowser(QWidget):
                 "overwrite", "上書きする",
             ):
                 return
-        self.xfer.enqueue({"kind": "download", "items": items})
+        self.xfer.enqueue({
+            "kind": "download",
+            "destination": dest,
+            "items": items,
+        })
 
     # ---- コンテキストメニュー ------------------------------------------------------
     def _context_menu(self, pos):
