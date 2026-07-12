@@ -139,7 +139,7 @@ def test_known_hosts_never_overwritten_on_import(env):
 def test_load_rejects_foreign_and_future_files(tmp_path):
     p = tmp_path / "x.json"
     p.write_text('{"hello": 1}', encoding="utf-8")
-    with pytest.raises(PortabilityError, match="エクスポートファイルでは"):
+    with pytest.raises(PortabilityError, match="エクスポート形式では"):
         load_bundle(p)
     p.write_text('{"format": "hashi-export", "version": 999}',
                  encoding="utf-8")

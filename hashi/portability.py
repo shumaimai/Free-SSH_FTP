@@ -66,13 +66,12 @@ def _decrypt_secrets(blob: dict, passphrase: str) -> dict:
     return json.loads(raw.decode("utf-8"))
 
 
-def export_bundle(path: str | Path, profiles: list[Profile],
-                  known_hosts: KnownHosts, credentials=None,
-                  passphrase: str | None = None) -> dict:
-    """接続情報を 1 ファイルへ書き出す。returns {"profiles": n, "secrets": n}。
+def build_bundle_dict(profiles: list[Profile], known_hosts: KnownHosts,
+                      credentials=None, passphrase: str | None = None):
+    """エクスポート用の dict を組み立てる。returns (data, secret_count)。
 
     passphrase と credentials の両方が渡されたときだけ秘密情報を(暗号化して)
-    含める。どちらか欠けたら秘密情報は一切書かない。
+    含める。どちらか欠けたら秘密情報は一切含めない。
     """
     data = {
         "format": FORMAT,
@@ -99,6 +98,31 @@ def export_bundle(path: str | Path, profiles: list[Profile],
                 secret_count += len(entry)
         if secrets:
             data["secrets"] = _encrypt_secrets(secrets, passphrase)
+    return data, secret_count
+
+
+def dumps_bundle(profiles: list[Profile], known_hosts: KnownHosts,
+                 credentials=None, passphrase: str | None = None) -> bytes:
+    """バンドルを JSON バイト列にする(P2P 転送など、ファイル以外の経路用)。"""
+    data, _ = build_bundle_dict(profiles, known_hosts, credentials, passphrase)
+    return json.dumps(data).encode("utf-8")
+
+
+def loads_bundle(data: bytes) -> "Bundle":
+    """JSON バイト列を Bundle に読み込む(秘密情報は未復号のまま)。"""
+    try:
+        parsed = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        raise PortabilityError(f"データを解釈できませんでした: {e}") from e
+    return _parse_bundle(parsed)
+
+
+def export_bundle(path: str | Path, profiles: list[Profile],
+                  known_hosts: KnownHosts, credentials=None,
+                  passphrase: str | None = None) -> dict:
+    """接続情報を 1 ファイルへ書き出す。returns {"profiles": n, "secrets": n}。"""
+    data, secret_count = build_bundle_dict(
+        profiles, known_hosts, credentials, passphrase)
     try:
         save_json_atomic(Path(path), data, ensure_ascii=False, indent=2)
     except OSError as e:
@@ -125,15 +149,9 @@ class Bundle:
         self.secrets = _decrypt_secrets(self.encrypted_secrets, passphrase)
 
 
-def load_bundle(path: str | Path) -> Bundle:
-    """エクスポートファイルを読み込んで検証する(秘密情報は未復号のまま)。"""
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
-        raise PortabilityError(f"読み込めませんでした: {e}") from e
+def _parse_bundle(data) -> Bundle:
     if not isinstance(data, dict) or data.get("format") != FORMAT:
-        raise PortabilityError("Hashi のエクスポートファイルではありません。")
+        raise PortabilityError("Hashi のエクスポート形式ではありません。")
     version = data.get("version")
     if not isinstance(version, int) or version > VERSION:
         raise PortabilityError(
@@ -153,6 +171,16 @@ def load_bundle(path: str | Path) -> Bundle:
         known_hosts=kh if isinstance(kh, dict) else {},
         encrypted_secrets=enc if isinstance(enc, dict) else None,
     )
+
+
+def load_bundle(path: str | Path) -> Bundle:
+    """エクスポートファイルを読み込んで検証する(秘密情報は未復号のまま)。"""
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
+        raise PortabilityError(f"読み込めませんでした: {e}") from e
+    return _parse_bundle(data)
 
 
 def merge_bundle(bundle: Bundle, store: ProfileStore, known_hosts: KnownHosts,
