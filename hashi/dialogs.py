@@ -584,6 +584,69 @@ class KeygenDialog(QDialog):
         }
 
 
+class SshdHardenDialog(QDialog):
+    """sshd 堅牢化(パスワードログイン無効化 / ポート変更、Issue #12)。"""
+
+    def __init__(self, parent=None, current_port: int = 22,
+                 password_enabled: bool = True):
+        super().__init__(parent)
+        self.setWindowTitle("SSH サーバーの設定を変更")
+        self.setModal(True)
+        self.setMinimumWidth(500)
+
+        form = QFormLayout()
+        self.chk_disable_pw = QCheckBox(
+            "パスワード認証を無効化する(鍵認証のみにする)")
+        self.chk_disable_pw.setEnabled(password_enabled)
+        if not password_enabled:
+            self.chk_disable_pw.setToolTip("既にパスワード認証は無効です")
+
+        self.chk_change_port = QCheckBox("ポート番号を変更する")
+        self.sp_port = QSpinBox()
+        self.sp_port.setRange(1, 65535)
+        self.sp_port.setValue(current_port)
+        self.sp_port.setEnabled(False)
+        self.chk_change_port.toggled.connect(self.sp_port.setEnabled)
+
+        form.addRow(self.chk_disable_pw)
+        form.addRow(self.chk_change_port, self.sp_port)
+
+        warn = QLabel(
+            "⚠ サーバーの SSH 設定を変更します。安全のため、変更前に設定を"
+            "バックアップし、構文検証・疎通確認をします。パスワード認証の無効化は"
+            "「登録済みの鍵で実際にログインできること」を確認できた場合のみ実行します。"
+            "\nsudo パスワードが必要です。")
+        warn.setWordWrap(True)
+        warn.setStyleSheet("color:#d0a050;")
+
+        buttons = QDialogButtonBox()
+        buttons.addButton("変更を適用", QDialogButtonBox.AcceptRole)
+        buttons.addButton("キャンセル", QDialogButtonBox.RejectRole)
+        buttons.accepted.connect(self._validate_accept)
+        buttons.rejected.connect(self.reject)
+
+        root = QVBoxLayout(self)
+        root.addLayout(form)
+        root.addWidget(warn)
+        root.addWidget(buttons)
+        self._current_port = current_port
+
+    def _validate_accept(self):
+        if not self.chk_disable_pw.isChecked() and not self.chk_change_port.isChecked():
+            return
+        if (self.chk_change_port.isChecked()
+                and self.sp_port.value() == self._current_port):
+            self.chk_change_port.setChecked(False)
+        self.accept()
+
+    def result_settings(self) -> dict:
+        return {
+            "disable_password": True if self.chk_disable_pw.isChecked() else None,
+            "new_port": (self.sp_port.value()
+                         if self.chk_change_port.isChecked() else None),
+        }
+
+
 class SettingsDialog(QDialog):
     """アプリ設定。"""
 

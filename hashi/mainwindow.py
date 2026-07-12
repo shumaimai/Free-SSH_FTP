@@ -29,15 +29,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import portability
+from . import portability, sshd_admin
 from .config import APP_VERSION, KnownHosts, Profile, ProfileStore, Settings
 from .credentials import CredentialStore
 from .dialogs import (
     ConnectDialog,
+    DoubleCheckDialog,
     HostKeyDialog,
     KeygenDialog,
     SecretDialog,
     SettingsDialog,
+    SshdHardenDialog,
     TunnelDialog,
     ask_secret,
 )
@@ -189,6 +191,92 @@ class KeygenWorker(QThread):
                 )
             else:
                 self.fail.emit(str(e))
+
+
+class SshdHardenWorker(QThread):
+    """sshd 設定変更(Issue #12)を GUI スレッド外で実行する。
+
+    鍵ログインの事前検証・変更後の疎通確認は、いずれも別接続を張るブロッキング
+    処理なのでこのワーカースレッド内で行う(GUI を固めない)。
+    """
+
+    ok = Signal(dict)
+    fail = Signal(str)
+
+    def __init__(self, session, profile, known_hosts, credentials,
+                 sudo_pw, changes):
+        super().__init__()
+        self.session = session
+        self.profile = profile
+        self.known_hosts = known_hosts
+        self.credentials = credentials
+        self.sudo_pw = sudo_pw
+        self.changes = changes
+
+    def _verify_ui(self):
+        creds = self.credentials
+        profile = self.profile
+
+        class _Ui:
+            def get_secret(self, prompt):
+                kind = ("passphrase"
+                        if "パスフレーズ" in prompt or "passphrase" in prompt.lower()
+                        else "password")
+                return creds.get(profile, kind) if creds else None
+
+            def confirm_hostkey(self, info):
+                # 同一ホストの再接続。TOFU 記録があれば一致し確認は呼ばれない。
+                return True
+
+        return _Ui()
+
+    def _verify_key_login(self) -> bool:
+        from dataclasses import replace
+
+        from .config import AUTH_KEY
+        if not self.profile.key_path:
+            return False
+        p = replace(self.profile, auth_method=AUTH_KEY)
+        sess = SshSession(p, self.known_hosts)
+        try:
+            sess.connect(self._verify_ui())
+            ok = sess.is_alive()
+            sess.close()
+            return ok
+        except Exception:
+            logger.info("鍵ログインの事前検証に失敗", exc_info=True)
+            return False
+
+    def _verify_reachable(self, port) -> bool:
+        from dataclasses import replace
+        target_port = port if port is not None else self.profile.port
+        p = replace(self.profile, port=target_port)
+        sess = SshSession(p, self.known_hosts)
+        try:
+            sess.connect(self._verify_ui())
+            ok = sess.is_alive()
+            sess.close()
+            return ok
+        except Exception:
+            logger.info("変更後の疎通確認に失敗 (port=%s)", target_port, exc_info=True)
+            return False
+
+    def run(self):
+        try:
+            self.session._hashi_sudo_pw = self.sudo_pw
+            res = sshd_admin.apply_changes(
+                self.session,
+                disable_password=self.changes.get("disable_password"),
+                new_port=self.changes.get("new_port"),
+                verify_key_login=self._verify_key_login,
+                verify_reachable=self._verify_reachable,
+            )
+            self.ok.emit(res)
+        except sshd_admin.SshdAdminError as e:
+            self.fail.emit(str(e))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("sshd 設定変更で予期しない例外", exc_info=True)
+            self.fail.emit(f"予期しないエラー: {e}")
 
 
 class SecretContext:
@@ -465,6 +553,7 @@ class MainWindow(QMainWindow):
         self.credentials = CredentialStore()
         self._workers: list[ConnectWorker] = []
         self._keygen_workers: list[KeygenWorker] = []
+        self._sshd_workers: list[SshdHardenWorker] = []
 
         # サイドバー
         side = QWidget()
@@ -531,6 +620,7 @@ class MainWindow(QMainWindow):
         m_sess.addAction("ポートフォワードを追加…", self._add_tunnel)
         m_sess.addAction("ポートフォワード一覧…", self._list_tunnels)
         m_sess.addAction("SSH 鍵を生成…", self._generate_key)
+        m_sess.addAction("SSH サーバー設定を変更…", self._harden_sshd)
         m_sess.addSeparator()
         m_sess.addAction("この接続の保存パスワードを削除", self._forget_credentials)
 
@@ -696,6 +786,64 @@ class MainWindow(QMainWindow):
             5000,
         )
         QMessageBox.information(self, "SSH 鍵の生成", message)
+
+    # ---- sshd 堅牢化 (Issue #12) --------------------------------------------
+    def _harden_sshd(self):
+        tab = self._current_tab()
+        if not tab:
+            QMessageBox.information(self, "SSH サーバー設定",
+                                    "接続中のタブがありません。")
+            return
+        session = tab.session
+        session._hashi_sudo_pw = tab.secret_ctx.get_sudo_password()
+        try:
+            eff = sshd_admin.read_effective(session)
+        except sshd_admin.SshdAdminError as e:
+            QMessageBox.warning(self, "SSH サーバー設定", str(e))
+            return
+        cur_port = eff["port"][0] if eff["port"] else 22
+        pw_enabled = eff.get("passwordauthentication") != "no"
+        dlg = SshdHardenDialog(self, current_port=cur_port,
+                               password_enabled=pw_enabled)
+        if not dlg.exec():
+            return
+        changes = dlg.result_settings()
+        if changes["disable_password"] is None and changes["new_port"] is None:
+            return
+
+        summary = []
+        if changes["disable_password"]:
+            summary.append("・パスワード認証を無効化(鍵認証のみに)")
+        if changes["new_port"] is not None:
+            summary.append(f"・ポート番号を {cur_port} → {changes['new_port']} へ変更")
+        if not DoubleCheckDialog.confirm(
+                self, "SSH サーバー設定の変更",
+                "以下のサーバー設定を変更します。<br>" + "<br>".join(summary)
+                + "<br><br>誤ると SSH に接続できなくなる可能性があります"
+                "(変更前にバックアップし、疎通確認に失敗したら自動で戻します)。",
+                "change", "変更を適用"):
+            return
+
+        sudo_pw = tab.secret_ctx.get_sudo_password()
+        worker = SshdHardenWorker(session, session.profile, self.known_hosts,
+                                  self.credentials, sudo_pw, changes)
+        worker.ok.connect(self._on_sshd_ok)
+        worker.fail.connect(
+            lambda msg: QMessageBox.warning(self, "SSH サーバー設定", msg))
+        worker.finished.connect(lambda w=worker: self._sshd_workers.remove(w))
+        self._sshd_workers.append(worker)
+        self.statusBar().showMessage("SSH サーバー設定を変更しています…")
+        worker.start()
+
+    def _on_sshd_ok(self, res: dict):
+        self.statusBar().showMessage("SSH サーバー設定を変更しました", 5000)
+        QMessageBox.information(
+            self, "SSH サーバー設定",
+            "設定を変更しました。\n"
+            f"バックアップ: {res.get('backup')}\n"
+            f"適用ファイル: {res.get('dropin')}\n\n"
+            "ポートを変更した場合、この接続のプロファイルのポートも"
+            "更新すると次回から新ポートで接続できます。")
 
     def _font_delta(self, d: int):
         tab = self.tabs.currentWidget()
