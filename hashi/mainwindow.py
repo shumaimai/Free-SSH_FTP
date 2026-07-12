@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import portability, sshd_admin
+from . import p2p, portability, sshd_admin
 from .config import APP_VERSION, KnownHosts, Profile, ProfileStore, Settings
 from .credentials import CredentialStore
 from .dialogs import (
@@ -38,6 +38,8 @@ from .dialogs import (
     DoubleCheckDialog,
     HostKeyDialog,
     KeygenDialog,
+    P2PSendDialog,
+    SasConfirmDialog,
     SecretDialog,
     SettingsDialog,
     SshdHardenDialog,
@@ -278,6 +280,98 @@ class SshdHardenWorker(QThread):
         except Exception as e:  # noqa: BLE001
             logger.warning("sshd 設定変更で予期しない例外", exc_info=True)
             self.fail.emit(f"予期しないエラー: {e}")
+
+
+class _P2PWorkerBase(QThread):
+    """P2P 送受信の共通土台。SAS 照合は GUI へ問い合わせてブロック待機する。"""
+
+    ask_confirm = Signal(str)      # SAS を渡して照合を依頼
+    fail = Signal(str)
+
+    def __init__(self):
+        super().__init__()
+        self._evt = threading.Event()
+        self._confirmed = False
+
+    def confirm(self, ok: bool):
+        self._confirmed = ok
+        self._evt.set()
+
+    def _wait_confirm(self, sas: str) -> bool:
+        self._evt.clear()
+        self.ask_confirm.emit(sas)
+        self._evt.wait()
+        return self._confirmed
+
+
+class P2PSendWorker(_P2PWorkerBase):
+    """P2P でバンドルを送信する。"""
+
+    ok = Signal()
+
+    def __init__(self, host, port, payload):
+        super().__init__()
+        self.host, self.port, self.payload = host, port, payload
+
+    def run(self):
+        sess = None
+        try:
+            sock = p2p.connect(self.host, self.port)
+            sess = p2p.Session(sock)
+            sas = sess.handshake()
+            if not self._wait_confirm(sas):
+                self.fail.emit("")   # 中止(静かに終了)
+                return
+            sess.send_payload(self.payload)
+            self.ok.emit()
+        except p2p.P2PError as e:
+            self.fail.emit(str(e))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("P2P 送信で予期しない例外", exc_info=True)
+            self.fail.emit(f"予期しないエラー: {e}")
+        finally:
+            if sess is not None:
+                sess.close()
+
+
+class P2PReceiveWorker(_P2PWorkerBase):
+    """P2P でバンドルを受信する(受信の瞬間だけリッスンする)。"""
+
+    ok = Signal(bytes)
+
+    def __init__(self, host, port, accept_timeout=120.0):
+        super().__init__()
+        self.host, self.port, self.accept_timeout = host, port, accept_timeout
+
+    def run(self):
+        srv = sess = None
+        try:
+            srv = p2p.listen(self.host, self.port, timeout=self.accept_timeout)
+            try:
+                conn, _addr = srv.accept()
+            except OSError as e:
+                raise p2p.P2PError(
+                    f"送信側からの接続待ちがタイムアウトしました ({e})") from e
+            sess = p2p.Session(conn)
+            sas = sess.handshake()
+            if not self._wait_confirm(sas):
+                self.fail.emit("")
+                return
+            payload = sess.receive_payload()
+            self.ok.emit(payload)
+        except p2p.P2PError as e:
+            self.fail.emit(str(e))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("P2P 受信で予期しない例外", exc_info=True)
+            self.fail.emit(f"予期しないエラー: {e}")
+        finally:
+            if sess is not None:
+                sess.close()
+            if srv is not None:
+                try:
+                    srv.close()
+                except OSError:
+                    logger.debug("P2P リッスンソケットのクローズに失敗", exc_info=True)
 
 
 class SecretContext:
@@ -569,6 +663,7 @@ class MainWindow(QMainWindow):
         self._workers: list[ConnectWorker] = []
         self._keygen_workers: list[KeygenWorker] = []
         self._sshd_workers: list[SshdHardenWorker] = []
+        self._p2p_workers: list[_P2PWorkerBase] = []
 
         # サイドバー
         side = QWidget()
@@ -619,6 +714,9 @@ class MainWindow(QMainWindow):
         m_file.addSeparator()
         m_file.addAction("接続情報を書き出す…", self._export_profiles)
         m_file.addAction("接続情報を読み込む…", self._import_profiles)
+        m_file.addSeparator()
+        m_file.addAction("接続情報を送信 (P2P)…", self._p2p_send)
+        m_file.addAction("接続情報を受信 (P2P)…", self._p2p_receive)
         m_file.addSeparator()
         m_file.addAction("設定…", self._open_settings)
         m_file.addSeparator()
@@ -710,6 +808,10 @@ class MainWindow(QMainWindow):
         except portability.PortabilityError as e:
             QMessageBox.warning(self, "読み込み", str(e))
             return
+        self._apply_imported_bundle(bundle)
+
+    def _apply_imported_bundle(self, bundle, title: str = "読み込み"):
+        """読み込んだバンドルを対話的に統合する(ファイル/P2P 受信で共用)。"""
         if bundle.has_encrypted_secrets and self.credentials.available:
             for _ in range(3):
                 pw = ask_secret(
@@ -721,13 +823,13 @@ class MainWindow(QMainWindow):
                     bundle.decrypt_secrets(pw)
                     break
                 except portability.PortabilityError as e:
-                    QMessageBox.warning(self, "読み込み", str(e))
+                    QMessageBox.warning(self, title, str(e))
         overwrite = False
         ids = {p.id_str() for p in self.store.profiles}
         dups = sum(1 for p in bundle.profiles if p.id_str() in ids)
         if dups:
             r = QMessageBox.question(
-                self, "読み込み",
+                self, title,
                 f"既存と重複するプロファイルが {dups} 件あります。"
                 "上書きしますか?\n(いいえ = 既存を残してスキップ)",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
@@ -741,7 +843,72 @@ class MainWindow(QMainWindow):
                "(既存の記録は上書きしません)")
         if counts["secrets"]:
             msg += f"\n秘密情報 {counts['secrets']} 件を保存しました"
-        QMessageBox.information(self, "読み込み", msg)
+        QMessageBox.information(self, title, msg)
+
+    # ---- P2P 共有 (Issue #43) -----------------------------------------------
+    def _p2p_send(self):
+        if not self.store.profiles:
+            QMessageBox.information(self, "P2P 送信",
+                                    "送信するプロファイルがありません。")
+            return
+        dlg = P2PSendDialog(self, default_port=p2p.DEFAULT_PORT)
+        if not dlg.exec():
+            return
+        target = dlg.result_target()
+        passphrase = None
+        if target["include_secrets"] and self.credentials.available:
+            passphrase = self._ask_new_export_passphrase()
+            if passphrase is None:
+                return
+        payload = portability.dumps_bundle(
+            self.store.profiles, self.known_hosts,
+            self.credentials if passphrase else None, passphrase)
+        worker = P2PSendWorker(target["host"], target["port"], payload)
+        worker.ask_confirm.connect(
+            lambda sas, w=worker: w.confirm(
+                SasConfirmDialog.confirm(self, sas, "送信")))
+        worker.ok.connect(
+            lambda: QMessageBox.information(
+                self, "P2P 送信", "接続情報を送信しました。"))
+        worker.fail.connect(self._on_p2p_fail)
+        worker.finished.connect(lambda w=worker: self._p2p_workers.remove(w))
+        self._p2p_workers.append(worker)
+        self.statusBar().showMessage("P2P: 相手に接続しています…")
+        worker.start()
+
+    def _p2p_receive(self):
+        r = QMessageBox.question(
+            self, "P2P 受信",
+            f"ポート {p2p.DEFAULT_PORT} で送信側からの接続を待ちます"
+            "(最大 2 分)。続行しますか?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+        if r != QMessageBox.Yes:
+            return
+        worker = P2PReceiveWorker("0.0.0.0", p2p.DEFAULT_PORT)
+        worker.ask_confirm.connect(
+            lambda sas, w=worker: w.confirm(
+                SasConfirmDialog.confirm(self, sas, "受信")))
+        worker.ok.connect(self._on_p2p_received)
+        worker.fail.connect(self._on_p2p_fail)
+        worker.finished.connect(lambda w=worker: self._p2p_workers.remove(w))
+        self._p2p_workers.append(worker)
+        self.statusBar().showMessage(
+            f"P2P: ポート {p2p.DEFAULT_PORT} で受信待ち…")
+        worker.start()
+
+    def _on_p2p_received(self, payload: bytes):
+        try:
+            bundle = portability.loads_bundle(payload)
+        except portability.PortabilityError as e:
+            QMessageBox.warning(self, "P2P 受信", str(e))
+            return
+        self._apply_imported_bundle(bundle, title="P2P 受信")
+
+    def _on_p2p_fail(self, msg: str):
+        if msg:
+            QMessageBox.warning(self, "P2P", msg)
+        self.statusBar().showMessage(
+            "P2P: 失敗しました" if msg else "P2P: 中止しました", 4000)
 
     def _current_tab(self):
         w = self.tabs.currentWidget()

@@ -584,6 +584,97 @@ class KeygenDialog(QDialog):
         }
 
 
+class P2PSendDialog(QDialog):
+    """P2P 送信の宛先入力(Issue #43)。"""
+
+    def __init__(self, parent=None, default_port: int = 53517):
+        super().__init__(parent)
+        self.setWindowTitle("接続情報を送信 (P2P)")
+        self.setModal(True)
+        self.setMinimumWidth(420)
+
+        form = QFormLayout()
+        self.ed_host = QLineEdit()
+        self.ed_host.setPlaceholderText("相手の IP アドレス / ホスト名")
+        self.sp_port = QSpinBox()
+        self.sp_port.setRange(1, 65535)
+        self.sp_port.setValue(default_port)
+        self.chk_secrets = QCheckBox(
+            "保存済みの秘密情報も送る(パスフレーズで暗号化)")
+        form.addRow("送信先", self.ed_host)
+        form.addRow("ポート", self.sp_port)
+        form.addRow("", self.chk_secrets)
+
+        note = QLabel(
+            "相手側で「接続情報を受信」を先に開始してください。\n"
+            "接続後に表示される確認コードを、電話など別の手段で照合します。")
+        note.setWordWrap(True)
+        note.setStyleSheet("color:#888;")
+
+        buttons = QDialogButtonBox()
+        buttons.addButton("接続", QDialogButtonBox.AcceptRole)
+        buttons.addButton("キャンセル", QDialogButtonBox.RejectRole)
+        buttons.accepted.connect(self._validate_accept)
+        buttons.rejected.connect(self.reject)
+
+        root = QVBoxLayout(self)
+        root.addLayout(form)
+        root.addWidget(note)
+        root.addWidget(buttons)
+
+    def _validate_accept(self):
+        if self.ed_host.text().strip():
+            self.accept()
+        else:
+            self.ed_host.setFocus()
+
+    def result_target(self) -> dict:
+        return {
+            "host": self.ed_host.text().strip(),
+            "port": self.sp_port.value(),
+            "include_secrets": self.chk_secrets.isChecked(),
+        }
+
+
+class SasConfirmDialog(QDialog):
+    """確認コード(SAS)の照合ダイアログ(Issue #43)。"""
+
+    def __init__(self, parent, sas: str, role: str):
+        super().__init__(parent)
+        self.setWindowTitle("確認コードの照合")
+        self.setModal(True)
+        self.setMinimumWidth(400)
+        lay = QVBoxLayout(self)
+        msg = QLabel(
+            f"{role}の確認コードです。相手と同じか、電話など別の手段で"
+            "照合してください。一致していなければ<b>中止</b>してください"
+            "(中間者攻撃の可能性)。")
+        msg.setWordWrap(True)
+        msg.setTextFormat(Qt.RichText)
+        lay.addWidget(msg)
+
+        code = QLabel(sas)
+        f = QFont()
+        f.setPointSize(28)
+        f.setBold(True)
+        code.setFont(f)
+        code.setAlignment(Qt.AlignCenter)
+        code.setStyleSheet("letter-spacing:8px; padding:12px;")
+        lay.addWidget(code)
+
+        buttons = QDialogButtonBox()
+        buttons.addButton("一致している(続行)", QDialogButtonBox.AcceptRole)
+        cancel = buttons.addButton("中止", QDialogButtonBox.RejectRole)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        cancel.setDefault(True)
+        lay.addWidget(buttons)
+
+    @staticmethod
+    def confirm(parent, sas: str, role: str) -> bool:
+        return SasConfirmDialog(parent, sas, role).exec() == QDialog.Accepted
+
+
 class SshdHardenDialog(QDialog):
     """sshd 堅牢化(パスワードログイン無効化 / ポート変更、Issue #12)。"""
 
