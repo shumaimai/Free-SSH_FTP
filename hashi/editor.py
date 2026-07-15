@@ -37,6 +37,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .windowfit import fit_to_screen
+
 # ---- シンタックスハイライト規則 -------------------------------------------------
 # 色 (One Half Dark 系)
 C_KEYWORD = "#c678dd"
@@ -281,7 +283,7 @@ class EditorWindow(QMainWindow):
             tab_width=settings.get("editor_tab_width"),
         )
         self.setCentralWidget(self.editor)
-        self.resize(900, 640)
+        fit_to_screen(self, 900, 640)
 
         # 読み込み
         try:
