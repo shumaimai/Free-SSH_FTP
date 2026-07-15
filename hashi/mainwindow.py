@@ -50,6 +50,7 @@ from .forward import DynamicForward, Forward, LocalForward, RemoteForward
 from .keygen import generate_key, register_public_key
 from .ssh_core import ConnectCancelled, SshSession
 from .terminal import TerminalWidget
+from .windowfit import fit_to_screen
 
 logger = logging.getLogger(__name__)
 
@@ -1073,7 +1074,7 @@ class LauncherWindow(_SharedOps, QMainWindow):
     def __init__(self, services: dict | None = None):
         super().__init__()
         self.setWindowTitle(f"Hashi — 接続先を選択 v{APP_VERSION}")
-        self.resize(420, 640)
+        fit_to_screen(self, 420, 640)
 
         if services is None:
             services = {
@@ -1226,7 +1227,7 @@ class SessionWindow(_SharedOps, QMainWindow):
         self._cloud_workers: list[CloudSyncWorker] = []
         SessionWindow._windows.append(self)
 
-        self.resize(1280, 760)
+        fit_to_screen(self, 1280, 760)
         self.setWindowTitle(f"接続中: {profile.label()}")
         self._connecting = ConnectingWidget(profile)
         self.setCentralWidget(self._connecting)
