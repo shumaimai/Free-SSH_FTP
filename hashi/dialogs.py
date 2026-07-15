@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import style
 from .config import AUTH_AGENT, AUTH_KEY, AUTH_PASSWORD, Profile
 from .keygen import ECDSA_BITS, RSA_BITS
 
@@ -92,7 +93,7 @@ class HostKeyDialog(QDialog):
         lay = QVBoxLayout(self)
         if mismatch:
             warn = QLabel(
-                "<b style='color:#e06c75; font-size:14px;'>"
+                f"<b style='color:{style.ERROR}; font-size:14px;'>"
                 "⚠ 警告: このホストの鍵が以前と異なります。</b><br>"
                 "サーバーの再構築が原因の場合もありますが、"
                 "<b>中間者攻撃(なりすまし)の可能性</b>もあります。<br>"
@@ -119,7 +120,7 @@ class HostKeyDialog(QDialog):
         if mismatch and info.get("old_fingerprint"):
             old = QLabel(f"記録済みの鍵: {info['old_fingerprint']}")
             old.setFont(mono)
-            old.setStyleSheet("color:#888;")
+            old.setStyleSheet(f"color:{style.FG_MUTED};")
             lay.addWidget(old)
 
         buttons = QDialogButtonBox()
@@ -278,7 +279,7 @@ class ConnectDialog(QDialog):
             "保存する場合、OS の資格情報ストア(Windows 資格情報マネージャ等)を"
             "優先して使います。利用できない環境では暗号化ファイルに保存します。"
         )
-        note.setStyleSheet("color:#888;")
+        note.setStyleSheet(f"color:{style.FG_MUTED};")
         note.setWordWrap(True)
 
         buttons = QDialogButtonBox()
@@ -405,7 +406,7 @@ class TunnelDialog(QDialog):
             "例: ローカル 8080 → サーバー側から見た 127.0.0.1:80 に転送。\n"
             "localhost:ローカルポート にアクセスすると、SSH 経由で転送先へ繋がります。"
         )
-        self.note.setStyleSheet("color:#888;")
+        self.note.setStyleSheet(f"color:{style.FG_MUTED};")
         self.note.setWordWrap(True)
 
         buttons = QDialogButtonBox()
@@ -521,7 +522,7 @@ class KeygenDialog(QDialog):
         note = QLabel(
             "秘密鍵は指定した場所へ保存し、POSIX 環境では権限を 600 に設定します。"
         )
-        note.setStyleSheet("color:#888;")
+        note.setStyleSheet(f"color:{style.FG_MUTED};")
         note.setWordWrap(True)
 
         buttons = QDialogButtonBox()
@@ -626,7 +627,7 @@ class NetAdminDialog(QDialog):
             "自動で元へ戻します。netplan(Ubuntu Server)以外の環境では実行しません。"
             "\nsudo パスワードが必要です。")
         warn.setWordWrap(True)
-        warn.setStyleSheet("color:#d0a050;")
+        warn.setStyleSheet(f"color:{style.WARN};")
 
         buttons = QDialogButtonBox()
         buttons.addButton("適用", QDialogButtonBox.AcceptRole)
@@ -686,7 +687,7 @@ class P2PSendDialog(QDialog):
             "相手側で「接続情報を受信」を先に開始してください。\n"
             "接続後に表示される確認コードを、電話など別の手段で照合します。")
         note.setWordWrap(True)
-        note.setStyleSheet("color:#888;")
+        note.setStyleSheet(f"color:{style.FG_MUTED};")
 
         buttons = QDialogButtonBox()
         buttons.addButton("接続", QDialogButtonBox.AcceptRole)
@@ -772,7 +773,7 @@ class SshdHardenDialog(QDialog):
         self.lbl_state = QLabel(
             f"現在の状態: パスワード認証は <b>{state}</b> / "
             f"待受ポート: <b>{ports_str}</b>"
-            "<br><span style='color:#888;'>(sshd -T の実効値。Include や "
+            f"<br><span style='color:{style.FG_MUTED};'>(sshd -T の実効値。Include や "
             "sshd_config.d を解決済み。Match ブロックで個別に上書きしている"
             "構成では実挙動が異なる場合があります)</span>")
         self.lbl_state.setWordWrap(True)
@@ -809,7 +810,7 @@ class SshdHardenDialog(QDialog):
             "「登録済みの鍵で実際にログインできること」を確認できた場合のみ実行します。"
             "\nsudo パスワードが必要です。")
         warn.setWordWrap(True)
-        warn.setStyleSheet("color:#d0a050;")
+        warn.setStyleSheet(f"color:{style.WARN};")
 
         buttons = QDialogButtonBox()
         buttons.addButton("変更を適用", QDialogButtonBox.AcceptRole)
@@ -884,7 +885,7 @@ class SettingsDialog(QDialog):
         form.addRow("エディタ文字サイズ", self.sp_efont)
         form.addRow("エディタのタブ幅", self.sp_tab)
         note = QLabel("一部の設定は新しい接続/タブから反映されます。")
-        note.setStyleSheet("color:#888;")
+        note.setStyleSheet(f"color:{style.FG_MUTED};")
         buttons = QDialogButtonBox()
         buttons.addButton("保存", QDialogButtonBox.AcceptRole)
         buttons.addButton("キャンセル", QDialogButtonBox.RejectRole)

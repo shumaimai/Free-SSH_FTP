@@ -182,6 +182,10 @@ tests/                 pytest(ネットワーク不要。フェイク SSH を co
 ## お作法
 
 - 変更したら **`pytest` と `compileall` を通す**。GUI を絡む変更は offscreen で起動確認。
+- **UI の追加・変更は `docs/ui-style-guide.md` に準拠する**(Issue #87)。色コードや
+  ダイアログ幅の直書きは禁止で、`hashi/style.py` の定数/ヘルパー
+  (`warning_label` / `muted_label` / `DIALOG_S/M/L` 等)を使う。既存の直書きは
+  そのファイルを触る PR のついでに置換(ボーイスカウト方式。専用の巨大置換 PR は作らない)。
 - 権限無視まわり(`privilege.py` / `permjournal.py`)は**必ず対応するテストを足す/更新する**。
   ここは事故るとサーバー側のファイル権限を壊しかねない箇所なので慎重に。
 - 日本語 UI / コメントを維持。ユーザーへの説明は簡潔・率直に。未検証は未検証と書く。

@@ -54,6 +54,14 @@
   効かなくなる。チャンクごとにキャンセル判定・進捗通知する既存設計（`_download_file`/
   `_upload_file`）を維持する。
 
+## UI の共通ルール（Issue #87）
+
+- UI の追加・変更は `docs/ui-style-guide.md` に準拠すること。
+- 色コード・ダイアログ幅を直書きしないこと。`hashi/style.py` の定数/ヘルパー
+  （`WARN`/`ERROR`/`FG_MUTED`、`warning_label`/`muted_label`、`DIALOG_S/M/L`）を使う。
+- 破壊的操作は `DoubleCheckDialog`（確認語入力）を必須とし、自動処理の失敗や
+  ロールバックを静かに握り潰さないこと（必ずユーザーへ通知する）。
+
 ## 壊してはいけない重要な設計（新機能ぶん）
 
 ### ウィンドウ構成（`hashi/mainwindow.py`）

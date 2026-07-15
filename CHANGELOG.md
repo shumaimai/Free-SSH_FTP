@@ -3,6 +3,12 @@
 このプロジェクトは [Semantic Versioning](https://semver.org/lang/ja/) に緩く従います。
 
 ## [Unreleased]
+### 追加(開発基盤)
+- **UI 共通スタイル基盤(Issue #87)**。`docs/ui-style-guide.md`(色・余白・
+  ダイアログの型・通知の使い分け・文言のルール)と `hashi/style.py`(パレット
+  定数・寸法・注意書き/補足ラベルのヘルパー)を追加。dialogs.py の色直書きを
+  定数参照へ置換。以後の UI 変更はガイド準拠(CLAUDE.md / .windsurfrules に明記)。
+
 ### 修正
 - **ターミナルのリサイズ / 表示切替で入力位置(カーソル)が乱れることがあるバグ
   (Issue #72)**。pyte スクリーンの resize が失敗しても描画グリッドと PTY だけ
