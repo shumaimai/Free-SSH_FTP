@@ -170,3 +170,18 @@ def test_no_changes_rejected():
     sess = FakeSession()
     with pytest.raises(SshdAdminError, match="変更内容"):
         apply_changes(sess)
+
+
+def test_apply_changes_returns_new_port():
+    """ポート変更の成否をプロファイル自動更新(#62)が判断できるよう new_port を返す。"""
+    sess = FakeSession()
+    _with_include(sess)
+    res = sshd_admin.apply_changes(sess, new_port=2222,
+                                   verify_reachable=lambda port: True)
+    assert res["new_port"] == 2222
+
+    sess2 = FakeSession()
+    _with_include(sess2)
+    res2 = sshd_admin.apply_changes(sess2, disable_password=True,
+                                    verify_key_login=lambda: True)
+    assert res2["new_port"] is None

@@ -756,7 +756,7 @@ class SshdHardenDialog(QDialog):
     """sshd 堅牢化(パスワードログイン無効化 / ポート変更、Issue #12)。"""
 
     def __init__(self, parent=None, current_port: int = 22,
-                 password_enabled: bool = True):
+                 password_enabled: bool = True, current_ports=None):
         super().__init__(parent)
         self.setWindowTitle("SSH サーバーの設定を変更")
         self.setModal(True)
@@ -769,6 +769,13 @@ class SshdHardenDialog(QDialog):
         if not password_enabled:
             self.chk_disable_pw.setToolTip("既にパスワード認証は無効です")
 
+        # 複数ポートをわざと設定している場合に備え、現在の待受ポートから
+        # 「どれを基準に変更するか」を選ばせる(#62)
+        self.cb_cur_port = QComboBox()
+        for p in (current_ports or [current_port]):
+            self.cb_cur_port.addItem(str(p), p)
+        self.cb_cur_port.currentIndexChanged.connect(self._on_cur_port_changed)
+
         self.chk_change_port = QCheckBox("ポート番号を変更する")
         self.sp_port = QSpinBox()
         self.sp_port.setRange(1, 65535)
@@ -777,6 +784,8 @@ class SshdHardenDialog(QDialog):
         self.chk_change_port.toggled.connect(self.sp_port.setEnabled)
 
         form.addRow(self.chk_disable_pw)
+        if (current_ports or [current_port]) != [current_port]:
+            form.addRow("現在の待受ポート", self.cb_cur_port)
         form.addRow(self.chk_change_port, self.sp_port)
 
         warn = QLabel(
@@ -798,6 +807,13 @@ class SshdHardenDialog(QDialog):
         root.addWidget(warn)
         root.addWidget(buttons)
         self._current_port = current_port
+
+    def _on_cur_port_changed(self, _index):
+        cur = self.cb_cur_port.currentData()
+        if cur is not None:
+            self._current_port = int(cur)
+            if not self.chk_change_port.isChecked():
+                self.sp_port.setValue(self._current_port)
 
     def _validate_accept(self):
         if not self.chk_disable_pw.isChecked() and not self.chk_change_port.isChecked():

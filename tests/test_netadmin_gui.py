@@ -123,3 +123,61 @@ def test_netadmin_worker_reports_error(qapp, monkeypatch):
     worker.fail.connect(fails.append)
     worker.run()
     assert fails == ["疎通確認に失敗しました"]
+
+
+def test_sshd_dialog_current_ports_selection(qapp):
+    """複数の待受ポートから基準を選べる(#62)。"""
+    from hashi.dialogs import SshdHardenDialog
+
+    dlg = SshdHardenDialog(current_port=22, current_ports=[22, 2222])
+    assert dlg.cb_cur_port.count() == 2
+    # 基準ポートを 2222 に切り替えるとスピンボックスと比較基準が追従する
+    dlg.cb_cur_port.setCurrentIndex(1)
+    assert dlg._current_port == 2222
+    assert dlg.sp_port.value() == 2222
+    # 「変更後 = 基準ポート」は変更なし扱いになる(既存挙動の維持)
+    dlg.chk_change_port.setChecked(True)
+    dlg.sp_port.setValue(2222)
+    dlg._validate_accept()
+    assert dlg.result_settings()["new_port"] is None
+
+
+def test_update_profile_fields_updates_matching_profile(qapp):
+    """成功時のプロファイル自動更新(#61/#62 共通ヘルパー)。"""
+    from types import SimpleNamespace
+
+    from hashi.config import Profile
+    from hashi.mainwindow import SessionWindow
+
+    prof = Profile(name="srv", host="192.168.0.10", port=22, username="user")
+    other = Profile(name="other", host="10.0.0.1", port=22, username="user")
+
+    class FakeStore:
+        def __init__(self):
+            self.profiles = [prof, other]
+            self.saved = 0
+
+        def save(self):
+            self.saved += 1
+
+    fake = SimpleNamespace(
+        store=FakeStore(),
+        session_tab=SimpleNamespace(
+            session=SimpleNamespace(
+                profile=Profile(host="192.168.0.10", port=22,
+                                username="user"))))
+
+    assert SessionWindow._update_profile_fields(fake, host="192.168.0.99")
+    assert prof.host == "192.168.0.99"
+    assert other.host == "10.0.0.1"
+    assert fake.store.saved == 1
+
+    # 一致するプロファイルが無ければ False(保存もしない)
+    fake2 = SimpleNamespace(
+        store=FakeStore(),
+        session_tab=SimpleNamespace(
+            session=SimpleNamespace(
+                profile=Profile(host="203.0.113.5", port=22, username="x"))))
+    saved_before = fake2.store.saved
+    assert not SessionWindow._update_profile_fields(fake2, port=2222)
+    assert fake2.store.saved == saved_before

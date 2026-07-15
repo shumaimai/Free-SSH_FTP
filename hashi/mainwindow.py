@@ -1372,10 +1372,12 @@ class SessionWindow(_SharedOps, QMainWindow):
         except sshd_admin.SshdAdminError as e:
             QMessageBox.warning(self, "SSH サーバー設定", str(e))
             return
-        cur_port = eff["port"][0] if eff["port"] else 22
+        cur_ports = eff["port"] or [22]
+        cur_port = cur_ports[0]
         pw_enabled = eff.get("passwordauthentication") != "no"
         dlg = SshdHardenDialog(self, current_port=cur_port,
-                               password_enabled=pw_enabled)
+                               password_enabled=pw_enabled,
+                               current_ports=cur_ports)
         if not dlg.exec():
             return
         changes = dlg.result_settings()
@@ -1387,11 +1389,14 @@ class SessionWindow(_SharedOps, QMainWindow):
             summary.append("・パスワード認証を無効化(鍵認証のみに)")
         if changes["new_port"] is not None:
             summary.append(f"・ポート番号を {cur_port} → {changes['new_port']} へ変更")
+        extra = ("<br>成功すると接続プロファイルのポートも自動更新されます。"
+                 if changes["new_port"] is not None else "")
         if not DoubleCheckDialog.confirm(
                 self, "SSH サーバー設定の変更",
                 "以下のサーバー設定を変更します。<br>" + "<br>".join(summary)
                 + "<br><br>誤ると SSH に接続できなくなる可能性があります"
-                "(変更前にバックアップし、疎通確認に失敗したら自動で戻します)。",
+                "(変更前にバックアップし、疎通確認に失敗したら自動で戻します)。"
+                + extra,
                 "change", "変更を適用"):
             return
 
@@ -1408,13 +1413,19 @@ class SessionWindow(_SharedOps, QMainWindow):
 
     def _on_sshd_ok(self, res: dict):
         self.statusBar().showMessage("SSH サーバー設定を変更しました", 5000)
+        new_port = res.get("new_port")
+        note = ""
+        if new_port is not None:
+            updated = self._update_profile_fields(port=int(new_port))
+            note = (f"\n接続プロファイルのポートを {new_port} に自動更新しました。"
+                    "次回から新ポートで接続します。" if updated else
+                    "\n接続プロファイルは見つからなかったため未更新です。"
+                    f"次回接続の前にポートを {new_port} へ変更してください。")
         QMessageBox.information(
             self, "SSH サーバー設定",
             "設定を変更しました。\n"
             f"バックアップ: {res.get('backup')}\n"
-            f"適用ファイル: {res.get('dropin')}\n\n"
-            "ポートを変更した場合、この接続のプロファイルのポートも"
-            "更新すると次回から新ポートで接続できます。")
+            f"適用ファイル: {res.get('dropin')}" + note)
 
     # ---- 静的 IP 設定 (Issue #45) -------------------------------------------
     def _static_ip(self):
@@ -1492,6 +1503,10 @@ class SessionWindow(_SharedOps, QMainWindow):
 
     def _update_profile_host(self, new_ip: str) -> bool:
         """保存済みプロファイルのホストを新 IP に書き換える(#61)。"""
+        return self._update_profile_fields(host=new_ip)
+
+    def _update_profile_fields(self, **fields) -> bool:
+        """この接続のプロファイルを書き換えて保存する(#61/#62 共通)。"""
         tab = self.session_tab
         if not tab:
             return False
@@ -1499,7 +1514,8 @@ class SessionWindow(_SharedOps, QMainWindow):
         updated = False
         for p in self.store.profiles:
             if p.id_str() == old_id:
-                p.host = new_ip
+                for key, value in fields.items():
+                    setattr(p, key, value)
                 updated = True
         if updated:
             self.store.save()

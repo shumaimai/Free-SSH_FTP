@@ -161,7 +161,7 @@ def apply_changes(session, *, disable_password: bool | None = None,
     - ドロップイン方式のみ対応(Include がない古い環境は明示エラー)。
     - `verify_reachable(port)` があれば reload 後に呼び、False なら
       バックアップから戻して(ドロップイン削除)エラーにする。
-    returns {"backup": path, "dropin": path, "reloaded": True}。
+    returns {"backup": path, "dropin": path, "reloaded": True, "new_port": int|None}。
     """
     if disable_password is None and new_port is None:
         raise SshdAdminError("変更内容がありません。")
@@ -200,7 +200,8 @@ def apply_changes(session, *, disable_password: bool | None = None,
                 "変更後の疎通確認に失敗しました。設定を元に戻しました"
                 "(ドロップインを削除)。ファイアウォールで新ポートが"
                 "塞がれている可能性があります。")
-    return {"backup": backup, "dropin": DROPIN_PATH, "reloaded": True}
+    return {"backup": backup, "dropin": DROPIN_PATH, "reloaded": True,
+            "new_port": new_port}
 
 
 def _remove_dropin(session) -> None:
