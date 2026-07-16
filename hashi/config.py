@@ -113,12 +113,14 @@ class Settings:
         "sudo_autofill": True,          # sudo プロンプト検知時に自動でパスワード送信
         "permission_override": False,   # SFTP 権限無視スイッチの既定
         "right_click_paste": True,      # 右クリックで貼り付け (PuTTY 流)
+        "keepalive_interval": 30,       # SSH キープアライブ間隔(秒)。0 で無効
+        "auto_reconnect": True,         # 接続切断時の自動再接続
+        "auto_reconnect_max": 5,        # 自動再接続の最大試行回数
         "terminal_font_size": 11,
         "editor_font_size": 12,
         "editor_tab_width": 4,
         "open_text_in_editor": True,    # テキストは内蔵エディタで開く
         "external_autoupload": True,    # 関連付けアプリで開いたファイルの変更を自動アップロード
-        "keepalive_interval": 30,       # SSH キープアライブ間隔(秒)。0 で無効
     }
 
     def __init__(self, path: Path | None = None):

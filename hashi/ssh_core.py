@@ -156,9 +156,9 @@ class SshSession:
     def __init__(self, profile: Profile, known_hosts: KnownHosts | None = None):
         self.profile = profile
         self.known_hosts = known_hosts or KnownHosts()
+        self.keepalive = 30  # Settings から上書き可能
         self.transport: paramiko.Transport | None = None
         self._jump_transports: list[paramiko.Transport] = []
-        self.keepalive = 30  # Settings から上書き可能
 
     # ---- 接続 -------------------------------------------------------------
     def connect(self, ui) -> None:

@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSplitter,
+    QToolBar,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -762,6 +763,31 @@ class SessionTab(QWidget):
         self.terminal.detach()
         self.session.close()
 
+    def reconnect_session(self, session: SshSession):
+        """接続を張り直し、ターミナル/ブラウザを新しい session に乗り換える。"""
+        old_session = self.session
+        self.session = session
+        try:
+            self.terminal.detach()
+            ch = session.open_shell(
+                cols=self.terminal.screen.columns,
+                rows=self.terminal.screen.lines,
+            )
+            self.terminal.attach(ch)
+        except Exception:  # noqa: BLE001
+            logger.warning("ターミナル再接続に失敗", exc_info=True)
+        try:
+            self.browser.reconnect_session(session)
+        except Exception:  # noqa: BLE001
+            logger.warning("SFTP ブラウザ再接続に失敗", exc_info=True)
+        for fw in self.tunnels:
+            fw.stop()
+        self.tunnels = []
+        try:
+            old_session.close()
+        except Exception:
+            logger.debug("古い session の close に失敗 (無視)", exc_info=True)
+
 
 class _SharedOps:
     """ランチャーとセッションウィンドウで共通のメニュー操作。
@@ -1239,7 +1265,32 @@ class SessionWindow(_SharedOps, QMainWindow):
         self._connecting = ConnectingWidget(profile)
         self.setCentralWidget(self._connecting)
         self._build_menu()
+        self._build_reconnect_bar()
         self.statusBar().showMessage(f"{profile.label()} に接続中…")
+
+        self._reconnect_attempts = 0
+        self._reconnecting = False
+        self._alive_timer = QTimer(self)
+        self._alive_timer.setInterval(2000)
+        self._alive_timer.timeout.connect(self._check_alive)
+        self._reconnect_timer = QTimer(self)
+        self._reconnect_timer.setSingleShot(True)
+        self._reconnect_timer.timeout.connect(self._start_reconnect)
+
+    def _build_reconnect_bar(self):
+        bar = QToolBar(self)
+        bar.setMovable(False)
+        bar.setFloatable(False)
+        label = QLabel("接続が切断されました")
+        label.setStyleSheet("color:#e06c75; padding:2px 6px;")
+        btn = QPushButton("再接続")
+        btn.setToolTip("今すぐ再接続を試みます")
+        btn.clicked.connect(self._manual_reconnect)
+        bar.addWidget(label)
+        bar.addWidget(btn)
+        bar.setVisible(False)
+        self.addToolBar(Qt.TopToolBarArea, bar)
+        self._reconnect_bar = bar
 
     def _build_menu(self):
         m_file = self.menuBar().addMenu("ファイル")
@@ -1321,10 +1372,95 @@ class SessionWindow(_SharedOps, QMainWindow):
         label = session.profile.label()
         self.setWindowTitle(label)
         tab.terminal.session_closed.connect(self._mark_disconnected)
+        tab.terminal.session_closed.connect(self._on_session_closed)
         self.statusBar().showMessage(f"{label} に接続しました", 5000)
+        self._reconnect_attempts = 0
+        self._reconnecting = False
+        self._reconnect_bar.setVisible(False)
+        self._alive_timer.start()
 
     def _mark_disconnected(self):
         self.setWindowTitle(self.windowTitle().removesuffix(" (切断)") + " (切断)")
+
+    def _on_session_closed(self):
+        if self._reconnecting or self.session_tab is None:
+            return
+        self._alive_timer.stop()
+        self._mark_disconnected()
+        self._schedule_reconnect()
+
+    def _check_alive(self):
+        tab = self.session_tab
+        if self._reconnecting or tab is None:
+            return
+        if tab.session.is_alive():
+            return
+        self._on_session_closed()
+
+    def _schedule_reconnect(self, manual: bool = False):
+        if manual:
+            self._reconnect_timer.stop()
+            self._reconnect_attempts = 0
+            self._start_reconnect()
+            return
+        if self._reconnecting:
+            return
+        self._reconnecting = True
+        self._reconnect_bar.setVisible(True)
+        max_retries = self.settings.get("auto_reconnect_max")
+        if self.settings.get("auto_reconnect") and self._reconnect_attempts < max_retries:
+            delay = min(60, 5 * (2 ** self._reconnect_attempts))
+            self.statusBar().showMessage(
+                f"再接続を {delay} 秒後に試行します…", delay * 1000)
+            self._reconnect_timer.start(delay * 1000)
+        else:
+            self.statusBar().showMessage("接続が切断されました。再接続ボタンを押してください")
+
+    def _manual_reconnect(self):
+        self._schedule_reconnect(manual=True)
+
+    def _start_reconnect(self):
+        self._reconnect_attempts += 1
+        self.statusBar().showMessage("再接続中…")
+        worker = ConnectWorker(self.profile, self.known_hosts, self.credentials,
+                               self.settings)
+        worker.ask_secret.connect(
+            lambda prompt, ds, cs, w=worker:
+            w.provide(SecretDialog.ask(self, prompt, ds, cs))
+        )
+        worker.ask_hostkey.connect(
+            lambda info, w=worker: w.provide(HostKeyDialog.ask(self, info))
+        )
+        worker.ok.connect(lambda s, w=worker: self._on_reconnect_ok(s, w))
+        worker.fail.connect(lambda msg, w=worker: self._on_reconnect_fail(msg, w))
+        worker.finished.connect(lambda w=worker: self._workers.remove(w))
+        self._workers.append(worker)
+        worker.start()
+
+    def _on_reconnect_ok(self, session: SshSession, worker: ConnectWorker):
+        tab = self.session_tab
+        if tab is None:
+            session.close()
+            return
+        self._reconnecting = False
+        self._reconnect_bar.setVisible(False)
+        tab.reconnect_session(session)
+        self._reconnect_attempts = 0
+        label = session.profile.label()
+        self.setWindowTitle(label)
+        self.statusBar().showMessage(f"{label} に再接続しました", 5000)
+        self._alive_timer.start()
+
+    def _on_reconnect_fail(self, msg: str, worker: ConnectWorker):
+        max_retries = self.settings.get("auto_reconnect_max")
+        if self._reconnect_attempts < max_retries and self.settings.get("auto_reconnect"):
+            delay = min(60, 5 * (2 ** self._reconnect_attempts))
+            self.statusBar().showMessage(
+                f"再接続に失敗しました: {msg}. {delay} 秒後に再試行します…")
+            self._reconnect_timer.start(delay * 1000)
+        else:
+            self.statusBar().showMessage(
+                f"再接続できませんでした: {msg}", 5000)
 
     def _on_connect_failed(self, msg: str):
         if self._connecting is not None:
@@ -1562,6 +1698,8 @@ class SessionWindow(_SharedOps, QMainWindow):
                     ev.ignore()
                     return
             tab.shutdown()
+        self._alive_timer.stop()
+        self._reconnect_timer.stop()
         if self in SessionWindow._windows:
             SessionWindow._windows.remove(self)
         ev.accept()

@@ -80,6 +80,21 @@ class PermManager:
                     logger.debug("専用 SFTP チャネルの close に失敗 (無視)", exc_info=True)
                 self._sftp = None
 
+    def reconnect_session(self, session):
+        """接続を張り直した後に session を差し替える。
+
+        古い SFTP チャネルは閉じ、メモリ内の一時権限変更状態はクリアする。
+        (切断時に元に戻せなかった可能性があるため、次回の復元はジャーナルに任せる)
+        """
+        with self._lock:
+            self.close()
+            self.session = session
+            if self._active:
+                logger.warning(
+                    "接続切断のため %d 件の一時権限変更状態をクリアします",
+                    len(self._active))
+                self._active.clear()
+
     # ---- 低レベル(すべてロック下で呼ぶこと) -------------------------------
     def get_mode(self, path: str) -> int | None:
         try:
