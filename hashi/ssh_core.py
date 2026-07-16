@@ -156,6 +156,7 @@ class SshSession:
     def __init__(self, profile: Profile, known_hosts: KnownHosts | None = None):
         self.profile = profile
         self.known_hosts = known_hosts or KnownHosts()
+        self.keepalive = 30  # Settings から上書き可能
         self.transport: paramiko.Transport | None = None
         self._jump_transports: list[paramiko.Transport] = []
         self._agent_handlers: list[paramiko.agent.AgentRequestHandler] = []
@@ -194,7 +195,7 @@ class SshSession:
         try:
             for i, target in enumerate(targets):
                 t = paramiko.Transport(sock)
-                t.set_keepalive(30)
+                t.set_keepalive(getattr(self, "keepalive", 30))
                 try:
                     t.start_client(timeout=15)
                 except paramiko.SSHException as e:

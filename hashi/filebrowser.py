@@ -272,6 +272,10 @@ class SftpWorker(QThread):
     def enqueue(self, job: dict):
         self.q.put(job)
 
+    def reconnect_session(self, session):
+        """接続張り直しをワーカースレッドのジョブキューへ投入する。"""
+        self.q.put({"kind": "_reconnect", "session": session})
+
     def cancel(self):
         self._cancel = True
 
@@ -297,6 +301,9 @@ class SftpWorker(QThread):
             job = self.q.get()
             if job is None:
                 break
+            if job.get("kind") == "_reconnect":
+                self._reconnect(job["session"])
+                continue
             jid = job.get("id")
             if jid is not None and jid in self._cancelled_ids:
                 self._cancelled_ids.discard(jid)
@@ -328,6 +335,20 @@ class SftpWorker(QThread):
             self.sftp.close()
         except Exception:
             pass
+
+    def _reconnect(self, session):
+        try:
+            if self.sftp is not None:
+                try:
+                    self.sftp.close()
+                except Exception:
+                    pass
+            self.session = session
+            self.sftp = self.session.open_sftp()
+            self.status.emit("SFTP 接続を再確立しました")
+        except Exception as e:  # noqa: BLE001
+            self.error.emit(str(e))
+            self.worker_failed.emit(str(e))
 
     def _dispatch(self, job: dict):
         kind = job["kind"]
@@ -1543,3 +1564,18 @@ class SftpBrowser(QWidget):
         self.xfer.stop()
         if self.pm is not None:
             self.pm.close()
+
+    def reconnect_session(self, session):
+        """接続を張り直し、ブラウザ/転送キューを維持したまま SFTP を再確立する。"""
+        self.session = session
+        if self.pm is not None:
+            self.pm.reconnect_session(session)
+        self.nav.reconnect_session(session)
+        self.xfer.reconnect_session(session)
+        # 前回の未復元権限を復元しつつ、現在のフォルダを再読み込み
+        if self.pm is not None:
+            silent_pw = self._sudo_provider_silent()
+            if silent_pw:
+                self.pm.sudo_pw = silent_pw
+            self.nav.enqueue({"kind": "perm_recover"})
+        self.nav.enqueue({"kind": "init", "initial": self.cwd or self.home or "."})
