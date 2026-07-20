@@ -3,6 +3,12 @@
 このプロジェクトは [Semantic Versioning](https://semver.org/lang/ja/) に緩く従います。
 
 ## [Unreleased]
+### 変更
+- **UI パレットを刷新(Issue #111、参考デザイン TransTerm)**。アプリ全体の配色を
+  背景 #1e1f24 / アクセント #4f8cff / 文字 #e8e8ec 系へ更新。`hashi/style.py` と
+  `main.py` の Fusion パレットを同一ソースから適用(テストで一致を強制)。
+  チップ型ボタンのヘルパー `style.chip_style()` を追加。dialogs / mainwindow /
+  editor に残っていた色の直書きを style 定数へ置換。
 
 ## [0.7.0] - 2026-07-18
 ### 追加

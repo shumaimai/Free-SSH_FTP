@@ -616,7 +616,7 @@ class SessionTab(QWidget):
         self.bt_sendpw.clicked.connect(
             lambda: self._on_password_prompt("manual"))
         info = QLabel(f"{session.profile.username}@{session.profile.host}:{session.profile.port}")
-        info.setStyleSheet("color:#8a919e;")
+        info.setStyleSheet(f"color:{style.FG_MUTED};")
         bar.addWidget(self.bt_term)
         bar.addWidget(self.bt_files)
         bar.addWidget(self.bt_sendpw)
@@ -662,8 +662,9 @@ class SessionTab(QWidget):
         # トースト(通知)
         self._toast = QLabel(self)
         self._toast.setStyleSheet(
-            "background:#2d333f; color:#dcdfe4; border:1px solid #444c56;"
-            "border-radius:6px; padding:6px 12px;")
+            f"background:{style.BG_RAISED}; color:{style.FG};"
+            f" border:1px solid {style.BORDER};"
+            f" border-radius:{style.TOAST_RADIUS}px; padding:6px 12px;")
         self._toast.setVisible(False)
         self._toast_timer = QTimer(self)
         self._toast_timer.setSingleShot(True)
@@ -673,9 +674,10 @@ class SessionTab(QWidget):
         # 自動送信はしない(送る判断は常に人間)。ただしワンタップで済むようにする。
         self._sudo_btn = QPushButton("🔑 sudo パスワードを送信", self)
         self._sudo_btn.setStyleSheet(
-            "QPushButton { background:#3b5a3b; color:#fff; border:1px solid #4f7a4f;"
-            "border-radius:6px; padding:6px 14px; }"
-            "QPushButton:hover { background:#487048; }")
+            f"QPushButton {{ background:{style.OK}; color:#12200f;"
+            f" border:none; border-radius:{style.TOAST_RADIUS}px;"
+            f" padding:6px 14px; font-weight:bold; }}"
+            f"QPushButton:hover {{ background:{style.ACCENT_HOVER}; color:#fff; }}")
         self._sudo_btn.setCursor(Qt.PointingHandCursor)
         self._sudo_btn.setVisible(False)
         self._sudo_btn.clicked.connect(self._send_sudo_password)
@@ -738,8 +740,8 @@ class SessionTab(QWidget):
     def _flash(self, text: str, warn: bool = False):
         self._toast.setText(text)
         self._toast.setStyleSheet(
-            "background:%s; color:#fff; border-radius:6px; padding:6px 12px;"
-            % ("#7a3b3b" if warn else "#2d333f"))
+            "background:%s; color:#fff; border-radius:%dpx; padding:6px 12px;"
+            % (style.DANGER_BG if warn else style.BG_RAISED, style.TOAST_RADIUS))
         self._toast.adjustSize()
         self._toast.move(max(12, (self.width() - self._toast.width()) // 2), 40)
         self._toast.setVisible(True)
