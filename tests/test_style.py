@@ -55,6 +55,25 @@ def test_app_stylesheet_is_valid_qss(qapp):
     qapp.setStyleSheet("")
 
 
+def test_line_icons_render_and_cache(qapp):
+    """線画アイコンが全名前で描け、色ごとにキャッシュされる(#113)。
+
+    QtSvg を使わない(凍結時の取りこぼしを避ける)方針なので、QPainter 実装が
+    全アイコンで例外なく描けることを固定する。
+    """
+    names = style.icon_names()
+    assert {"key", "snippet", "forward", "log", "terminal", "folder"} <= set(names)
+    for name in names:
+        ic = style.icon(name, style.FG, 18)
+        assert not ic.isNull()
+        assert ic.availableSizes()          # 実際にピクスマップを持つ
+    # 同じ引数なら同一インスタンス(キャッシュ)、色を変えれば別物
+    assert style.icon("key", style.FG) is style.icon("key", style.FG)
+    assert style.icon("key", style.ACCENT) is not style.icon("key", style.FG)
+    # 未知の名前でも落とさない
+    assert style.icon("存在しないアイコン") is not None
+
+
 def test_warning_and_muted_labels(qapp):
     w = style.warning_label("危険な操作です")
     assert w.text().startswith("⚠")

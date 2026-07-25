@@ -88,6 +88,85 @@ def test_resize_clamps_cursor_to_grid(term):
     assert term.screen.cursor.x <= 40
 
 
+def test_grid_follows_own_geometry_inside_header_pane(qapp):
+    """ペインヘッダー等で上に何かを積んでもグリッドが狂わない(#113)。
+
+    ターミナルは自分の width()/height() からだけ列/行を決める約束。ヘッダーの
+    高さを行数に数えてしまうと、シェル(PTY)と画面の行数がずれて入力位置が
+    乱れるため、この不変条件を固定する。
+    """
+    from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+
+    from hashi.terminal import TerminalWidget
+
+    host = QWidget()
+    lay = QVBoxLayout(host)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(0)
+    header = QLabel("SSH ターミナル")
+    header.setFixedHeight(30)
+    term = TerminalWidget()
+    term._channel = FakeChannel()
+    lay.addWidget(header)
+    lay.addWidget(term, 1)
+    host.resize(800, 600)
+    host.show()
+    qapp.processEvents()
+
+    term._recalc_grid()
+    term._apply_pending_grid()
+
+    # 行数はターミナル自身の高さから決まる(ヘッダー分は含まれない)
+    expected_rows = max(2, int(term.height() / term._chh))
+    expected_cols = max(4, int(term.width() / term._cw))
+    assert (term._cols, term._rows) == (expected_cols, expected_rows)
+    # スクリーン・グリッド・PTY の 3 者が一致している
+    assert term.screen.columns == term._cols
+    assert term.screen.lines == term._rows
+    assert term._channel.resized[-1] == (term._cols, term._rows)
+    # ヘッダーの高さぶん、ホスト全体で計算した行数より必ず小さい
+    assert term._rows < int(host.height() / term._chh)
+    host.close()
+
+
+def test_grid_resyncs_after_pane_hidden_and_shown(qapp):
+    """ペインごと隠して再表示しても 3 者のサイズが揃う(#113)。
+
+    非表示中のサイズ変更は捨てる設計なので、再表示時に取り直せていないと
+    シェルと画面がずれたまま入力することになる。
+    """
+    from PySide6.QtWidgets import QVBoxLayout, QWidget
+
+    from hashi.terminal import TerminalWidget
+
+    host = QWidget()
+    lay = QVBoxLayout(host)
+    pane = QWidget()
+    pane_lay = QVBoxLayout(pane)
+    term = TerminalWidget()
+    term._channel = FakeChannel()
+    pane_lay.addWidget(term)
+    lay.addWidget(pane)
+    host.resize(900, 700)
+    host.show()
+    qapp.processEvents()
+    term._recalc_grid()
+    term._apply_pending_grid()
+
+    pane.setVisible(False)
+    host.resize(500, 400)     # 非表示中の変更は適用されない
+    qapp.processEvents()
+    pane.setVisible(True)     # showEvent で取り直される
+    qapp.processEvents()
+    term._apply_pending_grid()
+
+    assert term.screen.columns == term._cols
+    assert term.screen.lines == term._rows
+    assert term._cols == max(4, int(term.width() / term._cw))
+    assert term._rows == max(2, int(term.height() / term._chh))
+    host.close()
+
+
 def test_wrap_tracking_marks_continuation_rows(term):
     """自動折返しで生まれた継続行を追跡する(#100)。"""
     term._pending_grid = (40, 30)
