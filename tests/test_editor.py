@@ -178,3 +178,102 @@ def test_lang_for_expanded_extensions():
     assert _lang_for(".editorconfig") == "conf"
     assert _lang_for("app.properties") == "conf"
     assert _lang_for("readme.unknownext") == "plain"
+
+
+# ---- バイナリ / 改行 / BOM を壊さない(Issue #122) --------------------------
+def _open_editor(tmp_path, name: str, raw: bytes):
+    """生バイトのファイルを内蔵エディタで開いてウィンドウと保存記録を返す。"""
+    from hashi.editor import EditorWindow
+    p = tmp_path / name
+    p.write_bytes(raw)
+    calls = []
+    w = EditorWindow("/srv/" + name, str(p),
+                     lambda remote, local, done: calls.append(
+                         (remote, local, done)), _FakeSettings())
+    w._calls = calls
+    return w, p
+
+
+def _save_and_finish(w):
+    """save() 後にアップロード完了を通知する(_saving の再入ガードを解除)。"""
+    w.save()
+    assert w._calls, "保存コールバックが呼ばれていない"
+    w._calls[-1][2](True, "")
+
+
+def test_binary_opens_in_hex_mode_and_roundtrips(qapp, tmp_path):
+    """バイナリ(.dat)は 16 進モードで開き、無編集の保存で 1 バイトも変わらない。
+
+    回帰: 以前は latin-1 + テキストモードで読み書きしていたため、
+    0x0D 0x0A が 0x0A に潰れてファイルが壊れていた。
+    """
+    raw = bytes([0x1F, 0x8B, 0x08, 0x00, 0x0D, 0x0A, 0x0D, 0x00, 0xFF, 0xFE]) * 8
+    w, p = _open_editor(tmp_path, "level.dat", raw)
+    assert w.is_hex is True
+    assert w.hex is not None and w.editor is None
+
+    _save_and_finish(w)            # 何も編集せず保存
+    assert p.read_bytes() == raw   # 完全一致(改行変換もバイト欠落もない)
+
+    # 1 バイトだけ書き換えると、その 1 バイトだけが変わる
+    w.hex._move_to(4)
+    w.hex._handle_input("0")
+    w.hex._handle_input("9")
+    _save_and_finish(w)
+    saved = p.read_bytes()
+    assert saved[4] == 0x09
+    assert len(saved) == len(raw)
+    assert saved[:4] == raw[:4] and saved[5:] == raw[5:]
+
+    w.hex.mark_saved()
+    w.close()
+
+
+def test_text_editor_preserves_crlf(qapp, tmp_path):
+    """CRLF の設定ファイルを保存しても LF に書き換えない(回帰)。"""
+    raw = b"server-port=25565\r\nmax-players=20\r\n"
+    w, p = _open_editor(tmp_path, "server.properties", raw)
+    assert w.is_hex is False
+    assert w._newline == "\r\n"
+    # 編集中は LF に正規化されている(Qt 側の扱いに合わせる)
+    assert "\r" not in w.editor.toPlainText()
+
+    _save_and_finish(w)
+    assert p.read_bytes() == raw          # CRLF のまま
+
+    w.editor.selectAll()
+    w.editor.insertPlainText("a=1\nb=2\n")
+    _save_and_finish(w)
+    assert p.read_bytes() == b"a=1\r\nb=2\r\n"
+    w.editor.document().setModified(False)
+    w.close()
+
+
+def test_text_editor_does_not_add_bom(qapp, tmp_path):
+    """BOM の無い UTF-8 に BOM を足さない / BOM 付きは維持する(回帰)。"""
+    raw = "モット=こんにちは\n".encode()
+    w, p = _open_editor(tmp_path, "motd.txt", raw)
+    assert w._encoding == "utf-8"
+    _save_and_finish(w)
+    assert p.read_bytes() == raw
+    assert not p.read_bytes().startswith(b"\xef\xbb\xbf")
+    w.editor.document().setModified(False)
+    w.close()
+
+    raw_bom = b"\xef\xbb\xbf" + "設定=1\n".encode()
+    w2, p2 = _open_editor(tmp_path, "bom.cfg", raw_bom)
+    assert w2._encoding == "utf-8-sig"
+    assert not w2.editor.toPlainText().startswith("﻿")
+    _save_and_finish(w2)
+    assert p2.read_bytes() == raw_bom     # BOM を保持
+    w2.editor.document().setModified(False)
+    w2.close()
+
+
+def test_hex_mode_has_no_find_widgets(qapp, tmp_path):
+    """16 進モードでは検索 UI を作らない(第 1 段)。落ちないことを確認。"""
+    w, _ = _open_editor(tmp_path, "data.bin", bytes(range(64)))
+    assert w.is_hex and w.find_edit is None
+    w._update_title()
+    assert "[HEX]" in w.windowTitle()
+    w.close()

@@ -38,7 +38,45 @@ from PySide6.QtWidgets import (
 )
 
 from . import style
+from .hexedit import SNIFF_BYTES, HexEdit, looks_binary
 from .windowfit import fit_to_screen
+
+
+def _decode_text(raw: bytes) -> tuple[str, str, str]:
+    """バイト列をテキストへ復号し、(本文, エンコード, 改行スタイル) を返す。
+
+    Issue #122 で、保存時にファイルを書き換えてしまう 2 点を直すために導入した。
+
+    1. **改行スタイルを保持する**。以前はテキストモードで開いていたため
+       universal newlines が効いて `\\r\\n` が `\\n` になり、保存すると
+       改行が LF へ書き換わっていた(Windows のゲームサーバーの CRLF 設定が
+       まるごと差分になる)。元のスタイルを覚えて保存時に復元する。
+    2. **BOM を勝手に増やさない**。`utf-8-sig` は BOM が無くてもデコードに
+       成功するが、同じ名前でエンコードすると BOM を**付けてしまう**。
+       BOM 付きだったファイルだけ `utf-8-sig` を使う。
+    """
+    if raw.startswith(b"\xef\xbb\xbf"):
+        enc = "utf-8-sig"
+    elif raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        enc = "utf-16"
+    else:
+        enc = "utf-8"
+    try:
+        text = raw.decode(enc)
+    except (UnicodeDecodeError, UnicodeError):
+        # 1 バイト系として扱う(latin-1 は必ず成功し、バイト値を保持する)
+        enc, text = "latin-1", raw.decode("latin-1")
+    # 改行スタイル: CRLF が 1 つでもあれば CRLF 優先(混在は CRLF に寄せる)
+    if "\r\n" in text:
+        newline = "\r\n"
+    elif "\r" in text:
+        newline = "\r"
+    else:
+        newline = "\n"
+    # 編集中は LF に正規化して扱う(Qt 側も LF)
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    return normalized, enc, newline
+
 
 # ---- シンタックスハイライト規則 -------------------------------------------------
 # 色 (One Half Dark 系)
@@ -286,38 +324,48 @@ class EditorWindow(QMainWindow):
         self._save_cb = save_callback
         self._saving = False
 
-        self.editor = CodeEdit(
-            font_size=settings.get("editor_font_size"),
-            tab_width=settings.get("editor_tab_width"),
-        )
-        self.setCentralWidget(self.editor)
+        # 中身を見てテキスト / バイナリを決める(Issue #122)。拡張子だけでは
+        # .dat のように両方あり得るものを分けられない。
+        with open(local_path, "rb") as f:
+            raw = f.read()
+        self.is_hex = looks_binary(raw[:SNIFF_BYTES])
+
+        if self.is_hex:
+            # バイナリは 16 進エディタで開く(上書き専用・バイト単位で忠実)
+            self.editor = None
+            self.hex = HexEdit(raw, font_size=settings.get("editor_font_size"))
+            self.setCentralWidget(self.hex)
+            self._encoding = None
+            self._newline = None
+        else:
+            self.hex = None
+            self.editor = CodeEdit(
+                font_size=settings.get("editor_font_size"),
+                tab_width=settings.get("editor_tab_width"),
+            )
+            self.setCentralWidget(self.editor)
+            text, self._encoding, self._newline = _decode_text(raw)
+            self.editor.setPlainText(text)
+            self.editor.document().setModified(False)
+            self._hl = Highlighter(self.editor.document(),
+                                   _lang_for(remote_path))
         fit_to_screen(self, 900, 640)
-
-        # 読み込み
-        try:
-            with open(local_path, "r", encoding="utf-8") as f:
-                text = f.read()
-            self._encoding = "utf-8"
-        except UnicodeDecodeError:
-            with open(local_path, "r", encoding="latin-1") as f:
-                text = f.read()
-            self._encoding = "latin-1"
-        self.editor.setPlainText(text)
-        self.editor.document().setModified(False)
-
-        self._hl = Highlighter(self.editor.document(),
-                               _lang_for(remote_path))
 
         self._build_toolbar()
         self.setStatusBar(QStatusBar())
-        self.editor.document().modificationChanged.connect(self._update_title)
-        self.editor.cursorPositionChanged.connect(self._update_cursor_status)
+        if self.is_hex:
+            self.hex.modified_changed.connect(lambda _m: self._update_title())
+            self.hex.cursor_moved.connect(self._update_hex_status)
+        else:
+            self.editor.document().modificationChanged.connect(self._update_title)
+            self.editor.cursorPositionChanged.connect(self._update_cursor_status)
         self._update_title()
 
         QShortcut(QKeySequence.Save, self, self.save)
-        QShortcut(QKeySequence.Find, self, self._focus_find)
-        QShortcut(QKeySequence.FindNext, self, lambda: self._find(True))
-        QShortcut(QKeySequence(Qt.Key_Escape), self, self._hide_find)
+        if not self.is_hex:
+            QShortcut(QKeySequence.Find, self, self._focus_find)
+            QShortcut(QKeySequence.FindNext, self, lambda: self._find(True))
+            QShortcut(QKeySequence(Qt.Key_Escape), self, self._hide_find)
 
     # ---- ツールバー / 検索 --------------------------------------------------
     def _build_toolbar(self):
@@ -326,6 +374,16 @@ class EditorWindow(QMainWindow):
         self.addToolBar(tb)
         tb.addAction("保存 (Ctrl+S)", self.save)
         tb.addSeparator()
+        if self.is_hex:
+            # 16 進モードは検索を持たない(第 1 段)。誤解を招かないよう、
+            # 上書き専用であることを明示する。
+            self.find_edit = None
+            lbl = style.muted_label(
+                "16 進モード: バイナリのため上書き編集のみ"
+                "(挿入・削除はできません。Tab で 16 進 / ASCII 欄を切替)")
+            lbl.setWordWrap(False)
+            tb.addWidget(lbl)
+            return
         self.find_edit = QLineEdit()
         self.find_edit.setPlaceholderText("検索 (Ctrl+F)…")
         self.find_edit.setMaximumWidth(240)
@@ -359,9 +417,18 @@ class EditorWindow(QMainWindow):
     def save(self):
         if self._saving:
             return
+        # 常にバイナリモードで書く(Issue #122)。テキストモードだと改行が
+        # 変換され、バイナリでは 0x0D が失われてファイルが壊れる。
         try:
-            with open(self.local_path, "w", encoding=self._encoding) as f:
-                f.write(self.editor.toPlainText())
+            if self.is_hex:
+                payload = self.hex.data()
+            else:
+                text = self.editor.toPlainText()
+                if self._newline != "\n":
+                    text = text.replace("\n", self._newline)
+                payload = text.encode(self._encoding)
+            with open(self.local_path, "wb") as f:
+                f.write(payload)
         except Exception as e:  # noqa: BLE001
             QMessageBox.warning(self, "保存", f"一時ファイルの書き込みに失敗:\n{e}")
             return
@@ -373,7 +440,10 @@ class EditorWindow(QMainWindow):
     def _on_saved(self, ok: bool, message: str):
         self._saving = False
         if ok:
-            self.editor.document().setModified(False)
+            if self.is_hex:
+                self.hex.mark_saved()
+            else:
+                self.editor.document().setModified(False)
             self.statusBar().showMessage(f"保存しました: {self.remote_path}", 4000)
         else:
             self.statusBar().showMessage("保存に失敗しました", 4000)
@@ -381,18 +451,32 @@ class EditorWindow(QMainWindow):
         self._update_title()
 
     # ---- タイトル / ステータス ------------------------------------------------
+    def _is_dirty(self) -> bool:
+        if self.is_hex:
+            return self.hex.is_modified()
+        return self.editor.document().isModified()
+
     def _update_title(self):
-        dirty = "●" if self.editor.document().isModified() else ""
+        dirty = "●" if self._is_dirty() else ""
+        mode = " [HEX]" if self.is_hex else ""
         self.setWindowTitle(
-            f"{dirty}{os.path.basename(self.remote_path)} — {self.remote_path} [Hashi Editor]")
+            f"{dirty}{os.path.basename(self.remote_path)}{mode} — "
+            f"{self.remote_path} [Hashi Editor]")
 
     def _update_cursor_status(self):
         c = self.editor.textCursor()
         self.statusBar().showMessage(
             f"行 {c.blockNumber() + 1}, 列 {c.columnNumber() + 1}", 0)
 
+    def _update_hex_status(self, offset: int):
+        data = self.hex.data()
+        byte = data[offset] if offset < len(data) else 0
+        self.statusBar().showMessage(
+            f"オフセット 0x{offset:08X} ({offset})   "
+            f"値 0x{byte:02X} ({byte})   全 {len(data)} バイト", 0)
+
     def closeEvent(self, ev):
-        if self.editor.document().isModified():
+        if self._is_dirty():
             r = QMessageBox.question(
                 self, "未保存の変更",
                 f"{os.path.basename(self.remote_path)} は未保存です。保存しますか?",
