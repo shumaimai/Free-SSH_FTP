@@ -3,19 +3,59 @@
 このファイルは Claude Code(や新しく参加する人)が**会話履歴なしで**このプロジェクトを
 続けられるように書いてある。まずここを読むこと。
 
-## これは何か
+---
+
+## 0. 現在の状況(引き継ぎ・最初に読む)
+
+- **最新リリース: v0.8.0**(2026-07-25)。`main` = `a6c8ae7` 時点でオープン PR は 0 件。
+- テストは **389 passed, 2 skipped**(`QT_QPA_PLATFORM=offscreen pytest`)。
+  `ruff check .` / `compileall` も緑。この状態を壊さないこと。
+- 直近の大きな動き(v0.8.0 前後):
+  - **ブラウザ風タブ UI へ移行**(#115)。「1 接続 = 1 ウィンドウ」を廃止 → タブ方式。
+  - **接続モード**(#112): ターミナルのみ / ファイルのみ / 両方。
+  - **意匠の全面刷新**(#111 / #113、参考デザイン TransTerm)。縦型アイコンツールバー、
+    2 カラムカードのランチャー、段差配色、ペインヘッダー、情報ステータスバー。
+  - **16 進エディタ**(#122、`hashi/hexedit.py`)+ **データ破損バグ 3 件修正**。
+  - **ターミナルのスクロールバック検索**(#79、Ctrl+Shift+F)。
+  - **リモートファイル検索**(#102、Devin の PR をレビュー・修正のうえ取り込み)。
+  - **ブックマーク / 隠しファイルトグル**(#80)。
+
+### 残っているオープン Issue(3 件)
+
+| # | 内容 | 状態 |
+|---|---|---|
+| **#100** | ターミナルのリフロー第 2 段(過去出力の全画面リフロー) | 第 1 段(カーソル論理行)は実装済み。端末コアなので単独 PR・慎重に |
+| **#82** | ローカル⇔リモートのデュアルペイン(WinSCP 流。目玉機能) | 前提の #80 は完了済みで着手可能。`hashi/localbrowser.py` 新設で分離する方針 |
+| **#65** | クラウド同期のバックエンド再検討 | **オーナー合意待ち。勝手に実装しない。** 推奨案は「SFTP 保存 + WebDAV」の 2 本 |
+
+### 未検証で残っていること(正直に伝えるべき点)
+
+- **v0.8.0 の Windows 実機確認が未実施**。今回の意匠刷新はほぼ offscreen 検証のみ。
+  とくに: 線画アイコンの線の太さ / DPI スケール(125%・150%)/ 影の見え方、
+  タブのドラッグ並べ替え、多数タブ時のレイアウト、実転送での進捗表示、
+  トーストのフェード、exe のアイコン埋め込み。
+- 16 進エディタは**実サーバー上の本物のゲームデータでの編集が未実施**(合成データまで)。
+  16 進モードに検索は未実装。NBT の構造編集は対象外(別 Issue 候補)。
+- ターミナル検索は実ログでの確認が未実施。正規表現・折返し行にまたがるヒットは未対応。
+
+---
+
+## 1. これは何か
 
 **Hashi**(橋 = ローカルとリモートをつなぐ)は、Windows で「まともに使える」SSH ターミナル +
 SFTP ファイルブラウザを 1 つに統合したデスクトップアプリ。コンセプトは **PuTTY + WinSCP を
-別々に開かなくていい**こと。1 接続 = 1 タブで、ターミナルと SFTP ブラウザが横並びになる。
+別々に開かなくていい**こと。**1 接続 = 1 タブ**で、ターミナルと SFTP ブラウザが横並びになる。
 
 - 技術選定: **Python 3.10+ / PySide6 / paramiko / pyte / wcwidth**(Electron は重いので不採用)。
 - UI・コメント・コミットメッセージは**日本語**で統一している。踏襲すること。
+- リポジトリは **`shumaimai/Free-SSH_FTP`**。
 - 作者は Linux サーバー運用・iOS/Flask/Discord bot 開発の経験がある高校生。直接的で
   実践的な説明を好み、技術的な制約は正直に明示してほしいタイプ。忖度した「できます」より
   「ここは未検証」とはっきり言うほうが喜ばれる。
 
-## セットアップ / 実行 / テスト
+---
+
+## 2. セットアップ / 実行 / テスト
 
 ```bash
 python -m venv .venv && . .venv/bin/activate      # 任意
@@ -24,58 +64,116 @@ python main.py                                     # 起動
 
 QT_QPA_PLATFORM=offscreen pytest                   # テスト(GUI はオフスクリーン)
 python -m compileall main.py hashi tools           # 構文チェック
+ruff check .                                       # lint(PR 前に必須)
 ```
 
 - **ヘッドレス環境で GUI を触るときは必ず `QT_QPA_PLATFORM=offscreen`**。xcb は入っていない
   ことが多い。pytest の `qapp` フィクスチャが自動で offscreen にする。
+- テストは `pytest-randomly` で順序がランダム化される。**順序依存の切り分けには
+  `-p no:randomly`** を使う。
 - パッケージング: `pyinstaller --noconfirm Hashi.spec` → `dist/Hashi.exe`。
+  Linux でも spec の検証ビルドはできる(アイコン埋め込みは Windows/macOS のみ)。
 
-## リポジトリ構成 / モジュール責務
+---
+
+## 3. リポジトリ構成 / モジュール責務
 
 ```
-main.py                エントリポイント(main() あり)。Fusion ダークテーマを適用。
+main.py                エントリポイント。Fusion ダークテーマ + style.app_stylesheet() を適用。
 hashi/__init__.py      __version__(バージョンの単一ソース)。config が参照。
+hashi/style.py         ★UI の単一ソース。パレット / 寸法 / 全体 QSS / 線画アイコン /
+                       plain_label。色コードの直書きは禁止でここを使う。
+hashi/themes.py        ターミナル配色テーマ。既定は "Hashi"(アプリのパレットと調和)。
 hashi/config.py        Profile / Settings / ProfileStore / KnownHosts(TOFU)の永続化。
 hashi/credentials.py   認証情報保存。keyring 優先 → Fernet 暗号化ファイルにフォールバック。
-hashi/ssh_core.py      paramiko Transport 直叩き。認証・TOFU・exec_command・run_sudo。GUI 非依存。
+hashi/ssh_core.py      paramiko Transport 直叩き。認証・TOFU・exec_command・run_sudo・
+                       ProxyJump・security_summary()。GUI 非依存。
 hashi/terminal.py      pyte HistoryScreen + 自前 QPainter 描画。IME / 全角 / 選択即コピー /
-                       右クリック貼付 / パスワードプロンプト検知。
+                       右クリック貼付 / パスワードプロンプト検知 / マウスレポート /
+                       代替画面 / リフロー第1段 / スクロールバック検索(#79)。
 hashi/privilege.py     権限無視スイッチのコア。共有 PermManager(ロック+参照カウント+専用
                        SFTP チャネル)。一時 chmod → 操作 → 復元。sudo フォールバック。
 hashi/permjournal.py   権限変更のジャーナル。緩める前に fsync 記録し、クラッシュ後に復元。
                        pid 生存判定で他セッションの誤爆を防ぐ。
 hashi/editor.py        内蔵コードエディタ。行番号・簡易ハイライト・検索。Ctrl+S でリモート保存。
-hashi/forward.py       ローカルポートフォワード(-L)。
+                       バイナリなら hexedit へ委譲(#122)。読み書きは常にバイナリモード。
+hashi/hexedit.py       ★16 進エディタ(#122)。上書き専用(サイズ不変)。
+                       looks_binary() / sniff_file() でテキスト・バイナリ判定。
+hashi/forward.py       ポートフォワード -L / -R / -D。共有ポンプ _pump_stream。
 hashi/filebrowser.py   SFTP ブラウザ。SftpWorker(nav/xfer の 2 スレッド・別チャネル)、
-                       2 段階確認、権限無視統合、エディタ連携。★このファイルが一番大きい。
-hashi/dialogs.py       接続 / ホスト鍵 / 秘密入力 / 設定 / トンネル ダイアログ。
-hashi/mainwindow.py    LauncherWindow(接続先選択)+ SessionWindow(1 接続 1 ウィンドウ)+
-                       ConnectWorker + 自動入力の配線 + SecretContext(sudo/パスワード供給源)。
-                       共有メニュー操作は _SharedOps mixin。旧 MainWindow は LauncherWindow の別名。
-hashi/portability.py   接続情報の書き出し/読み込み(#42)。known_hosts も含む。秘密情報は
-                       パスフレーズ暗号化必須。dumps/loads_bundle は P2P と共用。
-hashi/sshd_admin.py    sshd 堅牢化(#12): パスワード無効化/ポート変更。鍵ログイン検証→
-                       バックアップ→sshd -t→reload→疎通確認→自動ロールバック。
-hashi/p2p.py           P2P 共有(#43)。SAS 認証つき ECDH でバンドルを直接転送。
-hashi/cloudsync.py     アカウント同期(#44)。バンドルを scrypt+Fernet で E2E 暗号化し
-                       Google Drive appDataFolder へ put/get。backend 差し替え可能。
-                       google 系ライブラリは任意依存(requirements-cloud.txt)。
+                       2 段階確認、権限無視統合、エディタ連携、リモート検索(#102)、
+                       ブックマーク(#80)。★このファイルが一番大きい。
+hashi/dialogs.py       接続 / ホスト鍵 / 秘密入力 / 設定 / トンネル / スニペット ダイアログ。
+                       ThemePreview(設定のテーマ見本)。
+hashi/mainwindow.py    ★AppWindow(ブラウザ風タブの親)+ LauncherPage + SessionPage +
+                       SessionTab + ConnectWorker + SecretContext。共有操作は _SharedOps mixin。
+hashi/transferqueue.py 転送キューの台帳と一覧パネル(#5)。
+hashi/sessionlog.py    ターミナル受信出力の自動保存(#85)。
+hashi/snippets.py      スニペット(よく使うコマンド、#83)。
+hashi/fileactions.py   ファイル種別ごとの「実行」メニュー(#98)。
+hashi/portability.py   接続情報の書き出し/読み込み(#42)。known_hosts も含む。
+hashi/sshd_admin.py    sshd 堅牢化(#12): パスワード無効化/ポート変更。
+hashi/netadmin.py      サーバーの静的 IP 設定(#45、netplan 限定)。
+hashi/p2p.py           P2P 共有(#43)。SAS 認証つき ECDH。
+hashi/cloudsync.py     アカウント同期(#44)。※バックエンド再検討中(#65)。
+hashi/sshconfig.py     ~/.ssh/config の読み込み(Host エイリアス)。
+hashi/updatecheck.py   起動時の新バージョン通知。
+hashi/windowfit.py     画面の作業領域へウィンドウを収める(#63)。
+hashi/jsonio.py        JSON の共通読み書き(load_json / save_json_atomic)。
 tools/doctor.py        CLI 接続診断(TCP→ホスト鍵→認証→SFTP→シェル)。
-tests/                 pytest(ネットワーク不要。フェイク SSH を conftest に用意)。
+tests/                 pytest 42 ファイル(ネットワーク不要。フェイク SSH を conftest に用意)。
 ```
 
-## スレッドモデル(重要)
+---
+
+## 4. スレッドモデル(重要)
 
 - **GUI スレッド**: すべての QWidget。
 - **ConnectWorker(QThread)**: 接続処理。秘密情報の入力は GUI に Signal で依頼し、
   `threading.Event` でブロック待機して受け取る(`provide()`)。
-- **SftpWorker(QThread)× 2**: `nav`(一覧・操作)と `xfer`(転送)。それぞれ**別の SFTP
-  チャネル**を持つ。ジョブキュー方式。`_dispatch` が `_job_<kind>` を呼ぶだけなので、
+- **SftpWorker(QThread)× 2**: `nav`(一覧・操作・検索)と `xfer`(転送)。それぞれ**別の
+  SFTP チャネル**を持つ。ジョブキュー方式。`_dispatch` が `_job_<kind>` を呼ぶだけなので、
   新しい操作は `_job_xxx` メソッドを足して `enqueue({"kind":"xxx", ...})` すればよい。
 - paramiko の 1 チャネルはスレッド安全でない。**共有 PermManager は専用チャネルを 1 本持ち、
   その利用をすべて自前の RLock で直列化する**。実転送はワーカー自身のチャネルなので並行可。
 
-## 設計上の「効いた」判断とハマりどころ(消さない・壊さないこと)
+---
+
+## 5. UI の設計(#111 / #113、参考デザイン TransTerm)
+
+### 5.1 レイヤーとパレット
+
+`hashi/style.py` が単一ソース。**色コード・ダイアログ幅の直書きは禁止**。
+
+- 段差のあるパネル配色で奥行きを出す:
+  `BG`(#1e1f24 最奥) → `PANEL`(#26272e ツールバー/ヘッダー/ステータス) →
+  `PANEL2`(#2d2e36 入力欄/見出し行) / `HOVER`(淡いホバー塗り) / `SEL`(半透明アクセント)。
+- アクセントは `ACCENT`(#4f8cff)/ `ACCENT_HOVER`。緑ドットは `DOT_OK`。
+- `main.py` の Fusion パレットと **`tests/test_style.py` が一致を強制**する。
+  片方だけ変えると落ちる。
+- **ボタン・チップはボーダーレス**(枠線なし + ホバーで淡く塗る)。トグル ON は
+  `SEL` 背景 + `ACCENT` 文字。`style.chip_style()` を使う。
+
+### 5.2 主要な構成要素
+
+- **縦型アイコンツールバー**(セッション上部): 線画アイコン + 小ラベル。
+  パスワード送信 / スニペット / ポート転送 / セッションログ / 表示トグル。
+- **情報ステータスバー**(セッション下部): 接続先 / ネゴシエート済み暗号スイート /
+  文字コード / 接続モード / 転送進捗。
+- **ペインヘッダー**: ターミナル / ファイル各ペインに ●ドット + 見出し。
+- **2 カラムカード**のランチャー: 左に保存済みの接続(検索つき)、右に詳細と
+  「SSH と FTP で接続 / SSH のみ / ファイルのみ」の 3 ボタン。
+- 接続中は影つきカード、切断時は警告バナー、通知はフェードするトースト。
+
+### 5.3 アイコン
+
+`style.icon(name, color)` が **QPainter で描く**(16x16 の論理グリッド)。
+**QtSvg は絶対に導入しないこと** — PyInstaller で凍結したときプラグイン/DLL を
+取りこぼし、実行時に無音でアイコンが消える(keyring backend と同種の事故)。
+
+---
+
+## 6. 設計上の「効いた」判断とハマりどころ(消さない・壊さないこと)
 
 1. **paramiko 5 の鍵ロード**: `PKey.from_path` は `password` が bytes 必須。パスフレーズ未指定でも
    cryptography が `TypeError("password must be bytes")` を投げる。`ssh_core.load_private_key` は
@@ -85,115 +183,145 @@ tests/                 pytest(ネットワーク不要。フェイク SSH を co
    (むしろ所有者でないから権限無視が要る)。u+w だと他人所有ファイルに効かない。**一時付与→
    即復元なので広めでも実害は最小**、という設計思想。
 3. **ジャーナルの順序**: `record()`(fsync)を **chmod で緩める前**に行う。復元は「元の権限に戻す」
-   だけなので**冪等**。どの段階でプロセスが死んでも安全(緩める前=まだ元のまま/緩めた後=次回戻す/
-   戻した後=もう一度戻すだけ)。
+   だけなので**冪等**。どの段階でプロセスが死んでも安全。
 4. **pid ゲート復元**: 各エントリに記録元 pid を持たせ、復元対象は「その pid がもう生きていない」
-   ものだけ。これで**同じサーバーへ同時接続している生存セッションが今まさに緩めている最中の
-   ファイルを別インスタンスが横から戻す事故**を防ぐ。`permjournal.pid_alive` は Windows は
-   OpenProcess、POSIX は `os.kill(pid,0)`。
+   ものだけ。同じサーバーへ同時接続している生存セッションのファイルを別インスタンスが
+   横から戻す事故を防ぐ。
 5. **復元にも権限が要る**: root 所有ファイルを緩めるのに sudo を使った以上、戻すのにも sudo が要る。
-   起動時は保存済み sudo パスワードで自動復元し、戻せない件数(stuck)が残れば
-   `recover_incomplete` シグナルでユーザーに sudo を促す。復元は**深いパスから順に**行う
-   (親ディレクトリの x を先に外して子へ辿れなくなるのを防ぐ)。
+   復元は**深いパスから順に**行う(親の x を先に外して子へ辿れなくなるのを防ぐ)。
 6. **右クリック貼り付け**: 右クリック=貼り付け(PuTTY 流)。メニューは **Shift+右クリック**。
    左で選択したら即コピー。
-7. **sudo ワンタップ送信**: プロンプト検知は保守的な正規表現(`terminal._PW_PATTERNS`)。
-   リモート側はプロンプトを偽装できるため**確認なしの自動送信はしない**。sudo プロンプト
-   検知時は送信ボタンを表示し、送る判断は常に人間(ワンタップ)。password/passphrase は
-   別ホストの可能性があるのでボタンも出さない。誤りループ防止に **8 秒クールダウン**
-   (送信直後の再プロンプトにはボタンを出さない)。手動送信は右クリックメニュー
-   (→ `password_prompt.emit("manual")`)。
+7. **sudo ワンタップ送信**: リモート側はプロンプトを偽装できるため**確認なしの自動送信はしない**。
+   送信ボタンを出し、送る判断は常に人間。password/passphrase はボタンも出さない。
+   誤りループ防止に **8 秒クールダウン**。
 8. **オフスクリーン Qt**: ヘッドレスでの検証は `QT_QPA_PLATFORM=offscreen`。
 9. **-R/-D の双方向ポンプ `forward._pump_stream`**: paramiko チャネルの `fileno()` は
    内部パイプの読み取り端。**select の書き込みリストに入れても「書き込み可能」には
-   ならない**ので、返り経路のフラッシュは `chan.send_ready()` で判定して直接 `send` する
-   (select 依存にすると応答が永久に返らない)。実ソケットを使うフェイクでは再現しないため、
-   `tests/test_forward.py::test_pump_stream_return_path_via_send_ready` がパイプ端 fileno で
-   この特性を固定している。
+   ならない**ので、返り経路は `chan.send_ready()` で判定して直接 `send` する。
+   また**ポンプ開始時に fd が閉じていると `setblocking()` が OSError を投げる**ため
+   (停止処理との競合)、そこは捕まえて静かに戻す。
+10. 🔴 **信頼できない文字列は `style.plain_label()` で出す**(#113 の安全化)。
+    QLabel の既定 `textFormat` は AutoText で、`<b>` や `<img src=…>` を含む文字列を
+    **HTML として解釈**する。**リモートのファイル名・サーバーのエラー文・ホスト鍵の指紋・
+    ホスト名**は untrusted。意図的に RichText を使う箇所は `html.escape()` を通す。
+11. 🔴 **エディタの読み書きは常にバイナリモード**(`rb`/`wb`)(#122)。テキストモードで
+    開くと universal newlines で `\r\n` → `\n` に変換され、**バイナリ中の 0x0D が失われて
+    ファイルが壊れる**。テキストも**元の改行スタイルを保持**して保存する。
+    `utf-8-sig` は **BOM 付きだったファイルにだけ**使う(BOM が無くてもデコードは成功するが、
+    エンコードでは BOM を付けてしまう)。
+12. **16 進エディタは上書き専用(サイズ不変)を維持**。バイナリ形式は内部にオフセットや
+    長さを持つため、挿入・削除を足すと壊れる。
+13. **テキスト/バイナリは拡張子で決めず** `hexedit.looks_binary()` で中身から判定する
+    (`.dat` は両方あり得る)。`AMBIGUOUS_EXTS` は内蔵エディタへ回して中身で最終判断。
+14. **ターミナルは自分の `width()/height()` だけからグリッドを決める**。ペインヘッダー等を
+    上に積んでもこの前提を崩さないこと(崩すと PTY と画面の行数がずれて入力位置が乱れる)。
+    `tests/test_terminal_resize.py` が固定している。
+15. **スクロールバック検索(#79)は pyte のバッファ・履歴を書き換えない**。
+    `prev_page`/`next_page` のスクロールと描画時の強調だけで実現している。
+16. **ツールバーのボタンは `SessionTab` のシグナル(`request_*`)で依頼を投げるだけ**にし、
+    実処理は `SessionPage` 側に置く(ロジックを二重に持たない)。
+17. **接続モード(#112)**: `SessionTab(mode=...)` で both / ssh / sftp。
+    `terminal` / `browser` / `session_log` は **None になり得る**ので参照は必ず None ガード。
+18. **ProxyJump の秘密分離**: 踏み台への秘密入力プロンプトには文字列「踏み台」を必ず含める
+    取り決め。GUI 側(`ConnectWorker.get_secret`)はこの目印で、**接続先の保存済み
+    パスワードを踏み台へ流用しない / 踏み台の秘密を保存もしない**。
+19. **インポート時、既存の known_hosts は上書きしない**(TOFU の骨抜き防止)。
+20. **sshd の reload は既存接続を切らない方法で**。systemd は `systemctl reload`、それ以外は
+    マスター sshd のみへ HUP(`pkill -HUP -x sshd` は自分の接続が切れる。実機で確認済み)。
+    設定は SFTP でホームへ一時書き込み → `sudo install` で配置(`sudo tee` に流すと
+    NOPASSWD 環境でパスワード行がファイルへ混入する)。
 
-## テスト方針 / 検証済みと未検証
+---
 
-- **pytest(ネットワーク不要)**: `tests/`。ジャーナル・参照カウント・クラッシュ復元・
-  認証情報の暗号化往復・Settings/Profile/TOFU・パスワードプロンプト検知をカバー。
-  フェイク SSH は `tests/conftest.py`。
+## 7. テスト方針 / 検証済みと未検証
+
+- **pytest(ネットワーク不要)**: `tests/` 42 ファイル、389 passed / 2 skipped。
+  ジャーナル・参照カウント・クラッシュ復元・認証情報の暗号化往復・Settings/Profile/TOFU・
+  パスワードプロンプト検知・端末のキー変換/リサイズ/マウス/検索・エディタの往復・
+  16 進編集・スタイルの一致をカバー。フェイク SSH は `tests/conftest.py`。
+- **SftpBrowser を生成するテストはワーカースレッドを起こす**。必ず
+  `tab.shutdown()` → `processEvents()` を回してから破棄する(`_cleanup` ヘルパー参照)。
+  これを忘れると後続テストがハングする(#112 で実際に踏んだ)。
 - **実 SSH 結合(手動)**: コンテナ内に sshd を立てて検証してきた。おおよそ:
   ```bash
   useradd -m tester && echo 'tester:testpass' | chpasswd && usermod -aG sudo tester
   mkdir -p /home/tester/.ssh && cp key.pub /home/tester/.ssh/authorized_keys
   mkdir -p /run/sshd && /usr/sbin/sshd -D -p 2222 -o ListenAddress=127.0.0.1 &
-  # 権限無視の検証用: root 所有・mode 000 のファイル等を用意
   echo secret > /srv/secret.txt && chown root:root /srv/secret.txt && chmod 000 /srv/secret.txt
   ```
-  過去の実機検証で確認済み: 鍵認証+パスフレーズ+TOFU、再帰アップロード/ダウンロード/削除、
-  2 段階確認、**権限無視の読み(000→復元)・新規作成・上書き(いずれも sudo chmod + 元へ復元)**、
-  日本語ファイル名の描画/選択コピー。
-- **ローカルポートフォワード(-L)は実機検証済み**(2026-07-10、Issue #1)。実 sshd
-  (OpenSSH 9.6)に `SshSession` で接続し、単発 GET / 5MB 転送の整合性 / 並行 8 接続 /
-  到達不能リモートの異常系 / stop() 後のポート解放を通しで確認。`tests/test_forward.py` に
-  フェイク Transport のユニットテスト(CI 常時)+ ライブ結合テスト(`HASHI_LIVE_SSH=1` で
-  実行)として恒久化してある。
+- 過去の実機検証で確認済み: 鍵認証+パスフレーズ+TOFU、再帰アップロード/ダウンロード/削除、
+  2 段階確認、**権限無視の読み(000→復元)・新規作成・上書き**、日本語ファイル名の描画、
+  **-L / -R / -D フォワード**、**ProxyJump 1〜2 段**、代替画面 + マウスレポート(実 vim)、
+  ターミナルのリフロー第 1 段(縮小→拡大→入力継続)。
+- ライブ結合テストは `HASHI_LIVE_SSH=1` で実行(`tests/test_forward.py` / `test_proxyjump.py`)。
 
-## ビルド & リリース手順
+---
+
+## 8. ビルド & リリース手順
 
 1. `hashi/__init__.py` の `__version__` を上げる。
 2. `CHANGELOG.md` に追記(`[Unreleased]` → 新バージョン)。
 3. コミットして **`vX.Y.Z` タグ**を push(タグは `__version__` と一致必須。CI が検証する)。
-   ```bash
-   git tag v0.2.0 && git push origin main --tags
-   ```
 4. `.github/workflows/release.yml` が windows-latest で PyInstaller ビルド → GitHub Release を
-   作成し `Hashi.exe` を添付する(GITHUB_TOKEN は自動。secret 設定不要)。
-5. リポジトリは `shumaimai/SSH.FTP-`。README / CHANGELOG / pyproject 内のリンクは置換済み。
+   作成し `Hashi.exe` と zip を添付する(GITHUB_TOKEN は自動。secret 設定不要)。
+
+> ⚠️ **エージェント環境ではタグ push が 403 で拒否される**(`refs/heads/*` は許可、
+> `refs/tags/*` は不許可)。GitHub MCP にもタグ作成ツールは無い。**タグはオーナーが手元で
+> push する**必要がある。手順を提示して待つこと:
+> ```bash
+> git fetch origin main
+> git tag vX.Y.Z <merged-sha>
+> git push origin vX.Y.Z
+> ```
+> タグを打つ前に、**ローカルで `pyinstaller --noconfirm Hashi.spec` を通して spec を
+> 検証しておく**とビルド失敗でタグを打ち直す事故を避けられる(v0.8.0 でそうした)。
 
 - keyring は凍結時にバックエンドを取りこぼすため `Hashi.spec` で `collect_submodules("keyring")` と
   `win32ctypes` を明示収集している。Windows の資格情報マネージャ backend が動かない症状が出たら
   まずここを疑う。
 
-## ロードマップ / 未着手(優先度つき)
+---
 
-- [x] **ポートフォワードの実機検証**(2026-07-10 完了。`tests/test_forward.py` 参照)。
-- [x] **リモート(-R)/ ダイナミック(-D)フォワード**(#2、2026-07-10 実装 + 実機検証済み)。
-  実 sshd に対し -R/-D とも単発 GET / 2MB 整合性 / 並行接続 / stop 後の解放を通し確認。
-  検証中に共有ポンプ `_pump_stream` のバグを発見・修正した(下記)。
-- [x] `~/.ssh/config` の読み込み(Host エイリアス。2026-07-10、`hashi/sshconfig.py`)。
-- [x] **ProxyJump(多段接続)**(2026-07-11 実装 + 実機検証済み)。踏み台ごとに Transport を
-  張り direct-tcpip チャネルを次ホップのソケットにする方式(`ssh_core.resolve_jump_chain` /
-  `parse_jump_specs`)。踏み台の秘密入力プロンプトは「踏み台」を含める取り決めで、
-  GUI 側(`ConnectWorker.get_secret`)が接続先の保存済みパスワードの流用・踏み台秘密の
-  保存を抑止する。入れ子の ProxyJump(踏み台自身の ProxyJump)は平坦化を促してエラー。
-  実 sshd 2〜3 台で 1 段・2 段チェーンを通し検証済み。`tests/test_proxyjump.py` に
-  ユニット + ライブ結合テスト(`HASHI_LIVE_SSH=1`)として恒久化。
-  **ProxyCommand は未対応のまま明示拒否**(外部コマンド実行が絡む。必要なら別 Issue)。
-- [x] 転送キューの一覧 UI とレジューム(2026-07-10、Issue #5 / `hashi/transferqueue.py`)。
-- [x] 外部アプリで開いたファイルの変更監視 → 自動再アップロード(Issue #54)。
-      「関連付けアプリで開く」経路も `ExternalFileMonitor` 配線済み(実装自体は #4 の
-      commit 1cf6619)。オン/オフ設定 `external_autoupload` を設定ダイアログに追加(2026-07-14)。
-      **Windows 実機(アプリのファイルロック・別名保存)での挙動確認は未実施**。
-- [x] ターミナルの xterm 互換強化(Issue #6、2026-07-11 完了)。代替スクリーン(#34)・
-      ブラケットペースト・マウスレポート(`?1000/?1002/?1003` + SGR `?1006`、Shift で
-      ローカル選択に迂回)。実 sshd + 実 vim でクリック/ホイール/復帰を通し検証済み。
-      `tests/test_terminal_mouse.py` 参照。
-- [x] terminal / editor のテスト拡充(2026-07-12)。キー入力→エスケープ列変換
-      (`tests/test_terminal_keys.py`: 方向/Enter/Tab/Backspace/Ctrl 英字/Ctrl+[/Alt 前置/
-      IME commit・preedit/セル座標クランプ)と editor の検索空クエリ・ミス・タイトル・
-      カーソル位置(`tests/test_editor.py` 追記)。描画そのものは手動確認のまま。
-- [x] **スニペット(よく使うコマンド)**(Issue #83、2026-07-16 実装)。
-      `hashi/snippets.py` + 管理/変数入力ダイアログ。`{{変数名}}` は送信時に入力。
-      自動送信せず、Enter 付きは `send_enter` フラグで。`tests/test_snippets.py` 追加。
-- [ ] exe への署名(アイコンは v0.3.0 で追加済み)。
+## 9. Git 運用(このセッションで繰り返し踏んだ罠)
 
-## お作法
+- 作業ブランチは `claude/autonomous-dev-board-status-7jq0rc`(指定されたもの)。
+  **main へ直接 commit / push しない。** ブランチ → PR → CI 緑 → squash マージ。
+- 🔴 **squash マージ後、作業ブランチは「既にマージ済みの元コミット」を抱えたままになる。**
+  そのまま次の作業を積むと PR が `dirty`(コンフリクト)になる。次の作業に入る前に
+  **必ず main を取り直す**:
+  ```bash
+  git fetch origin main
+  git checkout -B <branch> origin/main      # 作業前(推奨)
+  # すでに積んでしまったら:
+  git rebase --onto origin/main <squash済みコミットのSHA>
+  git push --force-with-lease -u origin <branch>
+  ```
+- push は `git push -u origin <branch>`。ネットワーク失敗のみ 4 回まで指数バックオフで再試行。
+- コミットメッセージは日本語。末尾に `Co-Authored-By:` と `Claude-Session:` を付ける。
+  **モデル識別子をリポジトリの成果物(コミット/PR/コメント/コード)に書かないこと。**
+- **「意味的コンフリクト」に注意**: git がクリーンにマージできても動かないことがある
+  (#108 で実際に発生 — main 側が消した import を相手ブランチが使っていた)。
+  他ブランチを取り込む前に、**ローカルで実際にマージしてテストを走らせる**こと。
 
-- 変更したら **`pytest` と `compileall` を通す**。GUI を絡む変更は offscreen で起動確認。
-- **UI の追加・変更は `docs/ui-style-guide.md` に準拠する**(Issue #87)。色コードや
-  ダイアログ幅の直書きは禁止で、`hashi/style.py` の定数/ヘルパー
-  (`warning_label` / `muted_label` / `DIALOG_S/M/L` 等)を使う。既存の直書きは
+---
+
+## 10. お作法
+
+- 変更したら **`pytest` / `compileall` / `ruff check .` を通す**。GUI が絡む変更は
+  offscreen で起動確認し、可能ならスクリーンショットを撮って目で見る。
+- **UI の追加・変更は `docs/ui-style-guide.md` に準拠**(#87)。色コードやダイアログ幅の
+  直書きは禁止で、`hashi/style.py` の定数/ヘルパーを使う。既存の直書きは
   そのファイルを触る PR のついでに置換(ボーイスカウト方式。専用の巨大置換 PR は作らない)。
 - 権限無視まわり(`privilege.py` / `permjournal.py`)は**必ず対応するテストを足す/更新する**。
   ここは事故るとサーバー側のファイル権限を壊しかねない箇所なので慎重に。
+- **PR の「未検証の点」は正直に書く**。offscreen までしか見ていないなら、そう書く。
+- 他人(Devin 等)の PR を勝手に書き換えない。**問題は指摘コメントで返し、判断を委ねる**
+  (#108 でそうした: 実際に main へマージして検証 → 2 つの不具合を具体的な修正案つきで報告)。
 - 日本語 UI / コメントを維持。ユーザーへの説明は簡潔・率直に。未検証は未検証と書く。
 
-## サブ機(Devin / Windsurf)への引き継ぎ運用 ★定期メンテ対象
+---
+
+## 11. サブ機(Devin / Windsurf)への引き継ぎ運用 ★定期メンテ対象
 
 このリポジトリはサブ機(Devin / Windsurf)にも作業させる。サブ機は **`.windsurfrules`**
 を行動ルールとして読むので、CLAUDE.md に新しい設計判断・「壊してはいけない不変条件」を
@@ -201,13 +329,11 @@ tests/                 pytest(ネットワーク不要。フェイク SSH を co
 
 - **`.windsurfrules` の「役割と禁止事項」(main へ直接 commit/push/merge しない、勝手に
   タグ/リリースしない 等)は絶対に消さない・弱めないこと。** 追記はしても削除はしない。
-- CLAUDE.md 側で新モジュールや不変条件(例: 今回の portability / sshd_admin / p2p /
-  cloudsync、ProxyJump の秘密分離、ランチャー分割)を増やしたら、対応する注意点を
-  `.windsurfrules` の「壊してはいけない重要な設計(新機能ぶん)」へ 1〜数行で足す。
+- CLAUDE.md 側で新モジュールや不変条件を増やしたら、対応する注意点を `.windsurfrules` の
+  「壊してはいけない重要な設計」へ 1〜数行で足す。
 - **定期的に(節目の PR ごと、または数機能ごとに)CLAUDE.md と `.windsurfrules` の差分を
-  見比べ、サブ機が考慮すべき事項が漏れていないかまとめ直すこと。** 具体的には:
+  見比べ、サブ機が考慮すべき事項が漏れていないかまとめ直すこと。** 観点は
   「壊してはいけない設計」「スレッド/チャネル規約」「秘密情報・E2E 暗号の扱い」
-  「実機検証が要る領域」の 4 観点で棚卸しし、CLAUDE.md にあって `.windsurfrules` に
-  無いものを移す。逆に実装が変わってルールが古くなっていたら両方直す。
+  「実機検証が要る領域」の 4 つ。
 - サブ機向けの表現は簡潔な禁止・必須形(「〜しないこと」「〜を維持すること」)にする。
   背景説明は CLAUDE.md 側に厚く書き、`.windsurfrules` には結論と一行の理由だけ置く。
