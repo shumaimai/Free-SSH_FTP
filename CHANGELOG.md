@@ -3,6 +3,8 @@
 このプロジェクトは [Semantic Versioning](https://semver.org/lang/ja/) に緩く従います。
 
 ## [Unreleased]
+
+## [0.8.0] - 2026-07-25
 ### セキュリティ
 - **リッチテキスト解釈による表示偽装/意図しないリソース読み込みを防止(Issue #113)**。
   QLabel の既定 `textFormat` は AutoText のため、`<b>` や `<img src=…>` を含む文字列を
