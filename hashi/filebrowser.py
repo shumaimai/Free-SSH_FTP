@@ -1140,6 +1140,24 @@ class SftpBrowser(QWidget):
         self.ed_path.returnPressed.connect(self._path_entered)
         bar.addWidget(self.ed_path, 1)
 
+        # ブックマーク(#80)。よく使うリモートディレクトリをプロファイルごとに
+        # 保存し、ドロップダウンから一発移動する。
+        self.btn_bookmark = QToolButton()
+        self.btn_bookmark.setToolTip("ブックマーク(現在のフォルダの登録 / 移動)")
+        self.btn_bookmark.setIcon(style.icon("bookmark"))
+        self.btn_bookmark.setPopupMode(QToolButton.InstantPopup)
+        self._bookmark_menu = QMenu(self)
+        self._bookmark_menu.aboutToShow.connect(self._populate_bookmark_menu)
+        self.btn_bookmark.setMenu(self._bookmark_menu)
+        bar.addWidget(self.btn_bookmark)
+
+        # 隠しファイルのトグルボタン(#80)。メニュー側 _act_hidden と状態を共有
+        self.btn_hidden = QToolButton()
+        self.btn_hidden.setToolTip("隠しファイル(ドットファイル)の表示/非表示")
+        self.btn_hidden.setIcon(style.icon("eye"))
+        self.btn_hidden.setCheckable(True)
+        bar.addWidget(self.btn_hidden)
+
         b_up = QPushButton("アップロード…")
         b_up.setToolTip("ローカルのファイルを選んで現在のフォルダへ送る (D&D でも可)")
         b_up.setMinimumWidth(80)
@@ -1168,6 +1186,13 @@ class SftpBrowser(QWidget):
         self._act_hidden.setCheckable(True)
         self._act_hidden.setToolTip("ドットファイルの表示/非表示")
         self._act_hidden.toggled.connect(self._toggle_hidden)
+        # ツールバーのトグルボタン(#80)と状態を共有する。setChecked は同値なら
+        # 何もしないので相互接続してもループしない。
+        self.btn_hidden.toggled.connect(self._act_hidden.setChecked)
+        self._act_hidden.toggled.connect(self.btn_hidden.setChecked)
+        self.btn_hidden.toggled.connect(
+            lambda on: self.btn_hidden.setIcon(
+                style.icon("eye", style.ACCENT if on else style.FG)))
 
         self._act_override = menu.addAction("🔓 権限無視")
         self._act_override.setCheckable(True)
@@ -1530,6 +1555,49 @@ class SftpBrowser(QWidget):
         self.terminal_input.emit(text)
 
     # ---- ナビゲーション -------------------------------------------------------
+    # ---- ブックマーク(#80) -------------------------------------------------
+    def _bookmarks(self) -> list[str]:
+        """このプロファイルのブックマーク一覧(settings.json に保存)。"""
+        table = (self.settings.get("bookmarks") if self.settings else None) or {}
+        paths = table.get(self.session.profile.id_str(), [])
+        return [p for p in paths if isinstance(p, str) and p]
+
+    def _save_bookmarks(self, paths: list[str]) -> None:
+        if self.settings is None:
+            return
+        table = dict(self.settings.get("bookmarks") or {})
+        key = self.session.profile.id_str()
+        if paths:
+            table[key] = paths
+        else:
+            table.pop(key, None)      # 空になったらキーごと消す
+        self.settings.set("bookmarks", table)
+
+    def _populate_bookmark_menu(self) -> None:
+        menu = self._bookmark_menu
+        menu.clear()
+        cur = self.cwd
+        marks = self._bookmarks()
+        if cur:
+            if cur in marks:
+                menu.addAction(
+                    "★ このフォルダをブックマークから外す",
+                    lambda: self._save_bookmarks(
+                        [p for p in self._bookmarks() if p != cur]))
+            else:
+                menu.addAction(
+                    "☆ このフォルダをブックマーク",
+                    lambda: self._save_bookmarks(self._bookmarks() + [cur]))
+        menu.addSeparator()
+        if not marks:
+            act = menu.addAction("ブックマークはありません")
+            act.setEnabled(False)
+            return
+        for path in marks:
+            # QAction は & をニーモニックと解釈するのでエスケープして表示
+            act = menu.addAction(path.replace("&", "&&"))
+            act.triggered.connect(lambda checked=False, p=path: self.cd(p))
+
     def cd(self, path: str):
         self.nav.enqueue({"kind": "list", "path": path})
 

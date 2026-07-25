@@ -439,3 +439,87 @@ def test_search_dialog_returns_selected_path(qapp):
     dlg._accept_current()
     assert dlg.selected == "/srv/notes.txt"
     assert dlg.selected_entry == results[0]
+
+
+# ---- ブックマーク / 隠しファイルトグル(Issue #80) ---------------------------
+def _bookmark_browser(qapp, tmp_path):
+    """ブックマーク検証用の最小ブラウザ(ワーカーなし)。"""
+    import pathlib
+    from types import SimpleNamespace
+
+    from PySide6.QtWidgets import QMenu, QWidget
+
+    from hashi.config import Settings
+    from hashi.filebrowser import SftpBrowser
+
+    browser = SftpBrowser.__new__(SftpBrowser)
+    QWidget.__init__(browser)
+    browser.settings = Settings(pathlib.Path(tmp_path) / "s.json")
+    browser.session = SimpleNamespace(
+        profile=SimpleNamespace(id_str=lambda: "u@h:22"))
+    browser.cwd = "/srv/www"
+    browser._bookmark_menu = QMenu(browser)
+    browser._cded = []
+    browser.cd = browser._cded.append
+    return browser
+
+
+def test_bookmarks_roundtrip_per_profile(qapp, tmp_path):
+    """追加 → 保存 → 別プロファイルと混ざらない → 解除で消える(#80)。"""
+    b = _bookmark_browser(qapp, tmp_path)
+    assert b._bookmarks() == []
+
+    b._save_bookmarks(["/srv/www", "/var/log"])
+    assert b._bookmarks() == ["/srv/www", "/var/log"]
+    # settings.json に profile_id 単位で保存される
+    assert b.settings.get("bookmarks") == {"u@h:22": ["/srv/www", "/var/log"]}
+
+    # 別プロファイルには見えない
+    b.session.profile.id_str = lambda: "other@h:22"
+    assert b._bookmarks() == []
+    b.session.profile.id_str = lambda: "u@h:22"
+
+    # 空にするとキーごと消える
+    b._save_bookmarks([])
+    assert b.settings.get("bookmarks") == {}
+    b.deleteLater()
+
+
+def test_bookmark_menu_add_remove_and_navigate(qapp, tmp_path):
+    """メニュー: 未登録なら追加、登録済みなら解除。項目クリックで cd(#80)。"""
+    b = _bookmark_browser(qapp, tmp_path)
+
+    b._populate_bookmark_menu()
+    acts = b._bookmark_menu.actions()
+    assert "☆" in acts[0].text()
+    acts[0].trigger()                       # 現在のフォルダを登録
+    assert b._bookmarks() == ["/srv/www"]
+
+    b._populate_bookmark_menu()
+    acts = b._bookmark_menu.actions()
+    assert "★" in acts[0].text()            # 登録済み → 解除に変わる
+    entry = [a for a in acts if a.text() == "/srv/www"]
+    assert entry
+    entry[0].trigger()                      # クリックで cd
+    assert b._cded == ["/srv/www"]
+
+    acts[0].trigger()                       # 解除
+    assert b._bookmarks() == []
+    b.deleteLater()
+
+
+def test_bookmark_menu_escapes_ampersand(qapp, tmp_path):
+    """パス中の & をニーモニックとして解釈させない(#80)。"""
+    b = _bookmark_browser(qapp, tmp_path)
+    b._save_bookmarks(["/srv/a&b"])
+    b._populate_bookmark_menu()
+    texts = [a.text() for a in b._bookmark_menu.actions()]
+    assert "/srv/a&&b" in texts
+    b.deleteLater()
+
+
+def test_default_theme_setting_is_hashi():
+    """新規インストールの既定テーマが Hashi(#113 の取りこぼし)。"""
+    from hashi import themes
+    from hashi.config import Settings
+    assert Settings.DEFAULTS["terminal_theme"] == themes.DEFAULT_THEME == "Hashi"

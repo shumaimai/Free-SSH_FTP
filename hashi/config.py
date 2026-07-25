@@ -122,7 +122,7 @@ class Settings:
         "auto_reconnect": True,         # 接続切断時の自動再接続
         "auto_reconnect_max": 5,        # 自動再接続の最大試行回数
         "terminal_font_size": 11,
-        "terminal_theme": "One Half Dark",   # 配色テーマ(hashi/themes.py)
+        "terminal_theme": "Hashi",   # 配色テーマ(hashi/themes.py。#113 で既定を刷新)
         "terminal_font_family": "",          # 空 = 既定の等幅候補から自動
 
         "editor_font_size": 12,
@@ -131,6 +131,7 @@ class Settings:
         "external_autoupload": True,    # 関連付けアプリで開いたファイルの変更を自動アップロード
         "session_log": False,           # ターミナル受信出力を自動保存
         "session_log_dir": "",          # 空欄 = 設定ディレクトリ/logs
+        "bookmarks": {},                # リモートのブックマーク {profile_id: [path, ...]}(#80)
     }
 
     def __init__(self, path: Path | None = None):
