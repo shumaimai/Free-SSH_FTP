@@ -34,12 +34,14 @@ from PySide6.QtGui import (
     QFont,
     QFontMetricsF,
     QGuiApplication,
+    QKeySequence,
     QPainter,
+    QShortcut,
 )
 from PySide6.QtWidgets import QMenu, QWidget
 from wcwidth import wcwidth
 
-from . import themes
+from . import style, themes
 from .dialogs import SnippetVariablesDialog
 from .snippets import expand_snippet
 
@@ -408,6 +410,12 @@ class TerminalWidget(QWidget):
         self._last_pw_prompt = ""  # 直近に通知したプロンプト(重複通知防止)
         self._session_log = None  # SessionLog (受信出力の自動保存)
 
+        # スクロールバック検索(Issue #79)。バーは初回 Ctrl+Shift+F で生成
+        self._search_bar = None
+        self._search_query = ""
+        self._search_case = False
+        self._search_pos: int | None = None   # 直近ヒットの絶対行(全行基準)
+
     # ---- フォント/セル寸法 --------------------------------------------------
     def _build_fonts(self):
         f = QFont()
@@ -435,6 +443,9 @@ class TerminalWidget(QWidget):
         self._ansi = {k: QColor(v) for k, v in t["ansi"].items()}
         self._theme_cache: dict[str, QColor] = {}
         self._c_link = self._resolve("blue", self._c_fg)
+        # 検索ヒットの強調(#79)。テーマの黄色地 + 背景色の文字で読ませる
+        self._c_hit_bg = self._resolve("yellow", self._c_fg)
+        self._c_hit_fg = self._c_bg
         self._dirty = True
         self.update()
 
@@ -676,6 +687,7 @@ class TerminalWidget(QWidget):
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
         self._recalc_grid()
+        self._position_search_bar()
 
     def showEvent(self, ev):
         super().showEvent(ev)
@@ -699,6 +711,180 @@ class TerminalWidget(QWidget):
             self.screen.next_page()
             guard += 1
         self._dirty = True
+
+    # ---- スクロールバック検索(Issue #79) ------------------------------------
+    def _row_text(self, line) -> str:
+        """pyte の行(dict 風)を検索用の文字列にする。"""
+        cols = self.screen.columns
+        return "".join(line[c].data or "" for c in range(cols)).rstrip()
+
+    def _all_lines(self) -> list[str]:
+        """履歴上部 + 可視バッファ + 履歴下部を文書順で返す。"""
+        scr = self.screen
+        out = [self._row_text(r) for r in scr.history.top]
+        out += [self._row_text(scr.buffer[y]) for y in range(scr.lines)]
+        out += [self._row_text(r) for r in scr.history.bottom]
+        return out
+
+    def _search_norm(self, text: str) -> str:
+        return text if self._search_case else text.casefold()
+
+    def find_in_scrollback(self, backward: bool = True) -> bool:
+        """スクロールバックから検索語を探し、ヒット行が見えるまでスクロールする。
+
+        `前へ(▲)` = backward(ログ調査の主方向)。ヒットが無ければ False。
+        端まで行ったら反対側へ回り込む。
+        """
+        if not self._search_query:
+            return False
+        needle = self._search_norm(self._search_query)
+        lines = self._all_lines()
+        hits = [i for i, ln in enumerate(lines) if needle in self._search_norm(ln)]
+        if not hits:
+            self._search_pos = None
+            return False
+        top_len = len(self.screen.history.top)
+        anchor = self._search_pos
+        if anchor is None:
+            # 初回: 上方向は可視範囲の直下から、下方向は直上から始める
+            anchor = top_len + self._rows if backward else top_len - 1
+        if backward:
+            cand = [h for h in hits if h < anchor]
+            target = cand[-1] if cand else hits[-1]
+        else:
+            cand = [h for h in hits if h > anchor]
+            target = cand[0] if cand else hits[0]
+        self._search_pos = target
+        # ヒット行が可視範囲に入るまでページ移動(進めなくなったら打ち切り)
+        for _ in range(2000):
+            t = len(self.screen.history.top)
+            if t <= target < t + self._rows:
+                break
+            self.screen.prev_page() if target < t else self.screen.next_page()
+            if len(self.screen.history.top) == t:
+                break
+        self._dirty = True
+        self.update()
+        return True
+
+    def _search_row_cells(self, row: int) -> set[int]:
+        """可視行のヒット桁集合(描画ハイライト用)。"""
+        q = self._search_query
+        if not q:
+            return set()
+        line = self.screen.buffer[row]
+        chars: list[str] = []
+        starts: list[int] = []
+        ends: list[int] = []
+        col = 0
+        while col < self._cols:
+            ch = line[col]
+            if ch.data:
+                chars.append(ch.data)
+                starts.append(col)
+                ww = wcwidth(ch.data)
+                col += ww if ww and ww > 1 else 1
+                ends.append(col)
+            else:
+                col += 1
+        hay = self._search_norm("".join(chars))
+        needle = self._search_norm(q)
+        cells: set[int] = set()
+        start = 0
+        while True:
+            i = hay.find(needle, start)
+            if i < 0:
+                break
+            for k in range(i, min(i + len(needle), len(starts))):
+                cells.update(range(starts[k], ends[k]))
+            start = i + 1
+        return cells
+
+    def _ensure_search_bar(self):
+        if self._search_bar is not None:
+            return
+        from PySide6.QtWidgets import (
+            QCheckBox,
+            QFrame,
+            QHBoxLayout,
+            QLineEdit,
+            QToolButton,
+        )
+        bar = QFrame(self)
+        bar.setObjectName("termSearch")
+        bar.setStyleSheet(
+            f"#termSearch {{ background:{style.PANEL};"
+            f" border:1px solid {style.BORDER}; border-radius:8px; }}")
+        lay = QHBoxLayout(bar)
+        lay.setContentsMargins(8, 4, 8, 4)
+        lay.setSpacing(4)
+        self._search_edit = QLineEdit()
+        self._search_edit.setPlaceholderText("検索 (Enter で上へ)")
+        self._search_edit.setFixedWidth(200)
+        self._search_edit.textChanged.connect(self._on_search_text)
+        self._search_edit.returnPressed.connect(
+            lambda: self.find_in_scrollback(backward=True))
+        b_up = QToolButton()
+        b_up.setText("▲")
+        b_up.setToolTip("上(過去)へ検索")
+        b_up.clicked.connect(lambda: self.find_in_scrollback(backward=True))
+        b_dn = QToolButton()
+        b_dn.setText("▼")
+        b_dn.setToolTip("下(新しい方)へ検索")
+        b_dn.clicked.connect(lambda: self.find_in_scrollback(backward=False))
+        case = QCheckBox("Aa")
+        case.setToolTip("大文字と小文字を区別する")
+        case.toggled.connect(self._on_search_case)
+        b_close = QToolButton()
+        b_close.setText("✕")
+        b_close.setToolTip("検索を閉じる (Esc)")
+        b_close.clicked.connect(self.close_search)
+        for w in (self._search_edit, b_up, b_dn, case, b_close):
+            lay.addWidget(w)
+        sc = QShortcut(QKeySequence(Qt.Key_Escape), bar, self.close_search)
+        sc.setContext(Qt.WidgetWithChildrenShortcut)
+        self._search_bar = bar
+
+    def toggle_search(self):
+        """検索バーの表示/非表示(Ctrl+Shift+F)。"""
+        self._ensure_search_bar()
+        if self._search_bar.isVisible():
+            self.close_search()
+            return
+        self._search_bar.setVisible(True)
+        self._position_search_bar()
+        self._search_edit.setFocus()
+        self._search_edit.selectAll()
+
+    def close_search(self):
+        if self._search_bar is None:
+            return
+        self._search_bar.setVisible(False)
+        self._search_query = ""
+        self._search_pos = None
+        self._dirty = True
+        self.update()
+        self.setFocus()
+
+    def _on_search_text(self, text: str):
+        self._search_query = text
+        self._search_pos = None
+        self._dirty = True
+        self.update()
+
+    def _on_search_case(self, on: bool):
+        self._search_case = on
+        self._search_pos = None
+        self._dirty = True
+        self.update()
+
+    def _position_search_bar(self):
+        if self._search_bar is None or not self._search_bar.isVisible():
+            return
+        self._search_bar.adjustSize()
+        self._search_bar.move(
+            max(8, self.width() - self._search_bar.width() - 16), 8)
+        self._search_bar.raise_()
 
     def wheelEvent(self, ev):
         if self._mouse_report_active(ev.modifiers()):
@@ -738,6 +924,9 @@ class TerminalWidget(QWidget):
                 return
             if key == Qt.Key_V:
                 self.paste_clipboard()
+                return
+            if key == Qt.Key_F:      # スクロールバック検索(#79)
+                self.toggle_search()
                 return
 
         # Shift+PgUp/PgDn はスクロールバック
@@ -1018,6 +1207,9 @@ class TerminalWidget(QWidget):
             url_cells = set()
             for sc, ec, _ in url_ranges:
                 url_cells.update(range(sc, ec))
+            # 検索ヒットの強調(#79)。検索バーを開いている間だけ計算する
+            hit_cells = (self._search_row_cells(row)
+                         if self._search_query else set())
             y = row * chh
             col = 0
             while col < self._cols:
@@ -1035,11 +1227,14 @@ class TerminalWidget(QWidget):
                 is_url = col in url_cells
                 if is_url:
                     fg = self._c_link
+                in_hit = col in hit_cells
+                if in_hit:
+                    fg, bg = self._c_hit_fg, self._c_hit_bg
                 in_sel = sel is not None and sel[0] <= row * self._cols + col <= sel[1]
                 if in_sel:
                     bg = self._c_sel
                 cell = QRectF(col * cw, y, cw * w, chh)
-                if bg != self._c_bg or in_sel:
+                if bg != self._c_bg or in_sel or in_hit:
                     p.fillRect(cell, bg)
                 if data and data != " ":
                     p.setPen(fg)
