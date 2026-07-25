@@ -25,7 +25,16 @@ import time
 from datetime import datetime
 from html import escape
 
-from PySide6.QtCore import QFileSystemWatcher, QObject, Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtCore import (
+    QFileSystemWatcher,
+    QMimeData,
+    QObject,
+    Qt,
+    QThread,
+    QTimer,
+    QUrl,
+    Signal,
+)
 from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -64,6 +73,12 @@ OPEN_SIZE_WARN = 50 * 1024 * 1024  # ダブルクリックで開く際の警告�
 EDIT_SIZE_LIMIT = 8 * 1024 * 1024  # 内蔵エディタで開く上限
 SEARCH_MAX_RESULTS = 5000  # リモート検索の結果上限（DoS/メモリ対策）
 SEARCH_MAX_DEPTH = 30  # SFTP walk の再帰上限
+
+# リモート一覧からローカルペインへのドラッグに載せる印(Issue #82)。
+# リモートのファイル実体は手元に無いので URL は載せられない。「リモート側で
+# 何かを選択したままドラッグしている」ことだけを伝え、実際に何を落とすかは
+# 受け側がブラウザの選択状態から取る(リモート由来のデータを解釈しない)。
+REMOTE_DRAG_MIME = "application/x-hashi-remote-selection"
 TEXT_EXTS = {
     "txt", "md", "markdown", "log", "conf", "cfg", "ini", "toml", "yaml", "yml",
     "json", "xml", "html", "htm", "css", "js", "jsx", "ts", "tsx", "py", "pyw",
@@ -915,13 +930,26 @@ class _SortItem(QTreeWidgetItem):
 
 
 class _DropTree(QTreeWidget):
-    """OS からのファイルドロップを受けるツリー。"""
+    """OS / ローカルペインからのファイルドロップを受けるツリー。
+
+    Issue #82 で「リモート → ローカル」のドラッグ元にもなった。リモートの実体は
+    まだ手元に無いため URL は載せず、REMOTE_DRAG_MIME の印だけを載せる。
+    """
 
     files_dropped = Signal(list)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAcceptDrops(True)
+        self.setDragEnabled(True)
+        self.setDragDropMode(QAbstractItemView.DragDrop)
+        self.setDefaultDropAction(Qt.CopyAction)
+        self.setDropIndicatorShown(False)
+
+    def mimeData(self, _items):
+        md = QMimeData()
+        md.setData(REMOTE_DRAG_MIME, b"1")
+        return md
 
     def dragEnterEvent(self, ev):
         self._accept_url_drag(ev)
@@ -931,10 +959,17 @@ class _DropTree(QTreeWidget):
 
     @staticmethod
     def _accept_url_drag(ev):
+        # 自分自身(リモート)から始まったドラッグは受けない
+        if ev.mimeData().hasFormat(REMOTE_DRAG_MIME):
+            ev.ignore()
+            return
         if ev.mimeData().hasUrls():
             ev.acceptProposedAction()
 
     def dropEvent(self, ev):
+        if ev.mimeData().hasFormat(REMOTE_DRAG_MIME):
+            ev.ignore()
+            return
         paths = [u.toLocalFile() for u in ev.mimeData().urls() if u.isLocalFile()]
         if paths:
             self.files_dropped.emit(paths)
@@ -1903,12 +1938,28 @@ class SftpBrowser(QWidget):
 
     # ---- ダウンロード (ローカル上書きも 2 段階確認) ------------------------------------
     def download_selected(self):
-        sel = self._selected_entries()
-        if not sel:
+        if not self._selected_entries():
             self._on_status("ダウンロードする項目を選択してください")
             return
         dest = QFileDialog.getExistingDirectory(self, "保存先フォルダを選択")
         if not dest:
+            return
+        self.download_to(dest)
+
+    def download_to(self, dest: str):
+        """選択中の項目を dest へダウンロードする(Issue #82)。
+
+        保存先を尋ねない点だけが download_selected と違う。デュアルペインの
+        ローカル側フォルダやドロップ先を保存先にするために切り出してある。
+        ローカル上書きの 2 段階確認はここに残す(保存先の出所を問わず必要)。
+        """
+        sel = self._selected_entries()
+        if not sel:
+            self._on_status("ダウンロードする項目を選択してください")
+            return
+        if not dest or not os.path.isdir(dest):
+            QMessageBox.warning(self, "ダウンロード",
+                                "保存先フォルダが見つかりません。")
             return
         items = []
         conflicts = []

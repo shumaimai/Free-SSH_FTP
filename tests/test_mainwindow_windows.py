@@ -294,3 +294,75 @@ def test_browser_hidden_toggle_syncs_with_menu(qapp):
     b._act_hidden.setChecked(False)
     assert not b.btn_hidden.isChecked() and not b._show_hidden
     _cleanup(qapp, tab)
+
+
+# ---- デュアルペイン (Issue #82) --------------------------------------------
+def test_session_tab_builds_local_pane_only_with_browser(qapp):
+    """ローカルペインはファイル側があるモードにだけ作られる(#82/#112)。"""
+    tab = _make_tab(qapp, "ssh")
+    assert tab.local is None
+    assert tab._files_splitter is None
+    assert not tab.bt_local.isEnabled()
+    _cleanup(qapp, tab)
+
+    tab = _make_tab(qapp, "sftp")
+    assert tab.local is not None
+    assert tab._files_splitter is not None
+    assert tab.bt_local.isEnabled()
+    _cleanup(qapp, tab)
+
+
+def test_dual_pane_defaults_off_and_toggles(qapp):
+    """既定はリモートのみ。トグルでローカル側が出る(既存の体験を壊さない)。"""
+    tab = _make_tab(qapp, "both")
+    assert not tab.bt_local.isChecked()
+    assert not tab._local_pane.isVisibleTo(tab._files_splitter)
+
+    tab.bt_local.setChecked(True)
+    assert tab._local_pane.isVisibleTo(tab._files_splitter)
+    assert tab.settings.get("dual_pane") is True   # 次回の既定として覚える
+
+    # ファイル側を丸ごと隠すとローカルも消える
+    tab.bt_files.setChecked(False)
+    assert not tab._local_pane.isVisibleTo(tab._files_splitter)
+    _cleanup(qapp, tab)
+
+
+def test_local_upload_request_reaches_remote_precheck(qapp, tmp_path):
+    """ローカルの「→ アップロード」が実際に nav の上書き事前確認へ届く(#82)。
+
+    SessionTab が張った本番の接続をそのまま通す(テスト用に張り直さない)。
+    """
+    tab = _make_tab(qapp, "sftp")
+    src = tmp_path / "a.txt"
+    src.write_text("x", encoding="utf-8")
+    tab.browser.cwd = "/srv"
+    jobs = []
+    tab.browser.nav.enqueue = jobs.append   # ワーカーへ流さず横取りする
+
+    tab.local.upload_requested.emit([str(src)])
+
+    assert [j["kind"] for j in jobs] == ["precheck_upload"]
+    assert jobs[0]["files"] == [(str(src), "/srv/a.txt")]
+    _cleanup(qapp, tab)
+
+
+def test_local_download_request_reaches_remote_browser(qapp, tmp_path):
+    """ローカルへのドロップ/「← ダウンロード」が本番の download_to へ届く。"""
+    tab = _make_tab(qapp, "sftp")
+    tab.browser.lb_status.setText("")
+
+    tab.local.download_requested.emit(str(tmp_path))
+
+    # 選択が無いので転送は始まらないが、受け口には確かに届いている
+    assert "選択してください" in tab.browser.lb_status.text()
+    _cleanup(qapp, tab)
+
+
+def test_download_to_without_selection_does_nothing(qapp, tmp_path):
+    """選択が無ければ何も投入しない(ドロップ先だけ決まった状態での事故防止)。"""
+    tab = _make_tab(qapp, "sftp")
+    before = tab.browser.xfer.q.qsize()
+    tab.browser.download_to(str(tmp_path))
+    assert tab.browser.xfer.q.qsize() == before
+    _cleanup(qapp, tab)

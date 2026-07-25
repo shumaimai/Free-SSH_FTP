@@ -939,7 +939,9 @@ class SettingsDialog(QDialog):
         self.settings = settings
         self.setWindowTitle("設定")
         self.setModal(True)
-        self.setMinimumWidth(440)
+        # 長いチェックボックス文とテーマ見本が入るので大サイズ(#87 の 3 段階)。
+        # 440 の直書きだと説明文が見切れていた(ボーイスカウト方式で置換)。
+        self.setMinimumWidth(style.DIALOG_L)
         form = QFormLayout()
         self.chk_sudo = QCheckBox("sudo プロンプトを検知したら送信ボタンを表示")
         self.chk_sudo.setChecked(settings.get("sudo_autofill"))
@@ -953,6 +955,19 @@ class SettingsDialog(QDialog):
         self.chk_editor.setChecked(settings.get("open_text_in_editor"))
         self.chk_extup = QCheckBox("関連付けアプリで開いたファイルの変更を自動アップロード")
         self.chk_extup.setChecked(settings.get("external_autoupload"))
+        # デュアルペイン(#82)。既定 OFF のまま、ここで既定 ON にできる。
+        self.chk_dual_pane = QCheckBox(
+            "ファイル側を 2 ペイン (ローカル⇔リモート) で開く")
+        self.chk_dual_pane.setChecked(settings.get("dual_pane"))
+        local_row = QWidget()
+        local_lay = QHBoxLayout(local_row)
+        local_lay.setContentsMargins(0, 0, 0, 0)
+        self.ed_local_dir = QLineEdit(settings.get("local_start_dir") or "")
+        self.ed_local_dir.setPlaceholderText("空欄でホームフォルダ")
+        self.btn_local_dir = QPushButton("参照…")
+        self.btn_local_dir.clicked.connect(self._browse_local_start_dir)
+        local_lay.addWidget(self.ed_local_dir, 1)
+        local_lay.addWidget(self.btn_local_dir)
         self.chk_session_log = QCheckBox("ターミナル受信出力を自動保存 (PuTTY logging 相当)")
         self.chk_session_log.setChecked(settings.get("session_log"))
         log_row = QWidget()
@@ -1022,6 +1037,8 @@ class SettingsDialog(QDialog):
         form.addRow("", self.chk_update)
         form.addRow("", self.chk_editor)
         form.addRow("", self.chk_extup)
+        form.addRow("", self.chk_dual_pane)
+        form.addRow("ローカルペインの初期フォルダ", local_row)
         form.addRow("", self.chk_session_log)
         form.addRow("ログ保存先", log_row)
         form.addRow("ターミナル配色テーマ", self.cb_theme)
@@ -1045,6 +1062,13 @@ class SettingsDialog(QDialog):
         root.addWidget(note)
         root.addWidget(buttons)
 
+    def _browse_local_start_dir(self):
+        d = QFileDialog.getExistingDirectory(
+            self, "ローカルペインの初期フォルダを選択",
+            self.ed_local_dir.text() or str(Path.home()))
+        if d:
+            self.ed_local_dir.setText(d)
+
     def _browse_session_log_dir(self):
         d = QFileDialog.getExistingDirectory(
             self, "ログ保存先のディレクトリを選択",
@@ -1060,6 +1084,8 @@ class SettingsDialog(QDialog):
         s.set("update_check", self.chk_update.isChecked())
         s.set("open_text_in_editor", self.chk_editor.isChecked())
         s.set("external_autoupload", self.chk_extup.isChecked())
+        s.set("dual_pane", self.chk_dual_pane.isChecked())
+        s.set("local_start_dir", self.ed_local_dir.text().strip())
         s.set("session_log", self.chk_session_log.isChecked())
         s.set("session_log_dir", self.ed_session_log_dir.text().strip())
         s.set("terminal_font_size", self.sp_tfont.value())

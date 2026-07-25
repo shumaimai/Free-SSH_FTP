@@ -66,6 +66,7 @@ from .dialogs import (
 from .filebrowser import SftpBrowser
 from .forward import DynamicForward, Forward, LocalForward, RemoteForward
 from .keygen import generate_key, register_public_key
+from .localbrowser import LocalBrowser
 from .sessionlog import SessionLog
 from .snippets import Snippet, SnippetStore, expand_snippet
 from .ssh_core import ConnectCancelled, SshSession
@@ -639,8 +640,11 @@ class SessionTab(QWidget):
         self._use_browser = mode in ("both", "sftp")
         self.terminal = None
         self.browser = None
+        self.local = None                   # ローカル側ペイン(#82)
         self._term_pane = None
         self._browser_pane = None
+        self._local_pane = None
+        self._files_splitter = None
         self.session_log = None
         self.tunnels: list[Forward] = []
         self._last_autofill_ts = 0.0
@@ -684,16 +688,26 @@ class SessionTab(QWidget):
             "ターミナル", "terminal", "ターミナルの表示/非表示", checkable=True)
         self.bt_files = self._tool_button(
             "ファイル", "folder", "ファイル一覧の表示/非表示", checkable=True)
+        # ローカル⇔リモートの 2 ペイン(#82)。既定は OFF で、これまでどおり
+        # 「リモートのみ」から始まる(既存ユーザーの体験を壊さない)。
+        self.bt_local = self._tool_button(
+            "2 ペイン", "dualpane",
+            "ローカル側ペインを表示して WinSCP 流の 2 ペインにします",
+            checkable=True)
         self.bt_term.setEnabled(self._use_terminal)
         self.bt_files.setEnabled(self._use_browser)
+        self.bt_local.setEnabled(self._use_browser)
         self.bt_term.setChecked(self._use_terminal)
         self.bt_files.setChecked(self._use_browser)
+        self.bt_local.setChecked(
+            self._use_browser and bool(settings.get("dual_pane")))
 
         for w in (self.bt_sendpw, self.bt_snippets, self.bt_tunnel, self.bt_log):
             bar.addWidget(w)
         bar.addWidget(self._toolbar_separator())
         bar.addWidget(self.bt_term)
         bar.addWidget(self.bt_files)
+        bar.addWidget(self.bt_local)
         bar.addStretch(1)
         root.addWidget(bar_w)
 
@@ -726,8 +740,19 @@ class SessionTab(QWidget):
                     allow_prompt=False),
                 parent=self,
             )
-            self._browser_pane = self._make_pane("FTP ファイル", self.browser)
-            self.splitter.addWidget(self._browser_pane)
+            # ローカル側ペイン(#82)。転送は必ずリモート側のワーカーに載せる。
+            self.local = LocalBrowser(
+                settings=settings,
+                start_dir=settings.get("local_start_dir") or "",
+            )
+            self._local_pane = self._make_pane("ローカル (この PC)", self.local)
+            self._browser_pane = self._make_pane("リモート (SFTP)", self.browser)
+            self._files_splitter = QSplitter(Qt.Horizontal)
+            self._files_splitter.addWidget(self._local_pane)
+            self._files_splitter.addWidget(self._browser_pane)
+            self._files_splitter.setStretchFactor(0, 1)
+            self._files_splitter.setStretchFactor(1, 1)
+            self.splitter.addWidget(self._files_splitter)
         self.splitter.setStretchFactor(0, 3)
         self.splitter.setStretchFactor(1, 2)
         root.addWidget(self.splitter, 1)
@@ -738,10 +763,16 @@ class SessionTab(QWidget):
 
         self.bt_term.toggled.connect(self._apply_visibility)
         self.bt_files.toggled.connect(self._apply_visibility)
+        self.bt_local.toggled.connect(self._on_dual_pane_toggled)
         if self._use_terminal and self._use_browser:
             self.browser.terminal_input.connect(self.terminal.send_text)
         if self._use_browser:
             self.browser.xfer.progress.connect(self._on_xfer_progress)
+            # ローカル側は「どのパスを送る / どこへ受け取る」を投げるだけ。
+            # 実際の転送・確認ダイアログはすべてリモート側 (#82) が持つ。
+            self.local.upload_requested.connect(self.browser.upload_paths)
+            self.local.download_requested.connect(self.browser.download_to)
+        self._apply_visibility()
         if self._use_terminal:
             self.terminal.password_prompt.connect(self._on_password_prompt)
         # SFTP のみのモードではパスワード送信・スニペット・ログは意味がない
@@ -826,7 +857,7 @@ class SessionTab(QWidget):
 
     def _refresh_toolbar_icons(self) -> None:
         for b in (self.bt_sendpw, self.bt_snippets, self.bt_tunnel,
-                  self.bt_log, self.bt_term, self.bt_files):
+                  self.bt_log, self.bt_term, self.bt_files, self.bt_local):
             self._refresh_button_icon(b)
 
     def _toolbar_separator(self) -> QWidget:
@@ -1004,6 +1035,14 @@ class SessionTab(QWidget):
         self.tunnels.append(fw)
         return fw.label()
 
+    def _on_dual_pane_toggled(self, on: bool):
+        """2 ペイン切替(#82)。次回以降の既定として設定に覚えさせる。"""
+        try:
+            self.settings.set("dual_pane", bool(on))
+        except Exception:
+            logger.debug("dual_pane の保存に失敗 (無視)", exc_info=True)
+        self._apply_visibility()
+
     def _apply_visibility(self):
         if not self.bt_term.isChecked() and not self.bt_files.isChecked():
             sender = self.sender()
@@ -1015,10 +1054,16 @@ class SessionTab(QWidget):
             self._term_pane.setVisible(self.bt_term.isChecked())
         elif self.terminal is not None:
             self.terminal.setVisible(self.bt_term.isChecked())
-        if self._browser_pane is not None:
-            self._browser_pane.setVisible(self.bt_files.isChecked())
+        files_on = self.bt_files.isChecked()
+        # ローカル側はファイル表示が ON のときだけ、さらに 2 ペイン ON で出す
+        if self._local_pane is not None:
+            self._local_pane.setVisible(files_on and self.bt_local.isChecked())
+        if self._files_splitter is not None:
+            self._files_splitter.setVisible(files_on)
+        elif self._browser_pane is not None:
+            self._browser_pane.setVisible(files_on)
         elif self.browser is not None:
-            self.browser.setVisible(self.bt_files.isChecked())
+            self.browser.setVisible(files_on)
 
     def toggle_session_log(self) -> bool:
         """セッションログを開始/停止し、開始状態を返す。"""

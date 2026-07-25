@@ -7,8 +7,8 @@
 
 ## 0. 現在の状況(引き継ぎ・最初に読む)
 
-- **最新リリース: v0.8.0**(2026-07-25)。`main` = `a6c8ae7` 時点でオープン PR は 0 件。
-- テストは **389 passed, 2 skipped**(`QT_QPA_PLATFORM=offscreen pytest`)。
+- **最新リリース: v0.8.0**(2026-07-25)。`main` = `757982d` 時点でオープン PR は 0 件。
+- テストは **413 passed, 2 skipped**(`QT_QPA_PLATFORM=offscreen pytest`)。
   `ruff check .` / `compileall` も緑。この状態を壊さないこと。
 - 直近の大きな動き(v0.8.0 前後):
   - **ブラウザ風タブ UI へ移行**(#115)。「1 接続 = 1 ウィンドウ」を廃止 → タブ方式。
@@ -25,7 +25,7 @@
 | # | 内容 | 状態 |
 |---|---|---|
 | **#100** | ターミナルのリフロー第 2 段(過去出力の全画面リフロー) | 第 1 段(カーソル論理行)は実装済み。端末コアなので単独 PR・慎重に |
-| **#82** | ローカル⇔リモートのデュアルペイン(WinSCP 流。目玉機能) | 前提の #80 は完了済みで着手可能。`hashi/localbrowser.py` 新設で分離する方針 |
+| **#82** | ローカル⇔リモートのデュアルペイン(WinSCP 流。目玉機能) | **第 1 段を実装済み**(`hashi/localbrowser.py`)。残りは同期ブラウズ(第 2 段) |
 | **#65** | クラウド同期のバックエンド再検討 | **オーナー合意待ち。勝手に実装しない。** 推奨案は「SFTP 保存 + WebDAV」の 2 本 |
 
 ### 未検証で残っていること(正直に伝えるべき点)
@@ -37,6 +37,11 @@
 - 16 進エディタは**実サーバー上の本物のゲームデータでの編集が未実施**(合成データまで)。
   16 進モードに検索は未実装。NBT の構造編集は対象外(別 Issue 候補)。
 - ターミナル検索は実ログでの確認が未実施。正規表現・折返し行にまたがるヒットは未対応。
+- **デュアルペイン(#82)は offscreen 検証のみ。** 未確認: 実機でのペイン間ドラッグ&ドロップ
+  (Windows のドラッグ判定・カーソル表示)、大量ファイルのフォルダを開いたときの体感、
+  ネットワークドライブ(応答しない SMB 共有)で一覧が固まらないか、Windows の隠し属性判定。
+  同期ブラウズ(片方で cd したらもう片方も)は**未実装**(#82 の第 2 段)。
+  エクスプローラからローカルペインへのドロップ(ローカル間コピー)も未対応。
 
 ---
 
@@ -103,6 +108,8 @@ hashi/forward.py       ポートフォワード -L / -R / -D。共有ポンプ _
 hashi/filebrowser.py   SFTP ブラウザ。SftpWorker(nav/xfer の 2 スレッド・別チャネル)、
                        2 段階確認、権限無視統合、エディタ連携、リモート検索(#102)、
                        ブックマーク(#80)。★このファイルが一番大きい。
+hashi/localbrowser.py  ローカル側ファイルペイン(#82、デュアルペインの左)。GUI スレッド
+                       で os.scandir。転送は持たず upload/download をシグナルで依頼。
 hashi/dialogs.py       接続 / ホスト鍵 / 秘密入力 / 設定 / トンネル / スニペット ダイアログ。
                        ThemePreview(設定のテーマ見本)。
 hashi/mainwindow.py    ★AppWindow(ブラウザ風タブの親)+ LauncherPage + SessionPage +
@@ -121,7 +128,7 @@ hashi/updatecheck.py   起動時の新バージョン通知。
 hashi/windowfit.py     画面の作業領域へウィンドウを収める(#63)。
 hashi/jsonio.py        JSON の共通読み書き(load_json / save_json_atomic)。
 tools/doctor.py        CLI 接続診断(TCP→ホスト鍵→認証→SFTP→シェル)。
-tests/                 pytest 42 ファイル(ネットワーク不要。フェイク SSH を conftest に用意)。
+tests/                 pytest 43 ファイル(ネットワーク不要。フェイク SSH を conftest に用意)。
 ```
 
 ---
@@ -226,7 +233,18 @@ tests/                 pytest 42 ファイル(ネットワーク不要。フェ�
     取り決め。GUI 側(`ConnectWorker.get_secret`)はこの目印で、**接続先の保存済み
     パスワードを踏み台へ流用しない / 踏み台の秘密を保存もしない**。
 19. **インポート時、既存の known_hosts は上書きしない**(TOFU の骨抜き防止)。
-20. **sshd の reload は既存接続を切らない方法で**。systemd は `systemctl reload`、それ以外は
+20. 🔴 **ローカル削除はシンボリックリンクを辿らない**(#82)。`os.path.isdir()` はリンク先が
+    ディレクトリなら True を返すため、islink を先に見ないと `shutil.rmtree` が**リンク先の
+    実体を消す**。`localbrowser.delete_local_path` の順序(islink → isfile → isdir)を崩さない。
+21. **デュアルペイン(#82)は「依頼」と「実行」を分ける**。ローカル側は
+    `upload_requested(paths)` / `download_requested(dest)` を投げるだけで、転送・上書き確認・
+    キュー登録・権限無視はすべてリモート側(`SftpBrowser.upload_paths` / `download_to`)が持つ。
+    ロジックを二重に持たせないこと(#113 のツールバー方針と同じ)。
+22. **ペイン間 D&D はリモートのデータを運ばない**(#82)。リモート → ローカルのドラッグに
+    載せるのは `REMOTE_DRAG_MIME` の印だけ。何を落とすかは受け側がリモートブラウザの
+    **選択状態**から決める。リモートが決めた文字列(ファイル名等)を mime 経由で解釈しない。
+    ローカル → リモートは通常の file URL なので、OS のエクスプローラからの D&D と同じ経路。
+23. **sshd の reload は既存接続を切らない方法で**。systemd は `systemctl reload`、それ以外は
     マスター sshd のみへ HUP(`pkill -HUP -x sshd` は自分の接続が切れる。実機で確認済み)。
     設定は SFTP でホームへ一時書き込み → `sudo install` で配置(`sudo tee` に流すと
     NOPASSWD 環境でパスワード行がファイルへ混入する)。
@@ -235,7 +253,7 @@ tests/                 pytest 42 ファイル(ネットワーク不要。フェ�
 
 ## 7. テスト方針 / 検証済みと未検証
 
-- **pytest(ネットワーク不要)**: `tests/` 42 ファイル、389 passed / 2 skipped。
+- **pytest(ネットワーク不要)**: `tests/` 43 ファイル、413 passed / 2 skipped。
   ジャーナル・参照カウント・クラッシュ復元・認証情報の暗号化往復・Settings/Profile/TOFU・
   パスワードプロンプト検知・端末のキー変換/リサイズ/マウス/検索・エディタの往復・
   16 進編集・スタイルの一致をカバー。フェイク SSH は `tests/conftest.py`。
