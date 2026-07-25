@@ -132,6 +132,8 @@ class Settings:
         "session_log": False,           # ターミナル受信出力を自動保存
         "session_log_dir": "",          # 空欄 = 設定ディレクトリ/logs
         "bookmarks": {},                # リモートのブックマーク {profile_id: [path, ...]}(#80)
+        "dual_pane": False,             # ファイル側をローカル⇔リモートの 2 ペインにする(#82)
+        "local_start_dir": "",          # ローカルペインの初期フォルダ(空 = ホーム)
     }
 
     def __init__(self, path: Path | None = None):
