@@ -1247,8 +1247,8 @@ class SftpBrowser(QWidget):
             sc = QShortcut(QKeySequence(key), self.tree, slot)
             sc.setContext(Qt.WidgetWithChildrenShortcut)
 
-        sc_search = QShortcut(QKeySequence("Ctrl+F"), self, self._toggle_search_bar,
-                              None, Qt.WidgetWithChildrenShortcut)
+        sc_search = QShortcut(QKeySequence("Ctrl+F"), self,
+                              self._toggle_search_bar)
         sc_search.setContext(Qt.WidgetWithChildrenShortcut)
 
     # ---- 転送キュー ---------------------------------------------------------
