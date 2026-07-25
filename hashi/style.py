@@ -7,8 +7,8 @@
 パレットは main.py の Fusion ダークテーマと一致させてある。テーマ側を
 変えるときはここも同時に更新する。
 """
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QLabel
 
 # ---- カラーパレット(参考デザイン TransTerm、Issue #111。#RRGGBB のみ) ------
@@ -233,6 +233,107 @@ def muted_label(text: str) -> QLabel:
 def muted_span(text: str) -> str:
     """リッチテキスト内で補足を控えめ色にする(<span> を返す)。"""
     return f"<span style='color:{FG_MUTED};'>{text}</span>"
+
+
+# ---- 線画アイコン(Issue #113 / 参考デザイン TransTerm) ---------------------
+# 参考デザインは細い線画 SVG アイコン + 小さなラベルの縦型ボタン。ここでは
+# **QtSvg を使わず QPainter で描く**。QtSvg を足すと PyInstaller で凍結したとき
+# プラグイン/DLL の取りこぼしが起きやすく(keyring backend と同種の事故)、
+# 実行時に無音でアイコンが消えるため。16x16 の論理グリッドで定義して拡大する。
+#
+# 各要素は ("line", x1,y1,x2,y2) / ("rect", x,y,w,h) / ("ellipse", cx,cy,r) の
+# いずれか。座標は 16x16 基準。
+_ICONS: dict[str, list[tuple]] = {
+    "key": [("ellipse", 5, 8, 2.5), ("line", 7.5, 8, 13.5, 8),
+            ("line", 11, 8, 11, 10.5), ("line", 13.5, 8, 13.5, 10)],
+    "snippet": [("line", 5, 4, 2, 8), ("line", 2, 8, 5, 12),
+                ("line", 11, 4, 14, 8), ("line", 14, 8, 11, 12)],
+    "forward": [("line", 2, 5, 11, 5), ("line", 8.5, 2.5, 11, 5),
+                ("line", 8.5, 7.5, 11, 5), ("line", 14, 11, 5, 11),
+                ("line", 7.5, 8.5, 5, 11), ("line", 7.5, 13.5, 5, 11)],
+    "log": [("rect", 4, 1.5, 8.5, 13), ("line", 6.5, 8, 10.5, 8),
+            ("line", 6.5, 10.5, 10.5, 10.5), ("line", 6.5, 5.5, 9, 5.5)],
+    "upload": [("line", 8, 11, 8, 3), ("line", 4.5, 6.5, 8, 3),
+               ("line", 11.5, 6.5, 8, 3), ("line", 3, 13.5, 13, 13.5)],
+    "eye": [("ellipse", 8, 8, 1.8), ("line", 2, 8, 5, 5), ("line", 5, 5, 11, 5),
+            ("line", 11, 5, 14, 8), ("line", 14, 8, 11, 11),
+            ("line", 11, 11, 5, 11), ("line", 5, 11, 2, 8)],
+    "unlock": [("rect", 3, 7, 10, 7), ("line", 5.5, 7, 5.5, 4.5),
+               ("line", 5.5, 4.5, 8, 3), ("line", 8, 3, 10.5, 4)],
+    "queue": [("line", 2, 4, 3.5, 4), ("line", 5.5, 4, 14, 4),
+              ("line", 2, 8, 3.5, 8), ("line", 5.5, 8, 14, 8),
+              ("line", 2, 12, 3.5, 12), ("line", 5.5, 12, 14, 12)],
+    "terminal": [("rect", 1.5, 2.5, 13, 11), ("line", 4, 6.5, 6, 8.5),
+                 ("line", 6, 8.5, 4, 10.5), ("line", 7.5, 10.5, 11, 10.5)],
+    "folder": [("line", 1.5, 3.5, 6, 3.5), ("line", 6, 3.5, 7.5, 5.5),
+               ("line", 7.5, 5.5, 14.5, 5.5), ("rect", 1.5, 5.5, 13, 8),
+               ("line", 1.5, 3.5, 1.5, 5.5)],
+    "server": [("rect", 2, 2, 12, 9), ("line", 5, 14, 11, 14),
+               ("line", 8, 11, 8, 14)],
+}
+
+_icon_cache: dict[tuple, QIcon] = {}
+
+
+def icon(name: str, color: str = "", size: int = 18) -> QIcon:
+    """線画アイコンを返す(#113)。未知の名前は空アイコン(落とさない)。"""
+    key = (name, color or FG, size)
+    hit = _icon_cache.get(key)
+    if hit is not None:
+        return hit
+    shapes = _ICONS.get(name)
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    if shapes:
+        painter = QPainter(pm)
+        painter.setRenderHint(QPainter.Antialiasing)
+        scale = size / 16.0
+        pen = QPen(QColor(color or FG))
+        pen.setWidthF(1.5 * scale)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        for shape in shapes:
+            kind = shape[0]
+            if kind == "line":
+                _, x1, y1, x2, y2 = shape
+                painter.drawLine(QPointF(x1 * scale, y1 * scale),
+                                 QPointF(x2 * scale, y2 * scale))
+            elif kind == "rect":
+                _, x, y, w, h = shape
+                painter.drawRoundedRect(
+                    QRectF(x * scale, y * scale, w * scale, h * scale),
+                    1.5 * scale, 1.5 * scale)
+            elif kind == "ellipse":
+                _, cx, cy, r = shape
+                painter.drawEllipse(QPointF(cx * scale, cy * scale),
+                                    r * scale, r * scale)
+        painter.end()
+    result = QIcon(pm)
+    _icon_cache[key] = result
+    return result
+
+
+def icon_names() -> list[str]:
+    """定義済みアイコン名(テスト・確認用)。"""
+    return list(_ICONS)
+
+
+def plain_label(text: str = "", muted: bool = False) -> QLabel:
+    """**信頼できない文字列**(リモートのファイル名・サーバーのエラー文・
+    ホスト名など)を表示するためのラベル。
+
+    QLabel の既定 textFormat は AutoText で、`<b>` や `<img src=…>` を含む
+    文字列を**リッチテキストとして解釈**してしまう。リモートが決めた名前を
+    そのまま渡すと表示の偽装や意図しないリソース読み込みにつながるため、
+    信頼できない内容は必ずこのヘルパー(PlainText 固定)を使うこと。
+    """
+    lbl = QLabel(text)
+    lbl.setTextFormat(Qt.PlainText)
+    if muted:
+        lbl.setStyleSheet(f"color:{FG_MUTED};")
+    return lbl
 
 
 def color_dot_icon(color: str, size: int = 12) -> QIcon:

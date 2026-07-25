@@ -146,8 +146,11 @@ class HostKeyDialog(QDialog):
                 "心当たりがない場合は接続を中止してください。"
             )
         else:
+            # host はプロファイル由来の任意文字列。RichText へ入れる前に必ず
+            # エスケープする(< > が markup として解釈されるのを防ぐ)。
+            where = html.escape(f"{info['host']}:{info['port']}")
             warn = QLabel(
-                f"<b>{info['host']}:{info['port']}</b> には初めて接続します。<br>"
+                f"<b>{where}</b> には初めて接続します。<br>"
                 "以下のフィンガープリントがサーバー管理者の提示するものと"
                 "一致するか確認してください。"
             )
@@ -157,7 +160,8 @@ class HostKeyDialog(QDialog):
 
         mono = QFont()
         mono.setFamilies(["Consolas", "Monospace"])
-        fp = QLabel(f"{info['key_type']}\n{info['fingerprint']}")
+        # 鍵種別/フィンガープリントはサーバー由来 → PlainText 固定
+        fp = style.plain_label(f"{info['key_type']}\n{info['fingerprint']}")
         fp.setFont(mono)
         fp.setTextInteractionFlags(Qt.TextSelectableByMouse)
         fp.setStyleSheet(
@@ -166,9 +170,9 @@ class HostKeyDialog(QDialog):
         lay.addWidget(fp)
 
         if mismatch and info.get("old_fingerprint"):
-            old = QLabel(f"記録済みの鍵: {info['old_fingerprint']}")
+            old = style.plain_label(
+                f"記録済みの鍵: {info['old_fingerprint']}", muted=True)
             old.setFont(mono)
-            old.setStyleSheet(f"color:{style.FG_MUTED};")
             lay.addWidget(old)
 
         buttons = QDialogButtonBox()
@@ -212,9 +216,9 @@ class SecretDialog(QDialog):
         header = QLabel("🔒 認証情報の入力")
         header.setStyleSheet("font-size:14px; font-weight:bold;")
         lay.addWidget(header)
-        lb = QLabel(prompt)
+        # prompt にはホスト名や踏み台名が入る → PlainText 固定
+        lb = style.plain_label(prompt, muted=True)
         lb.setWordWrap(True)
-        lb.setStyleSheet(f"color:{style.FG_MUTED};")
         lay.addWidget(lb)
         self.edit = QLineEdit()
         self.edit.setEchoMode(QLineEdit.Password)

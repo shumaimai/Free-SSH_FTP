@@ -468,3 +468,27 @@ def test_forward_live_real_sshd(tmp_path, echo_server):
     finally:
         fwd.stop()
         sess.close()
+
+
+def test_pump_stream_returns_quietly_when_already_closed():
+    """開始時点で閉じているソケットでも例外を投げずに戻る。
+
+    回帰: 停止処理と競合してポンプ開始時に fd が閉じていると
+    setblocking() が OSError を投げ、ワーカースレッドの未処理例外になっていた。
+    """
+    import socket
+
+    from hashi.forward import _pump_stream
+
+    a, b = socket.socketpair()
+    a.close()          # ポンプが触る前に閉じてしまう
+    b.close()
+
+    class _Chan:
+        def setblocking(self, flag):
+            pass
+
+        def close(self):
+            pass
+
+    _pump_stream(a, _Chan())     # 例外を投げず静かに戻ること

@@ -14,6 +14,7 @@ import time
 from PySide6.QtCore import (
     QEasingCurve,
     QPropertyAnimation,
+    QSize,
     Qt,
     QThread,
     QTimer,
@@ -585,8 +586,10 @@ class ConnectingWidget(QWidget):
         cv.setSpacing(14)
         cv.setAlignment(Qt.AlignCenter)
 
-        self.message = QLabel(f"{profile.label()} に接続しています…")
+        # 接続先名やサーバー由来のエラー文を出すので PlainText 固定(#113 の安全化)
+        self.message = style.plain_label(f"{profile.label()} に接続しています…")
         self.message.setAlignment(Qt.AlignCenter)
+        self.message.setWordWrap(True)
         self.message.setStyleSheet("font-size:16px; font-weight:bold;")
         self._sub = QLabel("認証とホスト鍵を確認しています")
         self._sub.setAlignment(Qt.AlignCenter)
@@ -619,6 +622,12 @@ class ConnectingWidget(QWidget):
 class SessionTab(QWidget):
     """1 接続分のタブ。ターミナルと SFTP ブラウザを横並びで持つ。"""
 
+    # ツールバーからの依頼(実処理は SessionPage / AppWindow 側が持つ)。
+    # SessionTab に業務ロジックを重複させないためシグナルで投げるだけにする。
+    request_snippets = Signal()
+    request_tunnel = Signal()
+    request_session_log = Signal()
+
     def __init__(self, session: SshSession, settings: Settings,
                  secret_ctx: SecretContext, parent=None, mode: str = "both"):
         super().__init__(parent)
@@ -640,45 +649,51 @@ class SessionTab(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # 上部チップ型ツールバー(Issue #113)。表示トグル + 高頻度操作を並べる。
+        # 上部ツールバー(Issue #113 / 参考デザイン)。線画アイコン + 小ラベルの
+        # 縦型ボタンを並べる。高頻度操作はここからワンクリックで届く。
         bar_w = QFrame()
         bar_w.setObjectName("sessionToolbar")
         bar_w.setStyleSheet(
             f"#sessionToolbar {{ background:{style.PANEL};"
-            f" border-bottom:1px solid {style.BORDER}; }}")
+            f" border-bottom:1px solid {style.BORDER}; }}"
+            f"#sessionToolbar QToolButton {{ font-size:10px; padding:3px 9px; }}")
         bar = QHBoxLayout(bar_w)
-        bar.setContentsMargins(10, 6, 10, 6)
-        bar.setSpacing(6)
-        self.bt_term = QToolButton()
-        self.bt_term.setText("🖥  ターミナル")
-        self.bt_term.setCheckable(True)
-        self.bt_term.setChecked(True)
-        self.bt_files = QToolButton()
-        self.bt_files.setText("📁  ファイル")
-        self.bt_files.setCheckable(True)
-        self.bt_files.setChecked(True)
-        # モードで無効になる側のトグルは押せないようにする(#112)
+        bar.setContentsMargins(8, 4, 8, 4)
+        bar.setSpacing(2)
+
+        self.bt_sendpw = self._tool_button(
+            "パスワード送信", "key",
+            "保存済みの sudo / ログインパスワードをターミナルへ送信します\n"
+            "(Shift+右クリックのメニューからも送信できます)")
+        # パスワード送信(Issue #40)。右クリック=貼り付けのため「右クリック→送信」は
+        # Shift が要ると伝わらず使えなかった。常設ボタンにする(送る判断は常に人間)。
+        self.bt_sendpw.clicked.connect(
+            lambda: self._on_password_prompt("manual"))
+        self.bt_snippets = self._tool_button(
+            "スニペット", "snippet", "よく使うコマンドを送信します")
+        self.bt_snippets.clicked.connect(self.request_snippets)
+        self.bt_tunnel = self._tool_button(
+            "ポート転送", "forward", "ポートフォワードを追加します")
+        self.bt_tunnel.clicked.connect(self.request_tunnel)
+        self.bt_log = self._tool_button(
+            "セッションログ", "log", "ターミナル出力の保存を開始/停止します")
+        self.bt_log.clicked.connect(self.request_session_log)
+
+        # 表示トグル(モードで無効になる側は押せないようにする。#112)
+        self.bt_term = self._tool_button(
+            "ターミナル", "terminal", "ターミナルの表示/非表示", checkable=True)
+        self.bt_files = self._tool_button(
+            "ファイル", "folder", "ファイル一覧の表示/非表示", checkable=True)
         self.bt_term.setEnabled(self._use_terminal)
         self.bt_files.setEnabled(self._use_browser)
         self.bt_term.setChecked(self._use_terminal)
         self.bt_files.setChecked(self._use_browser)
-        # パスワード送信ボタン(Issue #40)。右クリック=貼り付けのため
-        # 「右クリック→送信」は Shift が要ることが伝わらず使えなかった。
-        # いつでも押せる常設ボタンにする(送る判断は常に人間、は維持)。
-        self.bt_sendpw = QToolButton()
-        self.bt_sendpw.setText("🔑 パスワード送信")
-        self.bt_sendpw.setToolTip(
-            "保存済みの sudo / ログインパスワードをターミナルへ送信します\n"
-            "(Shift+右クリックのメニューからも送信できます)")
-        self.bt_sendpw.clicked.connect(
-            lambda: self._on_password_prompt("manual"))
-        sep = QFrame()
-        sep.setFrameShape(QFrame.VLine)
-        sep.setStyleSheet(f"color:{style.BORDER};")
+
+        for w in (self.bt_sendpw, self.bt_snippets, self.bt_tunnel, self.bt_log):
+            bar.addWidget(w)
+        bar.addWidget(self._toolbar_separator())
         bar.addWidget(self.bt_term)
         bar.addWidget(self.bt_files)
-        bar.addWidget(sep)
-        bar.addWidget(self.bt_sendpw)
         bar.addStretch(1)
         root.addWidget(bar_w)
 
@@ -729,11 +744,16 @@ class SessionTab(QWidget):
             self.browser.xfer.progress.connect(self._on_xfer_progress)
         if self._use_terminal:
             self.terminal.password_prompt.connect(self._on_password_prompt)
-        # SFTP のみのモードではパスワード送信ボタンは意味がない
-        self.bt_sendpw.setEnabled(self._use_terminal)
+        # SFTP のみのモードではパスワード送信・スニペット・ログは意味がない
+        for b in (self.bt_sendpw, self.bt_snippets, self.bt_log):
+            b.setEnabled(self._use_terminal)
+        # 有効/無効・チェック状態が固まったのでアイコンを塗り直す
+        self._refresh_toolbar_icons()
 
         # トースト(通知)。フェードイン/アウトでふわっと出す。
-        self._toast = QLabel(self)
+        # 通知文にサーバー由来の文字列が混ざりうるので PlainText 固定。
+        self._toast = style.plain_label()
+        self._toast.setParent(self)
         self._toast.setStyleSheet(
             f"background:{style.BG_RAISED}; color:{style.FG};"
             f" border:1px solid {style.BORDER};"
@@ -769,6 +789,51 @@ class SessionTab(QWidget):
             ch = session.open_shell()
             self.terminal.attach(ch)
             self.terminal.setFocus()
+
+    # ---- ツールバー部品(#113 / 参考デザイン) -------------------------------
+    def _tool_button(self, text: str, icon_name: str, tip: str,
+                     checkable: bool = False) -> QToolButton:
+        """線画アイコン + 小ラベルの縦型ツールボタンを作る。
+
+        アイコンは QPixmap なので QSS の文字色に追従しない。チェック状態と
+        有効/無効で色が食い違わないよう、状態が変わるたびに描き直す。
+        """
+        b = QToolButton()
+        b.setText(text)
+        b.setToolTip(tip)
+        b.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+        b.setIconSize(QSize(18, 18))
+        b.setCheckable(checkable)
+        b.setCursor(Qt.PointingHandCursor)
+        b._hashi_icon = icon_name          # 再描画用に名前を覚えておく
+        self._refresh_button_icon(b)
+        if checkable:
+            b.toggled.connect(lambda _on, btn=b: self._refresh_button_icon(btn))
+        return b
+
+    def _refresh_button_icon(self, b: QToolButton) -> None:
+        """ボタンの状態に合わせてアイコンの色を塗り直す。"""
+        name = getattr(b, "_hashi_icon", "")
+        if not name:
+            return
+        if not b.isEnabled():
+            color = style.FG_DISABLED
+        elif b.isCheckable() and b.isChecked():
+            color = style.ACCENT
+        else:
+            color = style.FG
+        b.setIcon(style.icon(name, color))
+
+    def _refresh_toolbar_icons(self) -> None:
+        for b in (self.bt_sendpw, self.bt_snippets, self.bt_tunnel,
+                  self.bt_log, self.bt_term, self.bt_files):
+            self._refresh_button_icon(b)
+
+    def _toolbar_separator(self) -> QWidget:
+        sep = QFrame()
+        sep.setFixedWidth(1)
+        sep.setStyleSheet(f"background:{style.BORDER}; margin:6px 6px;")
+        return sep
 
     # ---- ペインヘッダー(#113 / 参考デザイン) -------------------------------
     def _make_pane(self, title: str, inner: QWidget) -> QWidget:
@@ -810,20 +875,23 @@ class SessionTab(QWidget):
         h.setSpacing(14)
         p = self.session.profile
         mode_txt = {"both": "🖥+📁", "ssh": "🖥", "sftp": "📁"}.get(self.mode, "")
-        h.addWidget(QLabel(f"🔗 {p.username}@{p.host}:{p.port}"))
+        # ホスト名・暗号名はプロファイル/サーバー由来なので PlainText で出す
+        h.addWidget(style.plain_label(f"🔗 {p.username}@{p.host}:{p.port}"))
         try:
             cipher = self.session.security_summary()
         except Exception:
+            logger.debug("暗号スイートの取得に失敗 (無視)", exc_info=True)
             cipher = ""
         if cipher:
-            lbl = QLabel(f"🔒 {cipher}")
+            lbl = style.plain_label(f"🔒 {cipher}")
             lbl.setToolTip("ネゴシエート済みの暗号スイート")
             h.addWidget(lbl)
         h.addWidget(QLabel("UTF-8"))
         if mode_txt:
             h.addWidget(QLabel(mode_txt))
         h.addStretch(1)
-        self._xfer_label = QLabel("")
+        # 転送ラベルにはリモートのファイル名が入る → PlainText 固定
+        self._xfer_label = style.plain_label()
         self._xfer_label.setStyleSheet(f"color:{style.ACCENT};")
         h.addWidget(self._xfer_label)
         return w
@@ -1362,40 +1430,130 @@ class LauncherPage(QWidget):
         self.settings = app.settings
         self.credentials = app.credentials
 
-        v = QVBoxLayout(self)
-        v.setContentsMargins(16, 16, 16, 16)
-        v.setSpacing(8)
-        title = QLabel("接続先を選択")
-        title.setStyleSheet("font-size:18px; font-weight:bold; padding:2px 0;")
-        btn_new = QPushButton("＋ 新しい接続")
-        btn_new.setProperty("primary", True)
-        btn_new.setCursor(Qt.PointingHandCursor)
-        btn_new.clicked.connect(self.new_profile)
+        # 参考デザインに合わせた 2 カラムのカード(#113)。
+        # 左: 保存済みの接続(検索つき) / 右: 接続操作。
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(24, 24, 24, 24)
+        outer.setAlignment(Qt.AlignCenter)
+
+        card = QFrame()
+        card.setObjectName("loginCard")
+        card.setStyleSheet(
+            f"#loginCard {{ background:{style.PANEL};"
+            f" border:1px solid {style.BORDER}; border-radius:10px; }}")
+        card.setMaximumWidth(900)
+        shadow = QGraphicsDropShadowEffect(card)
+        shadow.setBlurRadius(48)
+        shadow.setColor(QColor(0, 0, 0, 120))
+        shadow.setOffset(0, 16)
+        card.setGraphicsEffect(shadow)
+        cols = QHBoxLayout(card)
+        cols.setContentsMargins(0, 0, 0, 0)
+        cols.setSpacing(0)
+
+        # ---- 左カラム: 保存済みの接続 ----
+        side = QFrame()
+        side.setObjectName("loginSide")
+        side.setStyleSheet(
+            f"#loginSide {{ background:{style.PANEL2};"
+            f" border-right:1px solid {style.BORDER};"
+            " border-top-left-radius:10px; border-bottom-left-radius:10px; }}")
+        side.setFixedWidth(280)
+        sv = QVBoxLayout(side)
+        sv.setContentsMargins(14, 16, 14, 16)
+        sv.setSpacing(8)
+        side_title = QLabel("保存済みの接続")
+        side_title.setStyleSheet(
+            f"color:{style.FG_MUTED}; font-size:11px; font-weight:600;")
         # インクリメンタル検索(#81)。名前/ホスト/ユーザー/タグで絞り込み
         self.ed_search = QLineEdit()
-        self.ed_search.setPlaceholderText("🔍 検索 (名前 / ホスト / ユーザー / タグ)")
+        self.ed_search.setPlaceholderText("🔍 検索 (名前 / ホスト / タグ)")
         self.ed_search.setClearButtonEnabled(True)
         self.ed_search.textChanged.connect(self._reload_list)
         self.list = QListWidget()
         self.list.setSpacing(2)
+        self.list.setFrameShape(QFrame.NoFrame)
+        self.list.setStyleSheet("background:transparent;")
+        # 幅の狭いサイドバーなので、横スクロールを出さず末尾を省略する
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.list.setTextElideMode(Qt.ElideRight)
+        self.list.setWordWrap(False)
         self.list.itemDoubleClicked.connect(self._connect_item)
+        self.list.currentItemChanged.connect(lambda *_: self._update_detail())
         self.list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._profile_menu)
         # 空状態のプレースホルダ(#113)。接続先ゼロ / 検索一致なしで出す。
-        self._empty = QLabel()
+        # リモート/利用者の入力をそのまま出すので PlainText 固定にする。
+        self._empty = style.plain_label(muted=True)
         self._empty.setAlignment(Qt.AlignCenter)
         self._empty.setWordWrap(True)
-        self._empty.setStyleSheet(f"color:{style.FG_MUTED}; font-size:13px;")
         self._empty.setVisible(False)
-        hint = QLabel("ダブルクリックで接続(新しいタブが開きます)\n"
-                      "右クリックでモード選択 / 編集 / 削除")
-        hint.setStyleSheet(f"color:{style.FG_MUTED};")
-        v.addWidget(title)
-        v.addWidget(btn_new)
-        v.addWidget(self.ed_search)
-        v.addWidget(self.list, 1)
-        v.addWidget(self._empty, 1)
-        v.addWidget(hint)
+        btn_new = QPushButton("＋ 新しい接続")
+        btn_new.setProperty("primary", True)
+        btn_new.setCursor(Qt.PointingHandCursor)
+        btn_new.clicked.connect(self.new_profile)
+        sv.addWidget(side_title)
+        sv.addWidget(self.ed_search)
+        sv.addWidget(self.list, 1)
+        sv.addWidget(self._empty, 1)
+        sv.addWidget(btn_new)
+
+        # ---- 右カラム: 接続操作 ----
+        right = QWidget()
+        rv = QVBoxLayout(right)
+        rv.setContentsMargins(30, 26, 30, 26)
+        rv.setSpacing(14)
+        head = QLabel("サーバーへ接続")
+        head.setStyleSheet("font-size:16px; font-weight:600;")
+        # 選択中の接続先の詳細(ホスト名等はリモート由来なので PlainText)
+        self._detail_name = style.plain_label()
+        self._detail_name.setStyleSheet("font-size:14px; font-weight:600;")
+        self._detail_addr = style.plain_label(muted=True)
+        self._detail_meta = style.plain_label(muted=True)
+        self._detail_meta.setWordWrap(True)
+
+        self.bt_connect_both = QPushButton("SSH と FTP で接続")
+        self.bt_connect_both.setProperty("primary", True)
+        self.bt_connect_both.setCursor(Qt.PointingHandCursor)
+        self.bt_connect_both.clicked.connect(lambda: self._connect_selected("both"))
+        self.bt_connect_ssh = QPushButton("SSH のみ")
+        self.bt_connect_ssh.clicked.connect(lambda: self._connect_selected("ssh"))
+        self.bt_connect_sftp = QPushButton("ファイルのみ")
+        self.bt_connect_sftp.clicked.connect(lambda: self._connect_selected("sftp"))
+        for b in (self.bt_connect_ssh, self.bt_connect_sftp):
+            b.setCursor(Qt.PointingHandCursor)
+        btns = QHBoxLayout()
+        btns.setSpacing(8)
+        btns.addWidget(self.bt_connect_both)
+        btns.addWidget(self.bt_connect_ssh)
+        btns.addWidget(self.bt_connect_sftp)
+        btns.addStretch(1)
+
+        edit_row = QHBoxLayout()
+        edit_row.setSpacing(8)
+        self.bt_edit = QPushButton("編集…")
+        self.bt_edit.clicked.connect(self._edit_selected)
+        self.bt_delete = QPushButton("削除")
+        self.bt_delete.clicked.connect(self._delete_selected)
+        edit_row.addWidget(self.bt_edit)
+        edit_row.addWidget(self.bt_delete)
+        edit_row.addStretch(1)
+
+        hint = style.muted_label(
+            "「SSH と FTP で接続」では左にターミナル、右にファイル一覧を並べます"
+            "(境界はドラッグで調整)。一覧のダブルクリックでも接続できます。")
+        rv.addWidget(head)
+        rv.addWidget(self._detail_name)
+        rv.addWidget(self._detail_addr)
+        rv.addWidget(self._detail_meta)
+        rv.addLayout(btns)
+        rv.addLayout(edit_row)
+        rv.addStretch(1)
+        rv.addWidget(hint)
+
+        cols.addWidget(side)
+        cols.addWidget(right, 1)
+        outer.addWidget(card)
         self._reload_list()
 
     def _reload_list(self):
@@ -1424,6 +1582,61 @@ class LauncherPage(QWidget):
                     "上の「＋ 新しい接続」から最初のサーバーを追加しましょう。")
         self.list.setVisible(not empty)
         self._empty.setVisible(empty)
+        self._update_detail()
+
+    # ---- 右カラムの詳細表示(#113) ------------------------------------------
+    def _update_detail(self) -> None:
+        """選択中の接続先を右カラムへ反映し、操作ボタンの有効/無効を揃える。"""
+        row = self._selected_store_index()
+        has = row >= 0
+        for b in (self.bt_connect_both, self.bt_connect_ssh,
+                  self.bt_connect_sftp, self.bt_edit, self.bt_delete):
+            b.setEnabled(has)
+        if not has:
+            self._detail_name.setText("接続先を選択してください")
+            self._detail_addr.setText("")
+            self._detail_meta.setText("")
+            return
+        p = self.store.profiles[row]
+        self._detail_name.setText(p.label())
+        self._detail_addr.setText(f"{p.username}@{p.host}:{p.port}")
+        meta = [f"認証: {p.auth_method}"]
+        if p.tags:
+            meta.append("タグ: " + ", ".join(p.tags))
+        if p.last_connected:
+            meta.append("最終接続: " + _relative_time(p.last_connected))
+        if p.proxy_jump:
+            meta.append(f"踏み台: {p.proxy_jump}")
+        self._detail_meta.setText("   ".join(meta))
+
+    def _connect_selected(self, mode: str) -> None:
+        row = self._selected_store_index()
+        if row >= 0:
+            self._app.open_session(self.store.profiles[row], mode=mode)
+
+    def _edit_selected(self) -> None:
+        row = self._selected_store_index()
+        if row < 0:
+            return
+        dlg = ConnectDialog(self, self.store.profiles[row], self.credentials)
+        if dlg.exec():
+            profile = dlg.result_profile()
+            self.store.update(row, profile)
+            dlg.apply_credentials(profile)
+            self._reload_list()
+
+    def _delete_selected(self) -> None:
+        row = self._selected_store_index()
+        if row < 0:
+            return
+        p = self.store.profiles[row]
+        r = QMessageBox.question(
+            self, "プロファイルの削除",
+            f"「{p.label()}」を一覧から削除しますか?\n(サーバー側には何も影響しません)",
+        )
+        if r == QMessageBox.Yes:
+            self.store.remove(row)
+            self._reload_list()
 
     def _selected_store_index(self) -> int:
         item = self.list.currentItem()
@@ -1444,36 +1657,24 @@ class LauncherPage(QWidget):
         row = self._selected_store_index()
         if row < 0:
             return
+        # 実処理は右カラムのボタンと共通のヘルパーへ委譲する(重複を作らない)
         menu = QMenu(self)
-        a_conn = menu.addAction("接続(ターミナル + ファイル)")
-        a_ssh = menu.addAction("ターミナルのみで接続")
-        a_sftp = menu.addAction("ファイルのみで接続")
+        actions = [
+            (menu.addAction("接続(ターミナル + ファイル)"),
+             lambda: self._connect_selected("both")),
+            (menu.addAction("ターミナルのみで接続"),
+             lambda: self._connect_selected("ssh")),
+            (menu.addAction("ファイルのみで接続"),
+             lambda: self._connect_selected("sftp")),
+        ]
         menu.addSeparator()
-        a_edit = menu.addAction("編集…")
-        a_del = menu.addAction("削除")
+        actions.append((menu.addAction("編集…"), self._edit_selected))
+        actions.append((menu.addAction("削除"), self._delete_selected))
         chosen = menu.exec(self.list.viewport().mapToGlobal(pos))
-        if chosen is a_conn:
-            self._app.open_session(self.store.profiles[row])
-        elif chosen is a_ssh:
-            self._app.open_session(self.store.profiles[row], mode="ssh")
-        elif chosen is a_sftp:
-            self._app.open_session(self.store.profiles[row], mode="sftp")
-        elif chosen is a_edit:
-            dlg = ConnectDialog(self, self.store.profiles[row], self.credentials)
-            if dlg.exec():
-                profile = dlg.result_profile()
-                self.store.update(row, profile)
-                dlg.apply_credentials(profile)
-                self._reload_list()
-        elif chosen is a_del:
-            p = self.store.profiles[row]
-            r = QMessageBox.question(
-                self, "プロファイルの削除",
-                f"「{p.label()}」を一覧から削除しますか?\n(サーバー側には何も影響しません)",
-            )
-            if r == QMessageBox.Yes:
-                self.store.remove(row)
-                self._reload_list()
+        for act, handler in actions:
+            if chosen is act:
+                handler()
+                return
 
     def _connect_item(self, item: QListWidgetItem):
         idx = item.data(Qt.UserRole)
@@ -1571,6 +1772,29 @@ class SessionPage(QWidget):
         return bar
 
     # ---- スニペット ---------------------------------------------------------
+    def _open_snippets(self):
+        """ツールバーの「スニペット」から一覧をポップアップする(#113)。
+
+        送信自体は _send_snippet に任せる(変数入力・Enter 付与の判断を
+        1 か所に保つ)。空でも管理ダイアログへは行けるようにしておく。
+        """
+        if self.session_tab is None or self.session_tab.terminal is None:
+            QMessageBox.information(
+                self, "スニペット", "ターミナル接続中のみスニペットを送信できます。")
+            return
+        menu = QMenu(self)
+        for snippet in self.snippets.snippets:
+            act = menu.addAction(snippet.name)
+            act.triggered.connect(
+                lambda checked=False, s=snippet: self._send_snippet(s))
+        if not self.snippets.snippets:
+            act = menu.addAction("スニペットがありません")
+            act.setEnabled(False)
+        menu.addSeparator()
+        menu.addAction("スニペットを管理…", self._app._manage_snippets)
+        btn = self.session_tab.bt_snippets
+        menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
+
     def _send_snippet(self, snippet: Snippet):
         if self.session_tab is None or self.session_tab.terminal is None:
             QMessageBox.information(
@@ -1608,6 +1832,10 @@ class SessionPage(QWidget):
             ctx.note_login_password(worker.used_password)
         tab = SessionTab(session, self.settings, ctx, mode=self._mode)
         self.session_tab = tab
+        # ツールバーからの依頼は既存のメニュー処理へ委譲する(ロジックを重複させない)
+        tab.request_tunnel.connect(self._add_tunnel)
+        tab.request_session_log.connect(self._toggle_session_log)
+        tab.request_snippets.connect(self._open_snippets)
         if tab.terminal is not None:
             tab.terminal.set_snippet_store(self.snippets)
         self._set_content(tab)

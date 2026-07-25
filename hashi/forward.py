@@ -36,9 +36,19 @@ class Forward:
 
 
 def _pump_stream(sock: socket.socket, chan):
-    """ソケットと paramiko チャネル間をバイ方向にポンプする。"""
-    sock.setblocking(False)
-    chan.setblocking(False)
+    """ソケットと paramiko チャネル間をバイ方向にポンプする。
+
+    停止処理と競合して、ポンプ開始時点で既にソケット/チャネルが閉じている
+    ことがある。その場合 setblocking() が OSError(Bad file descriptor)を投げ、
+    ワーカースレッドの未処理例外になる。閉じているなら黙って戻る
+    (呼び出し側の finally が後片付けする)。
+    """
+    try:
+        sock.setblocking(False)
+        chan.setblocking(False)
+    except OSError:
+        logger.debug("ポンプ開始時に接続が閉じられていた (中断)", exc_info=True)
+        return
     to_chan = b""
     to_sock = b""
 

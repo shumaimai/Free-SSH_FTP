@@ -88,6 +88,45 @@ def test_import_refreshes_launcher_list(app_win):
     assert any("new" in name or "x@new" in name for name in labels)
 
 
+def test_launcher_detail_pane_follows_selection(app_win):
+    """2 カラムカードの右側が選択に追従し、未選択ならボタンを無効化(#113)。"""
+    lp = app_win.launcher
+    lp.store.profiles.clear()
+    lp.store.profiles.append(
+        Profile(name="本番 web", host="203.0.113.9", port=2222,
+                username="deploy", tags=["prod"]))
+    lp._reload_list()
+
+    # 未選択では接続系ボタンが無効
+    lp.list.setCurrentItem(None)
+    lp._update_detail()
+    assert not lp.bt_connect_both.isEnabled()
+    assert not lp.bt_edit.isEnabled()
+
+    lp.list.setCurrentRow(0)
+    assert lp.bt_connect_both.isEnabled()
+    assert lp._detail_name.text() == "本番 web"
+    assert "deploy@203.0.113.9:2222" in lp._detail_addr.text()
+    assert "prod" in lp._detail_meta.text()
+
+
+def test_launcher_connect_buttons_pass_mode(app_win, monkeypatch):
+    """SSH のみ / ファイルのみ ボタンが正しい mode で接続する(#112/#113)。"""
+    lp = app_win.launcher
+    lp.store.profiles.clear()
+    lp.store.profiles.append(Profile(host="h", username="u"))
+    lp._reload_list()
+    lp.list.setCurrentRow(0)
+
+    opened = []
+    monkeypatch.setattr(app_win, "open_session",
+                        lambda p, mode="both": opened.append(mode))
+    lp.bt_connect_both.click()
+    lp.bt_connect_ssh.click()
+    lp.bt_connect_sftp.click()
+    assert opened == ["both", "ssh", "sftp"]
+
+
 def test_launcher_empty_state(app_win):
     """接続先ゼロ / 検索一致なしで空状態プレースホルダを出す(#113)。"""
     lp = app_win.launcher
@@ -176,6 +215,44 @@ def _cleanup(qapp, tab):
         qapp.processEvents()
     tab.deleteLater()
     qapp.processEvents()
+
+
+def test_toolbar_buttons_emit_requests_not_logic(qapp):
+    """ツールバーは依頼(シグナル)を投げるだけ。処理は Page 側が持つ(#113)。"""
+    tab = _make_tab(qapp, "both")
+    got = []
+    tab.request_snippets.connect(lambda: got.append("snippets"))
+    tab.request_tunnel.connect(lambda: got.append("tunnel"))
+    tab.request_session_log.connect(lambda: got.append("log"))
+    tab.bt_snippets.click()
+    tab.bt_tunnel.click()
+    tab.bt_log.click()
+    assert got == ["snippets", "tunnel", "log"]
+    _cleanup(qapp, tab)
+
+
+def test_toolbar_icons_track_state(qapp):
+    """トグルのアイコン色が状態に追従する(チェック時はアクセント色)(#113)。"""
+    from hashi import style
+
+    tab = _make_tab(qapp, "both")
+    # チェック中はアクセント色のアイコン、外すと通常色
+    tab.bt_term.setChecked(True)
+    on_icon = style.icon("terminal", style.ACCENT).cacheKey()
+    assert tab.bt_term.icon().cacheKey() == on_icon
+    tab.bt_term.setChecked(False)
+    off_icon = style.icon("terminal", style.FG).cacheKey()
+    assert tab.bt_term.icon().cacheKey() == off_icon
+    _cleanup(qapp, tab)
+
+
+def test_sftp_only_disables_terminal_side_buttons(qapp):
+    """ファイルのみモードでは端末側の操作ボタンを無効化(#112/#113)。"""
+    tab = _make_tab(qapp, "sftp")
+    assert not tab.bt_sendpw.isEnabled()
+    assert not tab.bt_snippets.isEnabled()
+    assert not tab.bt_log.isEnabled()
+    _cleanup(qapp, tab)
 
 
 def test_session_tab_ssh_only_has_no_browser(qapp):
