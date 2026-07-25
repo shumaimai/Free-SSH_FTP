@@ -11,9 +11,21 @@ import logging
 import threading
 import time
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtCore import (
+    QEasingCurve,
+    QPropertyAnimation,
+    QSize,
+    Qt,
+    QThread,
+    QTimer,
+    Signal,
+)
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QFileDialog,
+    QFrame,
+    QGraphicsDropShadowEffect,
+    QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -25,7 +37,8 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSplitter,
-    QToolBar,
+    QStackedLayout,
+    QTabWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -555,39 +568,80 @@ class ConnectingWidget(QWidget):
 
     def __init__(self, profile: Profile, parent=None):
         super().__init__(parent)
-        root = QVBoxLayout(self)
-        root.setAlignment(Qt.AlignCenter)
-        root.setSpacing(12)
+        outer = QVBoxLayout(self)
+        outer.setAlignment(Qt.AlignCenter)
 
-        self.message = QLabel(f"{profile.label()} に接続しています…")
+        card = QFrame()
+        card.setObjectName("connectCard")
+        card.setStyleSheet(
+            f"#connectCard {{ background:{style.PANEL};"
+            f" border:1px solid {style.BORDER}; border-radius:12px; }}")
+        shadow = QGraphicsDropShadowEffect(card)
+        shadow.setBlurRadius(48)
+        shadow.setColor(QColor(0, 0, 0, 130))
+        shadow.setOffset(0, 16)
+        card.setGraphicsEffect(shadow)
+        cv = QVBoxLayout(card)
+        cv.setContentsMargins(32, 26, 32, 26)
+        cv.setSpacing(14)
+        cv.setAlignment(Qt.AlignCenter)
+
+        # 接続先名やサーバー由来のエラー文を出すので PlainText 固定(#113 の安全化)
+        self.message = style.plain_label(f"{profile.label()} に接続しています…")
         self.message.setAlignment(Qt.AlignCenter)
-        self.message.setStyleSheet("font-size:16px;")
-        root.addWidget(self.message)
+        self.message.setWordWrap(True)
+        self.message.setStyleSheet("font-size:16px; font-weight:bold;")
+        self._sub = QLabel("認証とホスト鍵を確認しています")
+        self._sub.setAlignment(Qt.AlignCenter)
+        self._sub.setStyleSheet(f"color:{style.FG_MUTED}; font-size:12px;")
 
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)
-        self.progress.setFixedWidth(280)
-        root.addWidget(self.progress, 0, Qt.AlignCenter)
+        self.progress.setFixedWidth(300)
+        self.progress.setTextVisible(False)
+
+        cv.addWidget(self.message)
+        cv.addWidget(self._sub)
+        cv.addWidget(self.progress, 0, Qt.AlignCenter)
+        outer.addWidget(card)
 
     def show_error(self, message: str):
         if message:
             text = f"接続に失敗しました:\n{message}"
+            sub = "接続情報を確認し、タブを閉じて再接続してください"
         else:
             text = "接続を中止しました"
+            sub = ""
         self.message.setText(text)
-        self.message.setStyleSheet("color:#e06c75; font-size:16px;")
+        self.message.setStyleSheet(
+            f"color:{style.ERROR}; font-size:16px; font-weight:bold;")
+        self._sub.setText(sub)
         self.progress.hide()
 
 
 class SessionTab(QWidget):
     """1 接続分のタブ。ターミナルと SFTP ブラウザを横並びで持つ。"""
 
+    # ツールバーからの依頼(実処理は SessionPage / AppWindow 側が持つ)。
+    # SessionTab に業務ロジックを重複させないためシグナルで投げるだけにする。
+    request_snippets = Signal()
+    request_tunnel = Signal()
+    request_session_log = Signal()
+
     def __init__(self, session: SshSession, settings: Settings,
-                 secret_ctx: SecretContext, parent=None):
+                 secret_ctx: SecretContext, parent=None, mode: str = "both"):
         super().__init__(parent)
         self.session = session
         self.settings = settings
         self.secret_ctx = secret_ctx
+        self.mode = mode                    # "both" / "ssh" / "sftp"(Issue #112)
+        self._use_terminal = mode in ("both", "ssh")
+        self._use_browser = mode in ("both", "sftp")
+        self.terminal = None
+        self.browser = None
+        self._term_pane = None
+        self._browser_pane = None
+        self.session_log = None
         self.tunnels: list[Forward] = []
         self._last_autofill_ts = 0.0
 
@@ -595,87 +649,134 @@ class SessionTab(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        bar = QHBoxLayout()
-        bar.setContentsMargins(6, 4, 6, 2)
-        self.bt_term = QToolButton()
-        self.bt_term.setText("ターミナル")
-        self.bt_term.setCheckable(True)
-        self.bt_term.setChecked(True)
-        self.bt_files = QToolButton()
-        self.bt_files.setText("ファイル")
-        self.bt_files.setCheckable(True)
-        self.bt_files.setChecked(True)
-        # パスワード送信ボタン(Issue #40)。右クリック=貼り付けのため
-        # 「右クリック→送信」は Shift が要ることが伝わらず使えなかった。
-        # いつでも押せる常設ボタンにする(送る判断は常に人間、は維持)。
-        self.bt_sendpw = QToolButton()
-        self.bt_sendpw.setText("🔑 パスワード送信")
-        self.bt_sendpw.setToolTip(
+        # 上部ツールバー(Issue #113 / 参考デザイン)。線画アイコン + 小ラベルの
+        # 縦型ボタンを並べる。高頻度操作はここからワンクリックで届く。
+        bar_w = QFrame()
+        bar_w.setObjectName("sessionToolbar")
+        bar_w.setStyleSheet(
+            f"#sessionToolbar {{ background:{style.PANEL};"
+            f" border-bottom:1px solid {style.BORDER}; }}"
+            f"#sessionToolbar QToolButton {{ font-size:10px; padding:3px 9px; }}")
+        bar = QHBoxLayout(bar_w)
+        bar.setContentsMargins(8, 4, 8, 4)
+        bar.setSpacing(2)
+
+        self.bt_sendpw = self._tool_button(
+            "パスワード送信", "key",
             "保存済みの sudo / ログインパスワードをターミナルへ送信します\n"
             "(Shift+右クリックのメニューからも送信できます)")
+        # パスワード送信(Issue #40)。右クリック=貼り付けのため「右クリック→送信」は
+        # Shift が要ると伝わらず使えなかった。常設ボタンにする(送る判断は常に人間)。
         self.bt_sendpw.clicked.connect(
             lambda: self._on_password_prompt("manual"))
-        info = QLabel(f"{session.profile.username}@{session.profile.host}:{session.profile.port}")
-        info.setStyleSheet("color:#8a919e;")
+        self.bt_snippets = self._tool_button(
+            "スニペット", "snippet", "よく使うコマンドを送信します")
+        self.bt_snippets.clicked.connect(self.request_snippets)
+        self.bt_tunnel = self._tool_button(
+            "ポート転送", "forward", "ポートフォワードを追加します")
+        self.bt_tunnel.clicked.connect(self.request_tunnel)
+        self.bt_log = self._tool_button(
+            "セッションログ", "log", "ターミナル出力の保存を開始/停止します")
+        self.bt_log.clicked.connect(self.request_session_log)
+
+        # 表示トグル(モードで無効になる側は押せないようにする。#112)
+        self.bt_term = self._tool_button(
+            "ターミナル", "terminal", "ターミナルの表示/非表示", checkable=True)
+        self.bt_files = self._tool_button(
+            "ファイル", "folder", "ファイル一覧の表示/非表示", checkable=True)
+        self.bt_term.setEnabled(self._use_terminal)
+        self.bt_files.setEnabled(self._use_browser)
+        self.bt_term.setChecked(self._use_terminal)
+        self.bt_files.setChecked(self._use_browser)
+
+        for w in (self.bt_sendpw, self.bt_snippets, self.bt_tunnel, self.bt_log):
+            bar.addWidget(w)
+        bar.addWidget(self._toolbar_separator())
         bar.addWidget(self.bt_term)
         bar.addWidget(self.bt_files)
-        bar.addWidget(self.bt_sendpw)
         bar.addStretch(1)
-        bar.addWidget(info)
-        root.addLayout(bar)
+        root.addWidget(bar_w)
 
         self.splitter = QSplitter(Qt.Horizontal)
-        self.terminal = TerminalWidget(
-            font_size=settings.get("terminal_font_size"),
-            right_click_paste=settings.get("right_click_paste"),
-            theme=settings.get("terminal_theme") or "",
-            font_family=settings.get("terminal_font_family") or "",
-        )
-        # セッションログ (Issue #85)。設定が OFF でもインスタンスは持ち、
-        # メニューから後から開始できるようにしておく。
-        self.session_log = SessionLog(
-            session.profile.label() or session.profile.id_str(),
-            settings.get("session_log_dir") or None,
-            enabled=bool(settings.get("session_log")),
-        )
-        self.terminal.set_session_log(self.session_log)
-        self._logging_enabled_at_start = self.session_log.is_open()
-        self.browser = SftpBrowser(
-            session, session.profile.initial_path,
-            settings=settings,
-            sudo_provider=lambda: self.secret_ctx.get_sudo_password(),
-            sudo_provider_silent=lambda: self.secret_ctx.get_sudo_password(
-                allow_prompt=False),
-            parent=self,
-        )
-        self.splitter.addWidget(self.terminal)
-        self.splitter.addWidget(self.browser)
+        self._logging_enabled_at_start = False
+        if self._use_terminal:
+            self.terminal = TerminalWidget(
+                font_size=settings.get("terminal_font_size"),
+                right_click_paste=settings.get("right_click_paste"),
+                theme=settings.get("terminal_theme") or "",
+                font_family=settings.get("terminal_font_family") or "",
+            )
+            # セッションログ (Issue #85)。設定が OFF でもインスタンスは持ち、
+            # メニューから後から開始できるようにしておく。
+            self.session_log = SessionLog(
+                session.profile.label() or session.profile.id_str(),
+                settings.get("session_log_dir") or None,
+                enabled=bool(settings.get("session_log")),
+            )
+            self.terminal.set_session_log(self.session_log)
+            self._logging_enabled_at_start = self.session_log.is_open()
+            self._term_pane = self._make_pane("SSH ターミナル", self.terminal)
+            self.splitter.addWidget(self._term_pane)
+        if self._use_browser:
+            self.browser = SftpBrowser(
+                session, session.profile.initial_path,
+                settings=settings,
+                sudo_provider=lambda: self.secret_ctx.get_sudo_password(),
+                sudo_provider_silent=lambda: self.secret_ctx.get_sudo_password(
+                    allow_prompt=False),
+                parent=self,
+            )
+            self._browser_pane = self._make_pane("FTP ファイル", self.browser)
+            self.splitter.addWidget(self._browser_pane)
         self.splitter.setStretchFactor(0, 3)
         self.splitter.setStretchFactor(1, 2)
         root.addWidget(self.splitter, 1)
 
+        # 下部 情報ステータスバー(Issue #113): 接続先 / 暗号スイート / 文字コード /
+        # 転送状況。ネゴシエート済み暗号は接続確立後の transport から取る。
+        root.addWidget(self._build_infobar())
+
         self.bt_term.toggled.connect(self._apply_visibility)
         self.bt_files.toggled.connect(self._apply_visibility)
-        self.browser.terminal_input.connect(self.terminal.send_text)
-        self.terminal.password_prompt.connect(self._on_password_prompt)
+        if self._use_terminal and self._use_browser:
+            self.browser.terminal_input.connect(self.terminal.send_text)
+        if self._use_browser:
+            self.browser.xfer.progress.connect(self._on_xfer_progress)
+        if self._use_terminal:
+            self.terminal.password_prompt.connect(self._on_password_prompt)
+        # SFTP のみのモードではパスワード送信・スニペット・ログは意味がない
+        for b in (self.bt_sendpw, self.bt_snippets, self.bt_log):
+            b.setEnabled(self._use_terminal)
+        # 有効/無効・チェック状態が固まったのでアイコンを塗り直す
+        self._refresh_toolbar_icons()
 
-        # トースト(通知)
-        self._toast = QLabel(self)
+        # トースト(通知)。フェードイン/アウトでふわっと出す。
+        # 通知文にサーバー由来の文字列が混ざりうるので PlainText 固定。
+        self._toast = style.plain_label()
+        self._toast.setParent(self)
         self._toast.setStyleSheet(
-            "background:#2d333f; color:#dcdfe4; border:1px solid #444c56;"
-            "border-radius:6px; padding:6px 12px;")
+            f"background:{style.BG_RAISED}; color:{style.FG};"
+            f" border:1px solid {style.BORDER};"
+            f" border-radius:{style.TOAST_RADIUS}px; padding:6px 12px;")
         self._toast.setVisible(False)
+        self._toast_fx = QGraphicsOpacityEffect(self._toast)
+        self._toast.setGraphicsEffect(self._toast_fx)
+        self._toast_anim = QPropertyAnimation(self._toast_fx, b"opacity", self)
+        self._toast_anim.setDuration(180)
+        self._toast_anim.setEasingCurve(QEasingCurve.InOutQuad)
+        self._toast_anim.finished.connect(self._on_toast_anim_done)
         self._toast_timer = QTimer(self)
         self._toast_timer.setSingleShot(True)
-        self._toast_timer.timeout.connect(lambda: self._toast.setVisible(False))
+        self._toast_timer.timeout.connect(self._fade_out_toast)
 
         # sudo ワンタップ送信ボタン。リモートはプロンプトを偽装できるため
         # 自動送信はしない(送る判断は常に人間)。ただしワンタップで済むようにする。
         self._sudo_btn = QPushButton("🔑 sudo パスワードを送信", self)
         self._sudo_btn.setStyleSheet(
-            "QPushButton { background:#3b5a3b; color:#fff; border:1px solid #4f7a4f;"
-            "border-radius:6px; padding:6px 14px; }"
-            "QPushButton:hover { background:#487048; }")
+            f"QPushButton {{ background:{style.OK}; color:#12200f;"
+            f" border:none; border-radius:{style.TOAST_RADIUS}px;"
+            f" padding:6px 14px; font-weight:bold; }}"
+            f"QPushButton:hover {{ background:{style.ACCENT_HOVER}; color:#fff; }}")
         self._sudo_btn.setCursor(Qt.PointingHandCursor)
         self._sudo_btn.setVisible(False)
         self._sudo_btn.clicked.connect(self._send_sudo_password)
@@ -683,14 +784,133 @@ class SessionTab(QWidget):
         self._sudo_btn_timer.setSingleShot(True)
         self._sudo_btn_timer.timeout.connect(lambda: self._sudo_btn.setVisible(False))
 
-        # シェル開始
-        ch = session.open_shell()
-        self.terminal.attach(ch)
-        self.terminal.setFocus()
+        # シェル開始(SSH モードのみ)
+        if self._use_terminal:
+            ch = session.open_shell()
+            self.terminal.attach(ch)
+            self.terminal.setFocus()
+
+    # ---- ツールバー部品(#113 / 参考デザイン) -------------------------------
+    def _tool_button(self, text: str, icon_name: str, tip: str,
+                     checkable: bool = False) -> QToolButton:
+        """線画アイコン + 小ラベルの縦型ツールボタンを作る。
+
+        アイコンは QPixmap なので QSS の文字色に追従しない。チェック状態と
+        有効/無効で色が食い違わないよう、状態が変わるたびに描き直す。
+        """
+        b = QToolButton()
+        b.setText(text)
+        b.setToolTip(tip)
+        b.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+        b.setIconSize(QSize(18, 18))
+        b.setCheckable(checkable)
+        b.setCursor(Qt.PointingHandCursor)
+        b._hashi_icon = icon_name          # 再描画用に名前を覚えておく
+        self._refresh_button_icon(b)
+        if checkable:
+            b.toggled.connect(lambda _on, btn=b: self._refresh_button_icon(btn))
+        return b
+
+    def _refresh_button_icon(self, b: QToolButton) -> None:
+        """ボタンの状態に合わせてアイコンの色を塗り直す。"""
+        name = getattr(b, "_hashi_icon", "")
+        if not name:
+            return
+        if not b.isEnabled():
+            color = style.FG_DISABLED
+        elif b.isCheckable() and b.isChecked():
+            color = style.ACCENT
+        else:
+            color = style.FG
+        b.setIcon(style.icon(name, color))
+
+    def _refresh_toolbar_icons(self) -> None:
+        for b in (self.bt_sendpw, self.bt_snippets, self.bt_tunnel,
+                  self.bt_log, self.bt_term, self.bt_files):
+            self._refresh_button_icon(b)
+
+    def _toolbar_separator(self) -> QWidget:
+        sep = QFrame()
+        sep.setFixedWidth(1)
+        sep.setStyleSheet(f"background:{style.BORDER}; margin:6px 6px;")
+        return sep
+
+    # ---- ペインヘッダー(#113 / 参考デザイン) -------------------------------
+    def _make_pane(self, title: str, inner: QWidget) -> QWidget:
+        """ターミナル / ファイルの各ペインに、●ドット + ラベルの見出しを付けて包む。"""
+        pane = QWidget()
+        v = QVBoxLayout(pane)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+        header = QFrame()
+        header.setObjectName("paneHeader")
+        header.setStyleSheet(
+            f"#paneHeader {{ background:{style.PANEL};"
+            f" border-bottom:1px solid {style.BORDER}; }}")
+        h = QHBoxLayout(header)
+        h.setContentsMargins(12, 5, 12, 5)
+        h.setSpacing(8)
+        dot = QLabel("●")
+        dot.setStyleSheet(f"color:{style.DOT_OK}; font-size:9px;")
+        lbl = QLabel(title)
+        lbl.setStyleSheet(
+            f"color:{style.FG_MUTED}; font-size:11px; font-weight:600;")
+        h.addWidget(dot)
+        h.addWidget(lbl)
+        h.addStretch(1)
+        v.addWidget(header)
+        v.addWidget(inner, 1)
+        return pane
+
+    # ---- 情報ステータスバー(#113) -----------------------------------------
+    def _build_infobar(self) -> QWidget:
+        w = QFrame()
+        w.setObjectName("sessionInfoBar")
+        w.setStyleSheet(
+            f"#sessionInfoBar {{ background:{style.PANEL};"
+            f" border-top:1px solid {style.BORDER}; }}"
+            f"#sessionInfoBar QLabel {{ color:{style.FG_MUTED}; font-size:11px; }}")
+        h = QHBoxLayout(w)
+        h.setContentsMargins(10, 3, 10, 3)
+        h.setSpacing(14)
+        p = self.session.profile
+        mode_txt = {"both": "🖥+📁", "ssh": "🖥", "sftp": "📁"}.get(self.mode, "")
+        # ホスト名・暗号名はプロファイル/サーバー由来なので PlainText で出す
+        h.addWidget(style.plain_label(f"🔗 {p.username}@{p.host}:{p.port}"))
+        try:
+            cipher = self.session.security_summary()
+        except Exception:
+            logger.debug("暗号スイートの取得に失敗 (無視)", exc_info=True)
+            cipher = ""
+        if cipher:
+            lbl = style.plain_label(f"🔒 {cipher}")
+            lbl.setToolTip("ネゴシエート済みの暗号スイート")
+            h.addWidget(lbl)
+        h.addWidget(QLabel("UTF-8"))
+        if mode_txt:
+            h.addWidget(QLabel(mode_txt))
+        h.addStretch(1)
+        # 転送ラベルにはリモートのファイル名が入る → PlainText 固定
+        self._xfer_label = style.plain_label()
+        self._xfer_label.setStyleSheet(f"color:{style.ACCENT};")
+        h.addWidget(self._xfer_label)
+        return w
+
+    def _on_xfer_progress(self, info: dict):
+        """SFTP 転送の進捗を情報バー右端に表示する(アイドルは空)。"""
+        if not info.get("label") and info.get("total", 0) <= 1:
+            self._xfer_label.setText("")
+            return
+        done = info.get("done", 0)
+        total = max(info.get("total", 1), 1)
+        pct = min(int(done * 100 / total), 100)
+        self._xfer_label.setText(f"⇅ {info['label']}  {pct}%")
 
     # ---- パスワード自動入力 -------------------------------------------------
     def _on_password_prompt(self, kind: str):
         import time
+        if self.terminal is None:
+            return
         if kind == "manual":
             pw = (self.secret_ctx.get_sudo_password()
                   or self.secret_ctx.get_login_password())
@@ -738,13 +958,31 @@ class SessionTab(QWidget):
     def _flash(self, text: str, warn: bool = False):
         self._toast.setText(text)
         self._toast.setStyleSheet(
-            "background:%s; color:#fff; border-radius:6px; padding:6px 12px;"
-            % ("#7a3b3b" if warn else "#2d333f"))
+            "background:%s; color:#fff; border:1px solid %s;"
+            " border-radius:%dpx; padding:6px 12px;"
+            % (style.DANGER_BG if warn else style.BG_RAISED,
+               style.ERROR if warn else style.BORDER, style.TOAST_RADIUS))
         self._toast.adjustSize()
         self._toast.move(max(12, (self.width() - self._toast.width()) // 2), 40)
         self._toast.setVisible(True)
         self._toast.raise_()
+        # フェードイン(現在の不透明度から 1.0 へ)
+        self._toast_anim.stop()
+        self._toast_anim.setStartValue(self._toast_fx.opacity())
+        self._toast_anim.setEndValue(1.0)
+        self._toast_anim.start()
         self._toast_timer.start(3500)
+
+    def _fade_out_toast(self):
+        self._toast_anim.stop()
+        self._toast_anim.setStartValue(self._toast_fx.opacity())
+        self._toast_anim.setEndValue(0.0)
+        self._toast_anim.start()
+
+    def _on_toast_anim_done(self):
+        # フェードアウト完了時だけ実際に隠す(フェードインでは何もしない)
+        if self._toast_anim.endValue() == 0.0:
+            self._toast.setVisible(False)
 
     # ---- ポートフォワード ----------------------------------------------------
     def add_tunnel(self, spec: dict) -> str:
@@ -770,12 +1008,22 @@ class SessionTab(QWidget):
         if not self.bt_term.isChecked() and not self.bt_files.isChecked():
             sender = self.sender()
             other = self.bt_files if sender is self.bt_term else self.bt_term
-            other.setChecked(True)
-        self.terminal.setVisible(self.bt_term.isChecked())
-        self.browser.setVisible(self.bt_files.isChecked())
+            if other.isEnabled():
+                other.setChecked(True)
+        # ペインで包んでいるときは見出しごと出し入れする
+        if self._term_pane is not None:
+            self._term_pane.setVisible(self.bt_term.isChecked())
+        elif self.terminal is not None:
+            self.terminal.setVisible(self.bt_term.isChecked())
+        if self._browser_pane is not None:
+            self._browser_pane.setVisible(self.bt_files.isChecked())
+        elif self.browser is not None:
+            self.browser.setVisible(self.bt_files.isChecked())
 
     def toggle_session_log(self) -> bool:
         """セッションログを開始/停止し、開始状態を返す。"""
+        if self.terminal is None:
+            return False   # SFTP のみのモードにはターミナル出力がない
         if self.session_log.is_open():
             try:
                 self.session_log.flush_visible(self.terminal.screen)
@@ -801,27 +1049,31 @@ class SessionTab(QWidget):
     def shutdown(self):
         for fw in self.tunnels:
             fw.stop()
-        self.browser.shutdown()
-        self.terminal.detach()
+        if self.browser is not None:
+            self.browser.shutdown()
+        if self.terminal is not None:
+            self.terminal.detach()
         self.session.close()
 
     def reconnect_session(self, session: SshSession):
         """接続を張り直し、ターミナル/ブラウザを新しい session に乗り換える。"""
         old_session = self.session
         self.session = session
-        try:
-            self.terminal.detach()
-            ch = session.open_shell(
-                cols=self.terminal.screen.columns,
-                rows=self.terminal.screen.lines,
-            )
-            self.terminal.attach(ch)
-        except Exception:  # noqa: BLE001
-            logger.warning("ターミナル再接続に失敗", exc_info=True)
-        try:
-            self.browser.reconnect_session(session)
-        except Exception:  # noqa: BLE001
-            logger.warning("SFTP ブラウザ再接続に失敗", exc_info=True)
+        if self.terminal is not None:
+            try:
+                self.terminal.detach()
+                ch = session.open_shell(
+                    cols=self.terminal.screen.columns,
+                    rows=self.terminal.screen.lines,
+                )
+                self.terminal.attach(ch)
+            except Exception:  # noqa: BLE001
+                logger.warning("ターミナル再接続に失敗", exc_info=True)
+        if self.browser is not None:
+            try:
+                self.browser.reconnect_session(session)
+            except Exception:  # noqa: BLE001
+                logger.warning("SFTP ブラウザ再接続に失敗", exc_info=True)
         for fw in self.tunnels:
             fw.stop()
         self.tunnels = []
@@ -1124,29 +1376,7 @@ class _SharedOps:
         )
         QMessageBox.information(self, "SSH 鍵の生成", message)
 
-    def _open_settings(self):
-        if SettingsDialog(self.settings, self).exec():
-            self._apply_ui_settings_live()
-
-    def _apply_ui_settings_live(self):
-        """テーマ / フォント設定を開いている全セッションへ即時反映(#99)。
-
-        以前は「新しい接続から反映」だったが、再接続が必要で面倒という
-        オーナーのフィードバックにより、開いているターミナルにも適用する。
-        """
-        theme = self.settings.get("terminal_theme") or ""
-        family = self.settings.get("terminal_font_family") or ""
-        size = self.settings.get("terminal_font_size")
-        for win in SessionWindow._windows:
-            tab = win.session_tab
-            if tab is None:
-                continue
-            try:
-                tab.terminal.set_theme(theme)
-                tab.terminal.set_font_family(family)
-                tab.terminal.set_font_size(size)
-            except RuntimeError:
-                logger.debug("閉じられたウィンドウへの設定反映をスキップ")
+    # 設定ダイアログと即時反映は AppWindow が実装する(タブ全体に反映するため)。
 
     def _about(self):
         QMessageBox.information(
@@ -1190,132 +1420,140 @@ def _launcher_order(profiles, query: str = ""):
         result.append((i, p))
     result.sort(key=lambda t: (-t[1].last_connected, t[1].label().lower()))
     return result
+class LauncherPage(QWidget):
+    """サーバー選択タブ(Issue #115)。接続すると AppWindow に新しいタブを開く。"""
 
-
-class LauncherWindow(_SharedOps, QMainWindow):
-    """起動時のサーバー選択ランチャー(Issue #14 段階2)。
-
-    接続すると常に独立した SessionWindow を開く。タブは持たない。
-    ストア類(プロファイル/既知ホスト/認証情報/設定)は全ウィンドウで共有する。
-    """
-
-    _instance: "LauncherWindow | None" = None
-
-    def __init__(self, services: dict | None = None):
+    def __init__(self, app: "AppWindow"):
         super().__init__()
-        self.setWindowTitle(f"Hashi — 接続先を選択 v{APP_VERSION}")
-        fit_to_screen(self, 420, 640)
+        self._app = app
+        self.store = app.store
+        self.settings = app.settings
+        self.credentials = app.credentials
 
-        if services is None:
-            services = {
-                "store": ProfileStore(),
-                "known_hosts": KnownHosts(),
-                "settings": Settings(),
-                "credentials": CredentialStore(),
-                "snippets": SnippetStore(),
-            }
-        self._services = services
-        self.snippets = services["snippets"]
-        self.store = services["store"]
-        self.known_hosts = services["known_hosts"]
-        self.settings = services["settings"]
-        self.credentials = services["credentials"]
-        self._keygen_workers: list[KeygenWorker] = []
-        self._p2p_workers: list[_P2PWorkerBase] = []
-        self._cloud_workers: list[CloudSyncWorker] = []
-        LauncherWindow._instance = self
+        # 参考デザインに合わせた 2 カラムのカード(#113)。
+        # 左: 保存済みの接続(検索つき) / 右: 接続操作。
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(24, 24, 24, 24)
+        outer.setAlignment(Qt.AlignCenter)
 
-        central = QWidget()
-        v = QVBoxLayout(central)
-        v.setContentsMargins(16, 16, 16, 16)
-        v.setSpacing(8)
-        self._update_banner = self._create_update_banner()
-        v.addWidget(self._update_banner)
-        title = QLabel("接続先を選択")
-        title.setStyleSheet("font-size:16px; font-weight:bold;")
-        btn_new = QPushButton("＋ 新しい接続")
-        btn_new.clicked.connect(self.new_profile)
+        card = QFrame()
+        card.setObjectName("loginCard")
+        card.setStyleSheet(
+            f"#loginCard {{ background:{style.PANEL};"
+            f" border:1px solid {style.BORDER}; border-radius:10px; }}")
+        card.setMaximumWidth(900)
+        shadow = QGraphicsDropShadowEffect(card)
+        shadow.setBlurRadius(48)
+        shadow.setColor(QColor(0, 0, 0, 120))
+        shadow.setOffset(0, 16)
+        card.setGraphicsEffect(shadow)
+        cols = QHBoxLayout(card)
+        cols.setContentsMargins(0, 0, 0, 0)
+        cols.setSpacing(0)
+
+        # ---- 左カラム: 保存済みの接続 ----
+        side = QFrame()
+        side.setObjectName("loginSide")
+        side.setStyleSheet(
+            f"#loginSide {{ background:{style.PANEL2};"
+            f" border-right:1px solid {style.BORDER};"
+            " border-top-left-radius:10px; border-bottom-left-radius:10px; }}")
+        side.setFixedWidth(280)
+        sv = QVBoxLayout(side)
+        sv.setContentsMargins(14, 16, 14, 16)
+        sv.setSpacing(8)
+        side_title = QLabel("保存済みの接続")
+        side_title.setStyleSheet(
+            f"color:{style.FG_MUTED}; font-size:11px; font-weight:600;")
         # インクリメンタル検索(#81)。名前/ホスト/ユーザー/タグで絞り込み
         self.ed_search = QLineEdit()
-        self.ed_search.setPlaceholderText("🔍 検索 (名前 / ホスト / ユーザー / タグ)")
+        self.ed_search.setPlaceholderText("🔍 検索 (名前 / ホスト / タグ)")
         self.ed_search.setClearButtonEnabled(True)
         self.ed_search.textChanged.connect(self._reload_list)
         self.list = QListWidget()
         self.list.setSpacing(2)
+        self.list.setFrameShape(QFrame.NoFrame)
+        self.list.setStyleSheet("background:transparent;")
+        # 幅の狭いサイドバーなので、横スクロールを出さず末尾を省略する
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.list.setTextElideMode(Qt.ElideRight)
+        self.list.setWordWrap(False)
         self.list.itemDoubleClicked.connect(self._connect_item)
+        self.list.currentItemChanged.connect(lambda *_: self._update_detail())
         self.list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._profile_menu)
-        hint = QLabel("ダブルクリックで接続(新しいウィンドウが開きます)\n"
-                      "右クリックで編集/削除")
-        hint.setStyleSheet(f"color:{style.FG_MUTED};")
-        v.addWidget(title)
-        v.addWidget(btn_new)
-        v.addWidget(self.ed_search)
-        v.addWidget(self.list, 1)
-        v.addWidget(hint)
-        self.setCentralWidget(central)
+        # 空状態のプレースホルダ(#113)。接続先ゼロ / 検索一致なしで出す。
+        # リモート/利用者の入力をそのまま出すので PlainText 固定にする。
+        self._empty = style.plain_label(muted=True)
+        self._empty.setAlignment(Qt.AlignCenter)
+        self._empty.setWordWrap(True)
+        self._empty.setVisible(False)
+        btn_new = QPushButton("＋ 新しい接続")
+        btn_new.setProperty("primary", True)
+        btn_new.setCursor(Qt.PointingHandCursor)
+        btn_new.clicked.connect(self.new_profile)
+        sv.addWidget(side_title)
+        sv.addWidget(self.ed_search)
+        sv.addWidget(self.list, 1)
+        sv.addWidget(self._empty, 1)
+        sv.addWidget(btn_new)
 
-        self._build_menu()
-        self._reload_list()
-        self.statusBar().showMessage("準備完了")
+        # ---- 右カラム: 接続操作 ----
+        right = QWidget()
+        rv = QVBoxLayout(right)
+        rv.setContentsMargins(30, 26, 30, 26)
+        rv.setSpacing(14)
+        head = QLabel("サーバーへ接続")
+        head.setStyleSheet("font-size:16px; font-weight:600;")
+        # 選択中の接続先の詳細(ホスト名等はリモート由来なので PlainText)
+        self._detail_name = style.plain_label()
+        self._detail_name.setStyleSheet("font-size:14px; font-weight:600;")
+        self._detail_addr = style.plain_label(muted=True)
+        self._detail_meta = style.plain_label(muted=True)
+        self._detail_meta.setWordWrap(True)
 
-        if self.settings.get("update_check"):
-            self._update_worker = UpdateCheckWorker(parent=self)
-            self._update_worker.new_version.connect(self._show_update_banner)
-            self._update_worker.start()
+        self.bt_connect_both = QPushButton("SSH と FTP で接続")
+        self.bt_connect_both.setProperty("primary", True)
+        self.bt_connect_both.setCursor(Qt.PointingHandCursor)
+        self.bt_connect_both.clicked.connect(lambda: self._connect_selected("both"))
+        self.bt_connect_ssh = QPushButton("SSH のみ")
+        self.bt_connect_ssh.clicked.connect(lambda: self._connect_selected("ssh"))
+        self.bt_connect_sftp = QPushButton("ファイルのみ")
+        self.bt_connect_sftp.clicked.connect(lambda: self._connect_selected("sftp"))
+        for b in (self.bt_connect_ssh, self.bt_connect_sftp):
+            b.setCursor(Qt.PointingHandCursor)
+        btns = QHBoxLayout()
+        btns.setSpacing(8)
+        btns.addWidget(self.bt_connect_both)
+        btns.addWidget(self.bt_connect_ssh)
+        btns.addWidget(self.bt_connect_sftp)
+        btns.addStretch(1)
 
-    def _create_update_banner(self):
-        """新バージョン通知バナーを生成する。"""
-        w = QWidget()
-        h = QHBoxLayout(w)
-        h.setContentsMargins(12, 8, 12, 8)
-        h.setSpacing(style.SPACING)
-        self._update_label = QLabel()
-        self._update_label.setWordWrap(True)
-        self._update_label.setOpenExternalLinks(True)
-        self._update_label.setTextInteractionFlags(Qt.TextBrowserInteraction)
-        close = QPushButton("×")
-        close.setFlat(True)
-        close.setToolTip("閉じる")
-        close.clicked.connect(lambda: w.setVisible(False))
-        h.addWidget(self._update_label, 1)
-        h.addWidget(close)
-        w.setStyleSheet(
-            f"background-color:{style.ACCENT}; color:{style.FG}; "
-            f"border-radius:{style.TOAST_RADIUS}px;"
-        )
-        w.setVisible(False)
-        return w
+        edit_row = QHBoxLayout()
+        edit_row.setSpacing(8)
+        self.bt_edit = QPushButton("編集…")
+        self.bt_edit.clicked.connect(self._edit_selected)
+        self.bt_delete = QPushButton("削除")
+        self.bt_delete.clicked.connect(self._delete_selected)
+        edit_row.addWidget(self.bt_edit)
+        edit_row.addWidget(self.bt_delete)
+        edit_row.addStretch(1)
 
-    def _show_update_banner(self, version: str, url: str):
-        self._update_label.setText(
-            f"新しいバージョン {version} が利用可能です — "
-            f"<a style='color:{style.FG};' href='{url}'>ダウンロード</a>"
-        )
-        self._update_banner.setVisible(True)
+        hint = style.muted_label(
+            "「SSH と FTP で接続」では左にターミナル、右にファイル一覧を並べます"
+            "(境界はドラッグで調整)。一覧のダブルクリックでも接続できます。")
+        rv.addWidget(head)
+        rv.addWidget(self._detail_name)
+        rv.addWidget(self._detail_addr)
+        rv.addWidget(self._detail_meta)
+        rv.addLayout(btns)
+        rv.addLayout(edit_row)
+        rv.addStretch(1)
+        rv.addWidget(hint)
 
-    def _build_menu(self):
-        m_file = self.menuBar().addMenu("ファイル")
-        m_file.addAction("新しい接続…", self.new_profile)
-        m_file.addAction("SSH 鍵を生成…", self._generate_key)
-        m_file.addSeparator()
-        m_file.addAction("接続情報を書き出す…", self._export_profiles)
-        m_file.addAction("接続情報を読み込む…", self._import_profiles)
-        m_file.addSeparator()
-        m_file.addAction("接続情報を送信 (P2P)…", self._p2p_send)
-        m_file.addAction("接続情報を受信 (P2P)…", self._p2p_receive)
-        m_file.addSeparator()
-        m_file.addAction("クラウドへアップロード…", self._cloud_upload)
-        m_file.addAction("クラウドからダウンロード…", self._cloud_download)
-        m_file.addSeparator()
-        m_file.addAction("設定…", self._open_settings)
-        m_file.addSeparator()
-        m_file.addAction("終了", self.close)
-
-        m_help = self.menuBar().addMenu("ヘルプ")
-        m_help.addAction("Hashi について", self._about)
-
-    def _refresh_profile_lists(self):
+        cols.addWidget(side)
+        cols.addWidget(right, 1)
+        outer.addWidget(card)
         self._reload_list()
 
     def _reload_list(self):
@@ -1332,9 +1570,75 @@ class LauncherWindow(_SharedOps, QMainWindow):
             item.setData(Qt.UserRole, idx)   # 検索/ソートでズレない実 index
             item.setToolTip(f"{p.username}@{p.host}:{p.port} ({p.auth_method})")
             self.list.addItem(item)
+        # 空状態の出し分け(接続先ゼロ / 検索一致なし)
+        empty = self.list.count() == 0
+        if empty:
+            if self.store.profiles and query:
+                self._empty.setText(
+                    f"🔍「{query}」に一致する接続先がありません")
+            else:
+                self._empty.setText(
+                    "まだ接続先がありません。\n"
+                    "上の「＋ 新しい接続」から最初のサーバーを追加しましょう。")
+        self.list.setVisible(not empty)
+        self._empty.setVisible(empty)
+        self._update_detail()
+
+    # ---- 右カラムの詳細表示(#113) ------------------------------------------
+    def _update_detail(self) -> None:
+        """選択中の接続先を右カラムへ反映し、操作ボタンの有効/無効を揃える。"""
+        row = self._selected_store_index()
+        has = row >= 0
+        for b in (self.bt_connect_both, self.bt_connect_ssh,
+                  self.bt_connect_sftp, self.bt_edit, self.bt_delete):
+            b.setEnabled(has)
+        if not has:
+            self._detail_name.setText("接続先を選択してください")
+            self._detail_addr.setText("")
+            self._detail_meta.setText("")
+            return
+        p = self.store.profiles[row]
+        self._detail_name.setText(p.label())
+        self._detail_addr.setText(f"{p.username}@{p.host}:{p.port}")
+        meta = [f"認証: {p.auth_method}"]
+        if p.tags:
+            meta.append("タグ: " + ", ".join(p.tags))
+        if p.last_connected:
+            meta.append("最終接続: " + _relative_time(p.last_connected))
+        if p.proxy_jump:
+            meta.append(f"踏み台: {p.proxy_jump}")
+        self._detail_meta.setText("   ".join(meta))
+
+    def _connect_selected(self, mode: str) -> None:
+        row = self._selected_store_index()
+        if row >= 0:
+            self._app.open_session(self.store.profiles[row], mode=mode)
+
+    def _edit_selected(self) -> None:
+        row = self._selected_store_index()
+        if row < 0:
+            return
+        dlg = ConnectDialog(self, self.store.profiles[row], self.credentials)
+        if dlg.exec():
+            profile = dlg.result_profile()
+            self.store.update(row, profile)
+            dlg.apply_credentials(profile)
+            self._reload_list()
+
+    def _delete_selected(self) -> None:
+        row = self._selected_store_index()
+        if row < 0:
+            return
+        p = self.store.profiles[row]
+        r = QMessageBox.question(
+            self, "プロファイルの削除",
+            f"「{p.label()}」を一覧から削除しますか?\n(サーバー側には何も影響しません)",
+        )
+        if r == QMessageBox.Yes:
+            self.store.remove(row)
+            self._reload_list()
 
     def _selected_store_index(self) -> int:
-        """選択中アイテムの store.profiles 上の index(-1 = 未選択)。"""
         item = self.list.currentItem()
         if item is None:
             return -1
@@ -1353,81 +1657,73 @@ class LauncherWindow(_SharedOps, QMainWindow):
         row = self._selected_store_index()
         if row < 0:
             return
+        # 実処理は右カラムのボタンと共通のヘルパーへ委譲する(重複を作らない)
         menu = QMenu(self)
-        a_conn = menu.addAction("接続(新しいウィンドウ)")
-        a_edit = menu.addAction("編集…")
-        a_del = menu.addAction("削除")
+        actions = [
+            (menu.addAction("接続(ターミナル + ファイル)"),
+             lambda: self._connect_selected("both")),
+            (menu.addAction("ターミナルのみで接続"),
+             lambda: self._connect_selected("ssh")),
+            (menu.addAction("ファイルのみで接続"),
+             lambda: self._connect_selected("sftp")),
+        ]
+        menu.addSeparator()
+        actions.append((menu.addAction("編集…"), self._edit_selected))
+        actions.append((menu.addAction("削除"), self._delete_selected))
         chosen = menu.exec(self.list.viewport().mapToGlobal(pos))
-        if chosen is a_conn:
-            self._connect(self.store.profiles[row])
-        elif chosen is a_edit:
-            dlg = ConnectDialog(
-                self, self.store.profiles[row], self.credentials)
-            if dlg.exec():
-                profile = dlg.result_profile()
-                self.store.update(row, profile)
-                dlg.apply_credentials(profile)
-                self._reload_list()
-        elif chosen is a_del:
-            p = self.store.profiles[row]
-            r = QMessageBox.question(
-                self, "プロファイルの削除",
-                f"「{p.label()}」を一覧から削除しますか?\n(サーバー側には何も影響しません)",
-            )
-            if r == QMessageBox.Yes:
-                self.store.remove(row)
-                self._reload_list()
+        for act, handler in actions:
+            if chosen is act:
+                handler()
+                return
 
     def _connect_item(self, item: QListWidgetItem):
         idx = item.data(Qt.UserRole)
         if isinstance(idx, int) and 0 <= idx < len(self.store.profiles):
-            self._connect(self.store.profiles[idx])
-
-    def _connect(self, profile: Profile):
-        """独立したウィンドウを開いて接続する(常に新ウィンドウ)。"""
-        win = SessionWindow(self._services, profile, launcher=self)
-        win.show()
-        win.start_connect()
-
-    def closeEvent(self, ev):
-        # ランチャーを閉じてもセッションウィンドウは残す(アプリは最後の
-        # ウィンドウが閉じたときに終了する)。
-        if LauncherWindow._instance is self:
-            LauncherWindow._instance = None
-        ev.accept()
+            self._app.open_session(self.store.profiles[idx])
 
 
-class SessionWindow(_SharedOps, QMainWindow):
-    """1 接続 = 1 ウィンドウ(Issue #14 段階2)。セッションメニューを内蔵する。"""
+class SessionPage(QWidget):
+    """1 接続分のタブ(Issue #115)。旧 SessionWindow の中身を QWidget 化。
 
-    _windows: list["SessionWindow"] = []
+    接続・再接続・セッション操作を保持し、タブ名/ステータスはシグナルで
+    AppWindow へ伝える。セッションメニューは AppWindow が現在のタブへ委譲する。
+    """
 
-    def __init__(self, services: dict, profile: Profile, launcher=None):
+    _pages: list["SessionPage"] = []
+
+    title_changed = Signal(object, str)     # (page, title)
+    status_message = Signal(str)
+    disconnected_changed = Signal(object, bool)
+    close_requested = Signal(object)
+
+    def __init__(self, app: "AppWindow", profile: Profile, mode: str = "both"):
         super().__init__()
-        self._services = services
-        self.store = services["store"]
-        self.known_hosts = services["known_hosts"]
-        self.settings = services["settings"]
-        self.credentials = services["credentials"]
-        self.snippets = services["snippets"]
-        self._launcher = launcher
+        self._app = app
+        self._services = app._services
+        self.store = app.store
+        self.known_hosts = app.known_hosts
+        self.settings = app.settings
+        self.credentials = app.credentials
+        self.snippets = app.snippets
+        self._mode = mode
         self.profile = profile
+        self._title = f"接続中: {profile.label()}"
         self.session_tab: SessionTab | None = None
         self._workers: list[ConnectWorker] = []
-        self._keygen_workers: list[KeygenWorker] = []
         self._sshd_workers: list[SshdHardenWorker] = []
         self._netadmin_workers: list[NetAdminWorker] = []
-        self._p2p_workers: list[_P2PWorkerBase] = []
-        self._cloud_workers: list[CloudSyncWorker] = []
-        SessionWindow._windows.append(self)
+        SessionPage._pages.append(self)
 
-        fit_to_screen(self, 1280, 760)
-        self.setWindowTitle(f"接続中: {profile.label()}")
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        self._reconnect_bar = self._build_reconnect_bar()
+        root.addWidget(self._reconnect_bar)
+        self._content_host = QWidget()
+        self._content = QStackedLayout(self._content_host)
+        root.addWidget(self._content_host, 1)
         self._connecting = ConnectingWidget(profile)
-        self.setCentralWidget(self._connecting)
-        self._build_menu()
-        self._build_reconnect_bar()
-        self.statusBar().showMessage(f"{profile.label()} に接続中…")
+        self._content.addWidget(self._connecting)
 
         self._reconnect_attempts = 0
         self._reconnecting = False
@@ -1438,84 +1734,71 @@ class SessionWindow(_SharedOps, QMainWindow):
         self._reconnect_timer.setSingleShot(True)
         self._reconnect_timer.timeout.connect(self._start_reconnect)
 
-    def _build_reconnect_bar(self):
-        bar = QToolBar(self)
-        bar.setMovable(False)
-        bar.setFloatable(False)
-        label = QLabel("接続が切断されました")
-        label.setStyleSheet(f"color:{style.ERROR}; padding:2px 6px;")
-        btn = QPushButton("再接続")
+    # ---- タブ/ステータス橋渡し ---------------------------------------------
+    def tab_title(self) -> str:
+        return self.profile.label()
+
+    def _set_title(self, text: str):
+        self._title = text
+        self.title_changed.emit(self, text)
+
+    def _status(self, msg: str):
+        self.status_message.emit(msg)
+
+    def _set_content(self, widget: QWidget):
+        self._content.addWidget(widget)
+        self._content.setCurrentWidget(widget)
+
+    def _build_reconnect_bar(self) -> QWidget:
+        bar = QFrame()
+        bar.setObjectName("reconnectBar")
+        bar.setStyleSheet(
+            f"#reconnectBar {{ background:{style.DANGER_BG};"
+            f" border-bottom:1px solid {style.ERROR}; }}"
+            f"#reconnectBar QLabel {{ color:#ffffff; font-weight:bold; }}")
+        h = QHBoxLayout(bar)
+        h.setContentsMargins(12, 6, 10, 6)
+        h.setSpacing(8)
+        label = QLabel("⚠ 接続が切断されました")
+        btn = QPushButton("↻ 再接続")
+        btn.setProperty("primary", True)
+        btn.setCursor(Qt.PointingHandCursor)
         btn.setToolTip("今すぐ再接続を試みます")
         btn.clicked.connect(self._manual_reconnect)
-        bar.addWidget(label)
-        bar.addWidget(btn)
+        h.addWidget(label)
+        h.addStretch(1)
+        h.addWidget(btn)
         bar.setVisible(False)
-        self.addToolBar(Qt.TopToolBarArea, bar)
-        self._reconnect_bar = bar
+        return bar
 
-    def _build_menu(self):
-        m_file = self.menuBar().addMenu("ファイル")
-        m_file.addAction("サーバー一覧を開く", self._open_launcher)
-        m_file.addSeparator()
-        m_file.addAction("接続情報を書き出す…", self._export_profiles)
-        m_file.addAction("接続情報を読み込む…", self._import_profiles)
-        m_file.addSeparator()
-        m_file.addAction("クラウドへアップロード…", self._cloud_upload)
-        m_file.addAction("クラウドからダウンロード…", self._cloud_download)
-        m_file.addSeparator()
-        m_file.addAction("設定…", self._open_settings)
-        m_file.addSeparator()
-        m_file.addAction("このウィンドウを閉じる", self.close)
+    # ---- スニペット ---------------------------------------------------------
+    def _open_snippets(self):
+        """ツールバーの「スニペット」から一覧をポップアップする(#113)。
 
-        m_view = self.menuBar().addMenu("表示")
-        act_plus = m_view.addAction("ターミナル文字を大きく")
-        act_plus.setShortcut("Ctrl+=")
-        act_plus.triggered.connect(lambda: self._font_delta(+1))
-        act_minus = m_view.addAction("ターミナル文字を小さく")
-        act_minus.setShortcut("Ctrl+-")
-        act_minus.triggered.connect(lambda: self._font_delta(-1))
-
-        self.m_sess = self.menuBar().addMenu("セッション")
-        self.m_sess.addAction("ポートフォワードを追加…", self._add_tunnel)
-        self.m_sess.addAction("ポートフォワード一覧…", self._list_tunnels)
-        self.m_sess.addAction("SSH 鍵を生成…", self._generate_key)
-        self.m_sess.addAction("SSH サーバー設定を変更…", self._harden_sshd)
-        self.m_sess.addAction("サーバーの IP を固定…", self._static_ip)
-        self.m_sess.addSeparator()
-        self.act_session_log = self.m_sess.addAction("セッションログを開始")
-        self.act_session_log.triggered.connect(self._toggle_session_log)
-        self.m_sess.addSeparator()
-        self.m_sess.addAction("この接続の保存パスワードを削除",
-                              self._forget_credentials)
-        self.m_sess.setEnabled(False)   # 接続完了までは無効
-
-        self.m_snippets = self.menuBar().addMenu("スニペット")
-        self.m_snippets.addAction("スニペットを管理…", self._manage_snippets)
-        self.m_snippets.addSeparator()
-        self.m_snippets.aboutToShow.connect(self._populate_snippets_menu)
-
-        m_help = self.menuBar().addMenu("ヘルプ")
-        m_help.addAction("Hashi について", self._about)
-
-    def _manage_snippets(self):
-        SnippetsManageDialog.manage(self, self.snippets)
-
-    def _populate_snippets_menu(self):
-        self.m_snippets.clear()
-        self.m_snippets.addAction("スニペットを管理…", self._manage_snippets)
-        self.m_snippets.addSeparator()
-        if not self.snippets.snippets:
-            act = self.m_snippets.addAction("スニペットがありません")
-            act.setEnabled(False)
+        送信自体は _send_snippet に任せる(変数入力・Enter 付与の判断を
+        1 か所に保つ)。空でも管理ダイアログへは行けるようにしておく。
+        """
+        if self.session_tab is None or self.session_tab.terminal is None:
+            QMessageBox.information(
+                self, "スニペット", "ターミナル接続中のみスニペットを送信できます。")
             return
+        menu = QMenu(self)
         for snippet in self.snippets.snippets:
-            act = self.m_snippets.addAction(snippet.name)
-            act.triggered.connect(lambda checked, s=snippet: self._send_snippet(s))
+            act = menu.addAction(snippet.name)
+            act.triggered.connect(
+                lambda checked=False, s=snippet: self._send_snippet(s))
+        if not self.snippets.snippets:
+            act = menu.addAction("スニペットがありません")
+            act.setEnabled(False)
+        menu.addSeparator()
+        menu.addAction("スニペットを管理…", self._app._manage_snippets)
+        btn = self.session_tab.bt_snippets
+        menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
 
     def _send_snippet(self, snippet: Snippet):
-        if self.session_tab is None:
+        if self.session_tab is None or self.session_tab.terminal is None:
             QMessageBox.information(
-                self, "スニペット", "接続中のみスニペットを送信できます。")
+                self, "スニペット", "ターミナル接続中のみスニペットを送信できます。")
             return
         values = SnippetVariablesDialog.ask(self, snippet.body)
         if values is None:
@@ -1524,20 +1807,6 @@ class SessionWindow(_SharedOps, QMainWindow):
         if snippet.send_enter:
             body += "\n"
         self.session_tab.terminal.send_text(body)
-
-    def _refresh_profile_lists(self):
-        if self._launcher is not None:
-            self._launcher._reload_list()
-        elif LauncherWindow._instance is not None:
-            LauncherWindow._instance._reload_list()
-
-    def _open_launcher(self):
-        inst = LauncherWindow._instance
-        if inst is None:
-            inst = LauncherWindow(services=self._services)
-        inst.show()
-        inst.raise_()
-        inst.activateWindow()
 
     # ---- 接続 --------------------------------------------------------------
     def start_connect(self):
@@ -1561,28 +1830,32 @@ class SessionWindow(_SharedOps, QMainWindow):
                             self.settings, self)
         if worker.used_password:
             ctx.note_login_password(worker.used_password)
-        tab = SessionTab(session, self.settings, ctx)
+        tab = SessionTab(session, self.settings, ctx, mode=self._mode)
         self.session_tab = tab
-        tab.terminal.set_snippet_store(self.snippets)
-        self.setCentralWidget(tab)
+        # ツールバーからの依頼は既存のメニュー処理へ委譲する(ロジックを重複させない)
+        tab.request_tunnel.connect(self._add_tunnel)
+        tab.request_session_log.connect(self._toggle_session_log)
+        tab.request_snippets.connect(self._open_snippets)
+        if tab.terminal is not None:
+            tab.terminal.set_snippet_store(self.snippets)
+        self._set_content(tab)
         self._connecting = None
-        self.m_sess.setEnabled(True)
-        self.act_session_log.setText(
-            "セッションログを停止" if tab.session_log.is_open()
-            else "セッションログを開始")
         label = session.profile.label()
-        self.setWindowTitle(label)
-        tab.terminal.session_closed.connect(self._mark_disconnected)
-        tab.terminal.session_closed.connect(self._on_session_closed)
+        self._set_title(label)
+        self.disconnected_changed.emit(self, False)
+        if tab.terminal is not None:
+            tab.terminal.session_closed.connect(self._mark_disconnected)
+            tab.terminal.session_closed.connect(self._on_session_closed)
         self._record_last_connected(session.profile)
-        self.statusBar().showMessage(f"{label} に接続しました", 5000)
+        self._status(f"{label} に接続しました")
         self._reconnect_attempts = 0
         self._reconnecting = False
         self._reconnect_bar.setVisible(False)
+        self._app.refresh_session_menu()
         self._alive_timer.start()
 
     def _mark_disconnected(self):
-        self.setWindowTitle(self.windowTitle().removesuffix(" (切断)") + " (切断)")
+        self.disconnected_changed.emit(self, True)
 
     def _on_session_closed(self):
         if self._reconnecting or self.session_tab is None:
@@ -1612,18 +1885,17 @@ class SessionWindow(_SharedOps, QMainWindow):
         max_retries = self.settings.get("auto_reconnect_max")
         if self.settings.get("auto_reconnect") and self._reconnect_attempts < max_retries:
             delay = min(60, 5 * (2 ** self._reconnect_attempts))
-            self.statusBar().showMessage(
-                f"再接続を {delay} 秒後に試行します…", delay * 1000)
+            self._status(f"再接続を {delay} 秒後に試行します…")
             self._reconnect_timer.start(delay * 1000)
         else:
-            self.statusBar().showMessage("接続が切断されました。再接続ボタンを押してください")
+            self._status("接続が切断されました。再接続ボタンを押してください")
 
     def _manual_reconnect(self):
         self._schedule_reconnect(manual=True)
 
     def _start_reconnect(self):
         self._reconnect_attempts += 1
-        self.statusBar().showMessage("再接続中…")
+        self._status("再接続中…")
         worker = ConnectWorker(self.profile, self.known_hosts, self.credentials,
                                self.settings)
         worker.ask_secret.connect(
@@ -1649,28 +1921,26 @@ class SessionWindow(_SharedOps, QMainWindow):
         tab.reconnect_session(session)
         self._reconnect_attempts = 0
         label = session.profile.label()
-        self.setWindowTitle(label)
-        self.statusBar().showMessage(f"{label} に再接続しました", 5000)
+        self._set_title(label)
+        self.disconnected_changed.emit(self, False)
+        self._status(f"{label} に再接続しました")
         self._alive_timer.start()
 
     def _on_reconnect_fail(self, msg: str, worker: ConnectWorker):
         max_retries = self.settings.get("auto_reconnect_max")
         if self._reconnect_attempts < max_retries and self.settings.get("auto_reconnect"):
             delay = min(60, 5 * (2 ** self._reconnect_attempts))
-            self.statusBar().showMessage(
-                f"再接続に失敗しました: {msg}. {delay} 秒後に再試行します…")
+            self._status(f"再接続に失敗しました: {msg}. {delay} 秒後に再試行します…")
             self._reconnect_timer.start(delay * 1000)
         else:
-            self.statusBar().showMessage(
-                f"再接続できませんでした: {msg}", 5000)
+            self._status(f"再接続できませんでした: {msg}")
 
     def _on_connect_failed(self, msg: str):
         if self._connecting is not None:
             self._connecting.show_error(msg)
         state = "接続失敗" if msg else "接続中止"
-        self.setWindowTitle(f"{state}: {self.profile.label()}")
-        self.statusBar().showMessage(
-            "接続に失敗しました" if msg else "接続を中止しました", 4000)
+        self._set_title(f"{state}: {self.profile.label()}")
+        self._status("接続に失敗しました" if msg else "接続を中止しました")
 
     # ---- セッション操作 -----------------------------------------------------
     def _add_tunnel(self):
@@ -1681,7 +1951,7 @@ class SessionWindow(_SharedOps, QMainWindow):
         if dlg.exec():
             try:
                 label = tab.add_tunnel(dlg.result())
-                self.statusBar().showMessage(f"ポートフォワード開始: {label}", 5000)
+                self._status(f"ポートフォワード開始: {label}")
             except Exception as e:  # noqa: BLE001
                 QMessageBox.warning(self, "ポートフォワード", f"開始できません:\n{e}")
 
@@ -1699,12 +1969,11 @@ class SessionWindow(_SharedOps, QMainWindow):
             return
         prof = tab.session.profile
         self.credentials.clear_profile(prof)
-        self.statusBar().showMessage(
-            f"{prof.label()} の保存パスワードを削除しました", 5000)
+        self._status(f"{prof.label()} の保存パスワードを削除しました")
 
     def _font_delta(self, d: int):
         tab = self.session_tab
-        if tab is not None:
+        if tab is not None and tab.terminal is not None:
             tab.terminal.set_font_size(tab.terminal.font_size() + d)
 
     def _toggle_session_log(self):
@@ -1712,15 +1981,40 @@ class SessionWindow(_SharedOps, QMainWindow):
         if tab is None:
             return
         started = tab.toggle_session_log()
-        self.act_session_log.setText(
-            "セッションログを停止" if started else "セッションログを開始")
-        if started and tab.session_log.path():
-            self.statusBar().showMessage(
-                f"セッションログ開始: {tab.session_log.path()}", 5000)
+        self._app.refresh_session_menu()
+        if started and tab.session_log and tab.session_log.path():
+            self._status(f"セッションログ開始: {tab.session_log.path()}")
         else:
-            self.statusBar().showMessage("セッションログを停止しました", 5000)
+            self._status("セッションログを停止しました")
+
+    def session_log_running(self) -> bool:
+        tab = self.session_tab
+        return bool(tab and tab.session_log and tab.session_log.is_open())
+
+    def has_terminal(self) -> bool:
+        return bool(self.session_tab and self.session_tab.terminal is not None)
 
     # ---- sshd 堅牢化 (Issue #12) --------------------------------------------
+    def _generate_key(self):
+        tab = self.session_tab
+        dlg = KeygenDialog(self, can_register=tab is not None)
+        if not dlg.exec():
+            return
+        worker = KeygenWorker(dlg.result_settings(), tab.session if tab else None)
+        worker.ok.connect(self._on_keygen_ok)
+        worker.fail.connect(
+            lambda message: QMessageBox.warning(self, "SSH 鍵の生成", message))
+        worker.finished.connect(lambda w=worker: self._app._keygen_workers.remove(w))
+        self._app._keygen_workers.append(worker)
+        self._status("SSH 鍵を生成しています…")
+        worker.start()
+
+    def _on_keygen_ok(self, path: str, registered: bool):
+        message = f"秘密鍵を保存しました:\n{path}"
+        if registered:
+            message += "\n公開鍵を接続先の authorized_keys に登録しました。"
+        QMessageBox.information(self, "SSH 鍵の生成", message)
+
     def _harden_sshd(self):
         tab = self.session_tab
         if not tab:
@@ -1743,7 +2037,6 @@ class SessionWindow(_SharedOps, QMainWindow):
         changes = dlg.result_settings()
         if changes["disable_password"] is None and changes["new_port"] is None:
             return
-
         summary = []
         if changes["disable_password"]:
             summary.append("・パスワード認証を無効化(鍵認証のみに)")
@@ -1759,7 +2052,6 @@ class SessionWindow(_SharedOps, QMainWindow):
                 + extra,
                 "change", "変更を適用"):
             return
-
         sudo_pw = tab.secret_ctx.get_sudo_password()
         worker = SshdHardenWorker(session, session.profile, self.known_hosts,
                                   self.credentials, sudo_pw, changes)
@@ -1768,11 +2060,11 @@ class SessionWindow(_SharedOps, QMainWindow):
             lambda msg: QMessageBox.warning(self, "SSH サーバー設定", msg))
         worker.finished.connect(lambda w=worker: self._sshd_workers.remove(w))
         self._sshd_workers.append(worker)
-        self.statusBar().showMessage("SSH サーバー設定を変更しています…")
+        self._status("SSH サーバー設定を変更しています…")
         worker.start()
 
     def _on_sshd_ok(self, res: dict):
-        self.statusBar().showMessage("SSH サーバー設定を変更しました", 5000)
+        self._status("SSH サーバー設定を変更しました")
         new_port = res.get("new_port")
         note = ""
         if new_port is not None:
@@ -1841,11 +2133,11 @@ class SessionWindow(_SharedOps, QMainWindow):
         worker.finished.connect(
             lambda w=worker: self._netadmin_workers.remove(w))
         self._netadmin_workers.append(worker)
-        self.statusBar().showMessage("サーバーの IP を固定しています…")
+        self._status("サーバーの IP を固定しています…")
         worker.start()
 
     def _on_static_ip_ok(self, res: dict):
-        self.statusBar().showMessage("サーバーの IP を固定しました", 5000)
+        self._status("サーバーの IP を固定しました")
         new_ip = res.get("new_ip", "")
         updated = self._update_profile_host(new_ip) if new_ip else False
         cleaned = res.get("cleaned") or []
@@ -1863,12 +2155,11 @@ class SessionWindow(_SharedOps, QMainWindow):
             f"バックアップ: {res.get('backup')}\n"
             f"適用ファイル: {res.get('dropin')}\n"
             + cleaned_note + profile_note +
-            "\n旧 IP のこの接続は切断されるため、ウィンドウを閉じます。"
+            "\n旧 IP のこの接続は切断されるため、このタブを閉じます。"
             "サーバー一覧から新しい IP で再接続してください。")
-        self._close_sessions_for_profile()
+        self._app.close_pages_for_profile(self.profile.id_str())
 
     def _record_last_connected(self, profile: Profile):
-        """接続成功日時をプロファイルへ記録し、ランチャーの一覧を更新(#81)。"""
         pid = profile.id_str()
         updated = False
         for p in self.store.profiles:
@@ -1877,19 +2168,12 @@ class SessionWindow(_SharedOps, QMainWindow):
                 updated = True
         if updated:
             self.store.save()
-        launcher = LauncherWindow._instance
-        if launcher is not None:
-            try:
-                launcher._reload_list()
-            except RuntimeError:
-                logger.debug("ランチャーは閉じられているため一覧更新をスキップ")
+        self._app.refresh_launcher()
 
     def _update_profile_host(self, new_ip: str) -> bool:
-        """保存済みプロファイルのホストを新 IP に書き換える(#61)。"""
         return self._update_profile_fields(host=new_ip)
 
     def _update_profile_fields(self, **fields) -> bool:
-        """この接続のプロファイルを書き換えて保存する(#61/#62 共通)。"""
         tab = self.session_tab
         if not tab:
             return False
@@ -1904,38 +2188,315 @@ class SessionWindow(_SharedOps, QMainWindow):
             self.store.save()
         return updated
 
-    def _close_sessions_for_profile(self):
-        """同じプロファイル(旧 IP)で開いている全セッションウィンドウを閉じる。"""
+    # ---- 後片付け -----------------------------------------------------------
+    def has_active_transfers(self) -> bool:
         tab = self.session_tab
-        if not tab:
-            self.close()
+        return bool(tab and tab.browser is not None
+                    and tab.browser.has_active_transfers())
+
+    def shutdown(self):
+        self._alive_timer.stop()
+        self._reconnect_timer.stop()
+        if self.session_tab is not None:
+            self.session_tab.shutdown()
+        if self in SessionPage._pages:
+            SessionPage._pages.remove(self)
+
+
+class AppWindow(_SharedOps, QMainWindow):
+    """ブラウザ風のメインウィンドウ(Issue #115)。タブで複数接続を持つ。"""
+
+    _instance: "AppWindow | None" = None
+
+    def __init__(self, services: dict | None = None):
+        super().__init__()
+        self.setWindowTitle(f"Hashi v{APP_VERSION}")
+        fit_to_screen(self, 1280, 760)
+        if services is None:
+            services = {
+                "store": ProfileStore(),
+                "known_hosts": KnownHosts(),
+                "settings": Settings(),
+                "credentials": CredentialStore(),
+                "snippets": SnippetStore(),
+            }
+        self._services = services
+        self.store = services["store"]
+        self.known_hosts = services["known_hosts"]
+        self.settings = services["settings"]
+        self.credentials = services["credentials"]
+        self.snippets = services["snippets"]
+        self._keygen_workers: list[KeygenWorker] = []
+        self._p2p_workers: list[_P2PWorkerBase] = []
+        self._cloud_workers: list[CloudSyncWorker] = []
+        AppWindow._instance = self
+
+        self._update_banner = self._create_update_banner()
+        self.tabs = QTabWidget()
+        self.tabs.setTabsClosable(True)
+        self.tabs.setMovable(True)
+        self.tabs.setDocumentMode(True)
+        self.m_sess = None   # メニュー構築前に currentChanged が来ても安全に
+        self.tabs.tabCloseRequested.connect(self._on_tab_close)
+        self.tabs.currentChanged.connect(lambda _i: self.refresh_session_menu())
+        # 「+」新規接続タブ
+        plus = QToolButton()
+        plus.setText("＋")
+        plus.setToolTip("新しい接続(サーバー一覧)")
+        plus.clicked.connect(self.open_launcher)
+        self.tabs.setCornerWidget(plus, Qt.TopRightCorner)
+
+        central = QWidget()
+        v = QVBoxLayout(central)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+        v.addWidget(self._update_banner)
+        v.addWidget(self.tabs, 1)
+        self.setCentralWidget(central)
+
+        self.launcher = LauncherPage(self)
+        self.tabs.addTab(self.launcher, "サーバー一覧")
+        # ランチャータブは閉じさせない(× ボタンを消す)
+        from PySide6.QtWidgets import QTabBar
+        self.tabs.tabBar().setTabButton(0, QTabBar.ButtonPosition.RightSide, None)
+        self.tabs.tabBar().setTabButton(0, QTabBar.ButtonPosition.LeftSide, None)
+
+        self._build_menu()
+        self.statusBar().showMessage("準備完了")
+
+        if self.settings.get("update_check"):
+            self._update_worker = UpdateCheckWorker(parent=self)
+            self._update_worker.new_version.connect(self._show_update_banner)
+            self._update_worker.start()
+
+    # ---- 更新バナー ---------------------------------------------------------
+    def _create_update_banner(self):
+        w = QWidget()
+        h = QHBoxLayout(w)
+        h.setContentsMargins(12, 8, 12, 8)
+        h.setSpacing(style.SPACING)
+        self._update_label = QLabel()
+        self._update_label.setWordWrap(True)
+        self._update_label.setOpenExternalLinks(True)
+        self._update_label.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        close = QPushButton("×")
+        close.setFlat(True)
+        close.setToolTip("閉じる")
+        close.clicked.connect(lambda: w.setVisible(False))
+        h.addWidget(self._update_label, 1)
+        h.addWidget(close)
+        w.setStyleSheet(
+            f"background-color:{style.ACCENT}; color:{style.FG}; "
+            f"border-radius:{style.TOAST_RADIUS}px;")
+        w.setVisible(False)
+        return w
+
+    def _show_update_banner(self, version: str, url: str):
+        self._update_label.setText(
+            f"新しいバージョン {version} が利用可能です — "
+            f"<a style='color:{style.FG};' href='{url}'>ダウンロード</a>")
+        self._update_banner.setVisible(True)
+
+    # ---- タブ管理 -----------------------------------------------------------
+    def current_page(self) -> "SessionPage | None":
+        w = self.tabs.currentWidget()
+        return w if isinstance(w, SessionPage) else None
+
+    def open_launcher(self):
+        self.tabs.setCurrentWidget(self.launcher)
+
+    def refresh_launcher(self):
+        try:
+            self.launcher._reload_list()
+        except RuntimeError:
+            logger.debug("ランチャータブは破棄済み")
+
+    def _refresh_profile_lists(self):
+        self.refresh_launcher()
+
+    def open_session(self, profile: Profile, mode: str = "both"):
+        page = SessionPage(self, profile, mode=mode)
+        page.title_changed.connect(self._on_page_title)
+        page.status_message.connect(
+            lambda m: self.statusBar().showMessage(m, 5000))
+        page.disconnected_changed.connect(self._on_page_disconnected)
+        idx = self.tabs.addTab(page, profile.label())
+        self.tabs.setCurrentIndex(idx)
+        page.start_connect()
+        return page
+
+    def _on_page_title(self, page, title: str):
+        idx = self.tabs.indexOf(page)
+        if idx >= 0:
+            self.tabs.setTabText(idx, title)
+        if page is self.current_page():
+            self.setWindowTitle(f"{title} — Hashi")
+        self.refresh_session_menu()
+
+    def _on_page_disconnected(self, page, disconnected: bool):
+        idx = self.tabs.indexOf(page)
+        if idx < 0:
             return
-        old_id = tab.session.profile.id_str()
-        for win in list(SessionWindow._windows):
-            wtab = win.session_tab
-            if wtab and wtab.session.profile.id_str() == old_id:
-                win.close()
-        if self in SessionWindow._windows:
-            self.close()
+        base = page.tab_title()
+        self.tabs.setTabText(idx, f"⚠ {base}" if disconnected else base)
+
+    def _on_tab_close(self, index: int):
+        w = self.tabs.widget(index)
+        if not isinstance(w, SessionPage):
+            return   # ランチャータブは閉じない
+        if w.has_active_transfers():
+            r = QMessageBox.question(
+                self, "転送中です",
+                "ファイル転送が進行中です。中断してこのタブを閉じますか?")
+            if r != QMessageBox.Yes:
+                return
+        w.shutdown()
+        self.tabs.removeTab(index)
+        w.deleteLater()
+
+    def close_pages_for_profile(self, profile_id: str):
+        for i in range(self.tabs.count() - 1, -1, -1):
+            w = self.tabs.widget(i)
+            if isinstance(w, SessionPage) and w.profile.id_str() == profile_id:
+                w.shutdown()
+                self.tabs.removeTab(i)
+                w.deleteLater()
+
+    # ---- 設定の即時反映(#99) ----------------------------------------------
+    def _apply_ui_settings_live(self):
+        theme = self.settings.get("terminal_theme") or ""
+        family = self.settings.get("terminal_font_family") or ""
+        size = self.settings.get("terminal_font_size")
+        for page in SessionPage._pages:
+            tab = page.session_tab
+            if tab is None or tab.terminal is None:
+                continue
+            try:
+                tab.terminal.set_theme(theme)
+                tab.terminal.set_font_family(family)
+                tab.terminal.set_font_size(size)
+            except RuntimeError:
+                logger.debug("破棄済みタブへの設定反映をスキップ")
+
+    def _open_settings(self):
+        if SettingsDialog(self.settings, self).exec():
+            self._apply_ui_settings_live()
+
+    # ---- メニュー -----------------------------------------------------------
+    def _build_menu(self):
+        m_file = self.menuBar().addMenu("ファイル")
+        m_file.addAction("サーバー一覧タブへ", self.open_launcher)
+        m_file.addAction("新しい接続…", self._new_profile)
+        m_file.addSeparator()
+        m_file.addAction("接続情報を書き出す…", self._export_profiles)
+        m_file.addAction("接続情報を読み込む…", self._import_profiles)
+        m_file.addSeparator()
+        m_file.addAction("接続情報を送信 (P2P)…", self._p2p_send)
+        m_file.addAction("接続情報を受信 (P2P)…", self._p2p_receive)
+        m_file.addSeparator()
+        m_file.addAction("クラウドへアップロード…", self._cloud_upload)
+        m_file.addAction("クラウドからダウンロード…", self._cloud_download)
+        m_file.addSeparator()
+        m_file.addAction("設定…", self._open_settings)
+        m_file.addSeparator()
+        m_file.addAction("終了", self.close)
+
+        m_view = self.menuBar().addMenu("表示")
+        act_plus = m_view.addAction("ターミナル文字を大きく")
+        act_plus.setShortcut("Ctrl+=")
+        act_plus.triggered.connect(lambda: self._page_action("_font_delta", +1))
+        act_minus = m_view.addAction("ターミナル文字を小さく")
+        act_minus.setShortcut("Ctrl+-")
+        act_minus.triggered.connect(lambda: self._page_action("_font_delta", -1))
+
+        self.m_sess = self.menuBar().addMenu("セッション")
+        self.m_sess.addAction("ポートフォワードを追加…",
+                              lambda: self._page_action("_add_tunnel"))
+        self.m_sess.addAction("ポートフォワード一覧…",
+                              lambda: self._page_action("_list_tunnels"))
+        self.m_sess.addAction("SSH 鍵を生成…",
+                              lambda: self._page_action("_generate_key"))
+        self.m_sess.addAction("SSH サーバー設定を変更…",
+                              lambda: self._page_action("_harden_sshd"))
+        self.m_sess.addAction("サーバーの IP を固定…",
+                              lambda: self._page_action("_static_ip"))
+        self.m_sess.addSeparator()
+        self.act_session_log = self.m_sess.addAction("セッションログを開始")
+        self.act_session_log.triggered.connect(
+            lambda: self._page_action("_toggle_session_log"))
+        self.m_sess.addSeparator()
+        self.m_sess.addAction("この接続の保存パスワードを削除",
+                              lambda: self._page_action("_forget_credentials"))
+        self.m_sess.setEnabled(False)
+
+        self.m_snippets = self.menuBar().addMenu("スニペット")
+        self.m_snippets.aboutToShow.connect(self._populate_snippets_menu)
+
+        m_help = self.menuBar().addMenu("ヘルプ")
+        m_help.addAction("Hashi について", self._about)
+
+    def _new_profile(self):
+        self.open_launcher()
+        self.launcher.new_profile()
+
+    def _page_action(self, method: str, *args):
+        page = self.current_page()
+        if page is not None:
+            getattr(page, method)(*args)
+
+    def refresh_session_menu(self):
+        if self.m_sess is None:
+            return
+        page = self.current_page()
+        connected = page is not None and page.session_tab is not None
+        self.m_sess.setEnabled(connected)
+        if connected:
+            self.act_session_log.setText(
+                "セッションログを停止" if page.session_log_running()
+                else "セッションログを開始")
+            self.act_session_log.setEnabled(page.has_terminal())
+
+    def _manage_snippets(self):
+        SnippetsManageDialog.manage(self, self.snippets)
+
+    def _populate_snippets_menu(self):
+        self.m_snippets.clear()
+        self.m_snippets.addAction("スニペットを管理…", self._manage_snippets)
+        self.m_snippets.addSeparator()
+        page = self.current_page()
+        if page is None or page.session_tab is None:
+            act = self.m_snippets.addAction("(接続中のタブで使えます)")
+            act.setEnabled(False)
+            return
+        if not self.snippets.snippets:
+            act = self.m_snippets.addAction("スニペットがありません")
+            act.setEnabled(False)
+            return
+        for snippet in self.snippets.snippets:
+            act = self.m_snippets.addAction(snippet.name)
+            act.triggered.connect(
+                lambda checked, s=snippet: page._send_snippet(s))
 
     def closeEvent(self, ev):
-        tab = self.session_tab
-        if tab is not None:
-            if tab.browser.has_active_transfers():
+        # 転送中のタブがあれば確認
+        for i in range(self.tabs.count()):
+            w = self.tabs.widget(i)
+            if isinstance(w, SessionPage) and w.has_active_transfers():
                 r = QMessageBox.question(
                     self, "転送中です",
-                    "ファイル転送が進行中です。中断して切断しますか?",
-                )
+                    "ファイル転送が進行中のタブがあります。中断して終了しますか?")
                 if r != QMessageBox.Yes:
                     ev.ignore()
                     return
-            tab.shutdown()
-        self._alive_timer.stop()
-        self._reconnect_timer.stop()
-        if self in SessionWindow._windows:
-            SessionWindow._windows.remove(self)
+                break
+        for i in range(self.tabs.count()):
+            w = self.tabs.widget(i)
+            if isinstance(w, SessionPage):
+                w.shutdown()
+        AppWindow._instance = None
         ev.accept()
 
 
-# 後方互換: 旧名 MainWindow はランチャーを指す
-MainWindow = LauncherWindow
+# 後方互換: 旧名は AppWindow を指す(古い import 経路のため)
+MainWindow = AppWindow
+LauncherWindow = AppWindow

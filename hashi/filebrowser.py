@@ -36,7 +36,6 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QInputDialog,
-    QLabel,
     QLineEdit,
     QMenu,
     QMessageBox,
@@ -1104,10 +1103,11 @@ class SftpBrowser(QWidget):
         qstyle = self.style()
 
         def icon_button(tip, slot, icon):
-            b = QPushButton()
+            # 上部ツールバーはセッションのチップ列と見た目を揃える(#113)。
+            # QToolButton は全体 QSS で透明背景 + hover 背景 + 角丸になる。
+            b = QToolButton()
             b.setToolTip(tip)
             b.setIcon(qstyle.standardIcon(icon))
-            b.setFixedWidth(34)
             b.clicked.connect(slot)
             return b
 
@@ -1202,7 +1202,8 @@ class SftpBrowser(QWidget):
         self.progress_frame = QFrame()
         pf = QHBoxLayout(self.progress_frame)
         pf.setContentsMargins(4, 2, 4, 2)
-        self.lb_progress = QLabel("")
+        # リモートのファイル名が入るので PlainText 固定(リッチテキスト解釈を防ぐ)
+        self.lb_progress = style.plain_label()
         self.pb = QProgressBar()
         self.pb.setMaximumHeight(14)
         b_cancel = QPushButton("中止")
@@ -1218,8 +1219,8 @@ class SftpBrowser(QWidget):
         bottom = QHBoxLayout()
         bottom.setSpacing(4)
 
-        self.lb_status = QLabel("接続中…")
-        self.lb_status.setStyleSheet(f"color:{style.FG_MUTED};")
+        # ステータス文にもリモートのファイル名・サーバーのメッセージが入る
+        self.lb_status = style.plain_label("接続中…", muted=True)
         bottom.addWidget(self.lb_status, 1)
 
         self._btn_queue = QPushButton("転送キュー")

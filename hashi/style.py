@@ -7,25 +7,34 @@
 パレットは main.py の Fusion ダークテーマと一致させてある。テーマ側を
 変えるときはここも同時に更新する。
 """
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QLabel
 
-# ---- カラーパレット(Fusion ダークと同系。#RRGGBB のみ) --------------------
-BG = "#22262e"           # ウィンドウ背景
-BG_BASE = "#1b1f27"      # 入力欄・リスト背景
-BG_RAISED = "#2b303b"    # ボタン・ツールチップ背景
-FG = "#dcdfe4"           # 基本テキスト
-FG_MUTED = "#8a919e"     # 補足・注記(旧 #888 系はこれに統一)
-FG_DISABLED = "#6b7280"  # 無効状態・プレースホルダ
-ACCENT = "#3d59a1"       # 選択・強調(パレットの Highlight と一致)
-BORDER = "#444c56"       # 枠線
+# ---- カラーパレット(参考デザイン TransTerm、Issue #111。#RRGGBB のみ) ------
+# main.py の Fusion パレットと一致させる(片方だけ変えると test_style が落ちる)。
+BG = "#1e1f24"           # ウィンドウ背景(一番奥のレイヤー)
+BG_BASE = "#191a1f"      # 入力欄・リスト背景(BG より一段暗い)
+BG_RAISED = "#2a2b33"    # ツールチップ等の浮いた面
+# 段差のある「パネル」レイヤー(参考デザイン TransTerm)。クローム(ツールバー・
+# ヘッダー・ステータスバー)は背景より一段明るくして柔らかい奥行きを出す。
+PANEL = "#26272e"        # ツールバー・ペインヘッダー・ステータスバー
+PANEL2 = "#2d2e36"       # 入力欄・タブ列・見出し行(さらに一段明るい)
+HOVER = "#31323b"        # ボタン等のホバー塗り(枠なしで淡く光らせる)
+SEL = "#2b3450"          # 選択・トグル ON(アクセントを溶かした淡い青)
+FG = "#e8e8ec"           # 基本テキスト
+FG_MUTED = "#9a9ba6"     # 補足・注記
+FG_DISABLED = "#6b6c78"  # 無効状態・プレースホルダ
+ACCENT = "#4f8cff"       # 選択・強調・リンク・主ボタン
+ACCENT_HOVER = "#7caaff"  # アクセントのホバー
+BORDER = "#3a3b44"       # 枠線
+DOT_OK = "#58c07a"       # 接続中を示す緑ドット
 
 # セマンティックカラー(意味が決まっている色。用途外に使わない)
 WARN = "#d0a050"         # 警告(取り返しがつきにくい操作の注意書き)
-ERROR = "#e06c75"        # エラー・危険
+ERROR = "#e0655f"        # エラー・危険・閉じる(参考の close 色)
 DANGER_BG = "#7a3b3b"    # 危険スイッチ(権限無視等)ON 時の背景
-OK = "#98c379"           # 成功・安全
+OK = "#77c777"           # 成功・安全
 
 # プロファイルの色マーカー(#81)。統一感のため自由入力ではなくこのプリセットのみ
 PROFILE_COLORS: list[tuple[str, str]] = [
@@ -45,6 +54,160 @@ DIALOG_S = 420           # 小: 入力 1〜3 個の単機能ダイアログ
 DIALOG_M = 520           # 中: フォーム + 注意書き(標準)
 DIALOG_L = 640           # 大: 一覧やプレビューを含むもの
 TOAST_RADIUS = 6         # トースト等の角丸
+CHIP_RADIUS = 6          # チップ型ボタンの角丸(参考デザイン #111)
+
+
+def chip_style(active: bool = False, danger: bool = False) -> str:
+    """チップ型ボタン(参考デザインのツールバー)の QSS を返す(#111/#113)。
+
+    枠線は持たず、ホバーで淡く塗る柔らかい見た目。active=True で ON 状態
+    (半透明アクセント塗り + アクセント文字)、danger=True は危険背景(権限無視等)。
+    """
+    if active and danger:
+        bg, fg = DANGER_BG, "#ffffff"
+    elif active:
+        bg, fg = SEL, ACCENT
+    else:
+        bg, fg = "transparent", FG
+    return (
+        "QPushButton, QToolButton {"
+        f" background:{bg}; color:{fg}; border:none;"
+        f" border-radius:{CHIP_RADIUS}px; padding:5px 10px; font-size:12px; }}"
+        f"QPushButton:hover, QToolButton:hover {{ background:{HOVER if not active else bg}; }}"
+        f"QPushButton:disabled, QToolButton:disabled {{ color:{FG_DISABLED};"
+        f" background:transparent; }}"
+    )
+
+def info_chip(text: str, color: str = "") -> QLabel:
+    """情報ステータスバー用の小さな丸みラベル(アイコン + 値)。"""
+    lbl = QLabel(text)
+    c = color or FG_MUTED
+    lbl.setStyleSheet(
+        f"color:{c}; padding:1px 4px; font-size:11px;")
+    return lbl
+
+
+# ---- アプリ全体のスタイルシート(Issue #113 / デザイン刷新) ------------------
+# main.py で QApplication へ setStyleSheet する。色は必ずこの定数から取る。
+# ターミナル本体は自前 QPainter 描画なので QSS の影響を受けない。
+_APP_QSS = """
+QDialog { background: %(BG)s; }
+QToolTip {
+    background: %(PANEL2)s; color: %(FG)s;
+    border: 1px solid %(BORDER)s; border-radius: 6px; padding: 4px 8px;
+}
+
+QMenuBar { background: %(PANEL)s; border-bottom: 1px solid %(BORDER)s; padding: 2px 4px; }
+QMenuBar::item { background: transparent; padding: 4px 10px; border-radius: 6px; }
+QMenuBar::item:selected, QMenuBar::item:pressed { background: %(HOVER)s; }
+QMenu { background: %(PANEL2)s; border: 1px solid %(BORDER)s; border-radius: 8px; padding: 4px; }
+QMenu::item { padding: 6px 20px; border-radius: 6px; }
+QMenu::item:selected { background: %(SEL)s; color: %(FG)s; }
+QMenu::separator { height: 1px; background: %(BORDER)s; margin: 4px 8px; }
+
+QTabWidget::pane { border: none; border-top: 1px solid %(BORDER)s; }
+QTabBar { background: transparent; }
+QTabBar::tab {
+    background: transparent; color: %(FG_MUTED)s;
+    padding: 7px 16px; margin-right: 2px;
+    border: none; border-top-left-radius: 8px; border-top-right-radius: 8px;
+}
+QTabBar::tab:hover { background: %(HOVER)s; color: %(FG)s; }
+QTabBar::tab:selected { background: %(BG)s; color: %(FG)s; }
+
+QPushButton {
+    background: %(PANEL2)s; color: %(FG)s;
+    border: none; border-radius: %(R)spx; padding: 7px 15px;
+}
+QPushButton:hover { background: %(HOVER)s; }
+QPushButton:pressed { background: %(PANEL)s; }
+QPushButton:disabled { color: %(FG_DISABLED)s; background: %(PANEL)s; }
+QPushButton[primary="true"], QPushButton:default {
+    background: %(ACCENT)s; color: #ffffff; border: none; font-weight: 600;
+}
+QPushButton[primary="true"]:hover, QPushButton:default:hover { background: %(ACCENT_HOVER)s; }
+QPushButton[primary="true"]:disabled, QPushButton:default:disabled {
+    background: %(PANEL2)s; color: %(FG_DISABLED)s;
+}
+
+QToolButton {
+    background: transparent; color: %(FG)s;
+    border: none; border-radius: %(R)spx; padding: 5px 9px;
+}
+QToolButton:hover { background: %(HOVER)s; }
+QToolButton:checked { background: %(SEL)s; color: %(ACCENT)s; }
+QToolButton:disabled { color: %(FG_DISABLED)s; }
+
+QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QComboBox {
+    background: %(PANEL2)s; color: %(FG)s;
+    border: 1px solid %(BORDER)s; border-radius: %(R)spx;
+    padding: 6px 9px; selection-background-color: %(ACCENT)s;
+    selection-color: #ffffff;
+}
+QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus,
+QSpinBox:focus, QComboBox:focus { border-color: %(ACCENT)s; }
+QComboBox::drop-down { border: none; width: 20px; }
+QComboBox QAbstractItemView {
+    background: %(PANEL2)s; border: 1px solid %(BORDER)s;
+    selection-background-color: %(SEL)s; selection-color: %(FG)s; outline: none;
+}
+
+QListWidget, QTreeWidget, QTreeView, QListView {
+    background: %(BG)s; border: 1px solid %(BORDER)s; border-radius: 8px;
+    outline: none;
+}
+QListWidget::item { padding: 7px 9px; border-radius: 6px; }
+QListWidget::item:hover, QTreeView::item:hover,
+QListView::item:hover, QTreeWidget::item:hover { background: %(HOVER)s; }
+QListWidget::item:selected { background: %(SEL)s; color: %(FG)s; }
+QTreeView::item:selected, QListView::item:selected,
+QTreeWidget::item:selected { background: %(SEL)s; color: %(FG)s; }
+QHeaderView::section {
+    background: %(PANEL2)s; color: %(FG_MUTED)s;
+    border: none; border-bottom: 1px solid %(BORDER)s;
+    border-right: 1px solid %(BORDER)s; padding: 6px 8px;
+}
+
+QScrollBar:vertical { background: transparent; width: 12px; margin: 0; }
+QScrollBar::handle:vertical { background: %(HOVER)s; border-radius: 5px; min-height: 34px; margin: 3px; }
+QScrollBar::handle:vertical:hover { background: %(BORDER)s; }
+QScrollBar:horizontal { background: transparent; height: 12px; margin: 0; }
+QScrollBar::handle:horizontal { background: %(HOVER)s; border-radius: 5px; min-width: 34px; margin: 3px; }
+QScrollBar::handle:horizontal:hover { background: %(BORDER)s; }
+QScrollBar::add-line, QScrollBar::sub-line { height: 0; width: 0; }
+QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
+
+QStatusBar { background: %(PANEL)s; border-top: 1px solid %(BORDER)s; color: %(FG_MUTED)s; }
+QStatusBar::item { border: none; }
+QSplitter::handle { background: %(BORDER)s; }
+QSplitter::handle:horizontal { width: 1px; }
+QSplitter::handle:vertical { height: 1px; }
+
+QProgressBar {
+    background: %(PANEL2)s; border: none; border-radius: 7px;
+    text-align: center; color: %(FG)s; height: 14px;
+}
+QProgressBar::chunk { background: %(ACCENT)s; border-radius: 7px; }
+
+QGroupBox {
+    border: 1px solid %(BORDER)s; border-radius: 8px;
+    margin-top: 10px; padding-top: 8px;
+}
+QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; color: %(FG_MUTED)s; }
+QCheckBox, QRadioButton { spacing: 6px; }
+"""
+
+
+def app_stylesheet() -> str:
+    """アプリ全体へ適用する QSS を返す(Issue #113)。色は必ず定数から。"""
+    return _APP_QSS % {
+        "BG": BG, "BG_BASE": BG_BASE, "BG_RAISED": BG_RAISED,
+        "PANEL": PANEL, "PANEL2": PANEL2, "HOVER": HOVER, "SEL": SEL,
+        "FG": FG, "FG_MUTED": FG_MUTED, "FG_DISABLED": FG_DISABLED,
+        "ACCENT": ACCENT, "ACCENT_HOVER": ACCENT_HOVER, "BORDER": BORDER,
+        "R": CHIP_RADIUS,
+    }
+
 
 # ---- ラベルヘルパー(注意書き・補足の見た目を統一) --------------------------
 
@@ -70,6 +233,107 @@ def muted_label(text: str) -> QLabel:
 def muted_span(text: str) -> str:
     """リッチテキスト内で補足を控えめ色にする(<span> を返す)。"""
     return f"<span style='color:{FG_MUTED};'>{text}</span>"
+
+
+# ---- 線画アイコン(Issue #113 / 参考デザイン TransTerm) ---------------------
+# 参考デザインは細い線画 SVG アイコン + 小さなラベルの縦型ボタン。ここでは
+# **QtSvg を使わず QPainter で描く**。QtSvg を足すと PyInstaller で凍結したとき
+# プラグイン/DLL の取りこぼしが起きやすく(keyring backend と同種の事故)、
+# 実行時に無音でアイコンが消えるため。16x16 の論理グリッドで定義して拡大する。
+#
+# 各要素は ("line", x1,y1,x2,y2) / ("rect", x,y,w,h) / ("ellipse", cx,cy,r) の
+# いずれか。座標は 16x16 基準。
+_ICONS: dict[str, list[tuple]] = {
+    "key": [("ellipse", 5, 8, 2.5), ("line", 7.5, 8, 13.5, 8),
+            ("line", 11, 8, 11, 10.5), ("line", 13.5, 8, 13.5, 10)],
+    "snippet": [("line", 5, 4, 2, 8), ("line", 2, 8, 5, 12),
+                ("line", 11, 4, 14, 8), ("line", 14, 8, 11, 12)],
+    "forward": [("line", 2, 5, 11, 5), ("line", 8.5, 2.5, 11, 5),
+                ("line", 8.5, 7.5, 11, 5), ("line", 14, 11, 5, 11),
+                ("line", 7.5, 8.5, 5, 11), ("line", 7.5, 13.5, 5, 11)],
+    "log": [("rect", 4, 1.5, 8.5, 13), ("line", 6.5, 8, 10.5, 8),
+            ("line", 6.5, 10.5, 10.5, 10.5), ("line", 6.5, 5.5, 9, 5.5)],
+    "upload": [("line", 8, 11, 8, 3), ("line", 4.5, 6.5, 8, 3),
+               ("line", 11.5, 6.5, 8, 3), ("line", 3, 13.5, 13, 13.5)],
+    "eye": [("ellipse", 8, 8, 1.8), ("line", 2, 8, 5, 5), ("line", 5, 5, 11, 5),
+            ("line", 11, 5, 14, 8), ("line", 14, 8, 11, 11),
+            ("line", 11, 11, 5, 11), ("line", 5, 11, 2, 8)],
+    "unlock": [("rect", 3, 7, 10, 7), ("line", 5.5, 7, 5.5, 4.5),
+               ("line", 5.5, 4.5, 8, 3), ("line", 8, 3, 10.5, 4)],
+    "queue": [("line", 2, 4, 3.5, 4), ("line", 5.5, 4, 14, 4),
+              ("line", 2, 8, 3.5, 8), ("line", 5.5, 8, 14, 8),
+              ("line", 2, 12, 3.5, 12), ("line", 5.5, 12, 14, 12)],
+    "terminal": [("rect", 1.5, 2.5, 13, 11), ("line", 4, 6.5, 6, 8.5),
+                 ("line", 6, 8.5, 4, 10.5), ("line", 7.5, 10.5, 11, 10.5)],
+    "folder": [("line", 1.5, 3.5, 6, 3.5), ("line", 6, 3.5, 7.5, 5.5),
+               ("line", 7.5, 5.5, 14.5, 5.5), ("rect", 1.5, 5.5, 13, 8),
+               ("line", 1.5, 3.5, 1.5, 5.5)],
+    "server": [("rect", 2, 2, 12, 9), ("line", 5, 14, 11, 14),
+               ("line", 8, 11, 8, 14)],
+}
+
+_icon_cache: dict[tuple, QIcon] = {}
+
+
+def icon(name: str, color: str = "", size: int = 18) -> QIcon:
+    """線画アイコンを返す(#113)。未知の名前は空アイコン(落とさない)。"""
+    key = (name, color or FG, size)
+    hit = _icon_cache.get(key)
+    if hit is not None:
+        return hit
+    shapes = _ICONS.get(name)
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    if shapes:
+        painter = QPainter(pm)
+        painter.setRenderHint(QPainter.Antialiasing)
+        scale = size / 16.0
+        pen = QPen(QColor(color or FG))
+        pen.setWidthF(1.5 * scale)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        for shape in shapes:
+            kind = shape[0]
+            if kind == "line":
+                _, x1, y1, x2, y2 = shape
+                painter.drawLine(QPointF(x1 * scale, y1 * scale),
+                                 QPointF(x2 * scale, y2 * scale))
+            elif kind == "rect":
+                _, x, y, w, h = shape
+                painter.drawRoundedRect(
+                    QRectF(x * scale, y * scale, w * scale, h * scale),
+                    1.5 * scale, 1.5 * scale)
+            elif kind == "ellipse":
+                _, cx, cy, r = shape
+                painter.drawEllipse(QPointF(cx * scale, cy * scale),
+                                    r * scale, r * scale)
+        painter.end()
+    result = QIcon(pm)
+    _icon_cache[key] = result
+    return result
+
+
+def icon_names() -> list[str]:
+    """定義済みアイコン名(テスト・確認用)。"""
+    return list(_ICONS)
+
+
+def plain_label(text: str = "", muted: bool = False) -> QLabel:
+    """**信頼できない文字列**(リモートのファイル名・サーバーのエラー文・
+    ホスト名など)を表示するためのラベル。
+
+    QLabel の既定 textFormat は AutoText で、`<b>` や `<img src=…>` を含む
+    文字列を**リッチテキストとして解釈**してしまう。リモートが決めた名前を
+    そのまま渡すと表示の偽装や意図しないリソース読み込みにつながるため、
+    信頼できない内容は必ずこのヘルパー(PlainText 固定)を使うこと。
+    """
+    lbl = QLabel(text)
+    lbl.setTextFormat(Qt.PlainText)
+    if muted:
+        lbl.setStyleSheet(f"color:{FG_MUTED};")
+    return lbl
 
 
 def color_dot_icon(color: str, size: int = 12) -> QIcon:

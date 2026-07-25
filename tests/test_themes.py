@@ -17,6 +17,19 @@ def test_all_themes_have_complete_palettes():
         assert t["ansi"]["brown"] == t["ansi"]["yellow"], name
 
 
+def test_default_theme_harmonizes_with_app_palette():
+    """既定テーマ Hashi はアプリのパレット(style)と調和させる(#113)。"""
+    from hashi import style
+
+    assert themes.DEFAULT_THEME == "Hashi"
+    t = themes.get_theme("Hashi")
+    # 前景はアプリの基本テキスト、カーソルはアクセント色に一致させる
+    assert t["foreground"].lower() == style.FG.lower()
+    assert t["cursor"].lower() == style.ACCENT.lower()
+    # 背景はアプリの暗い面と近い(暗色であること)
+    assert t["background"].startswith("#1")
+
+
 def test_get_theme_fallback():
     assert themes.get_theme("Dracula")["background"] == "#282a36"
     assert themes.get_theme("存在しないテーマ") is themes.THEMES[themes.DEFAULT_THEME]
@@ -76,7 +89,7 @@ def test_apply_ui_settings_live(qapp):
 
     from PySide6.QtGui import QColor
 
-    from hashi.mainwindow import LauncherWindow, SessionWindow
+    from hashi.mainwindow import AppWindow, SessionPage
     from hashi.terminal import TerminalWidget
 
     term = TerminalWidget(theme="One Half Dark")
@@ -87,13 +100,13 @@ def test_apply_ui_settings_live(qapp):
                     "terminal_font_family": "DejaVu Sans Mono",
                     "terminal_font_size": 13}.get(key)
 
-    fake_win = SimpleNamespace(session_tab=SimpleNamespace(terminal=term))
-    SessionWindow._windows.append(fake_win)
+    fake_page = SimpleNamespace(session_tab=SimpleNamespace(terminal=term))
+    SessionPage._pages.append(fake_page)
     try:
         fake_self = SimpleNamespace(settings=FakeSettings())
-        LauncherWindow._apply_ui_settings_live(fake_self)
+        AppWindow._apply_ui_settings_live(fake_self)
     finally:
-        SessionWindow._windows.remove(fake_win)
+        SessionPage._pages.remove(fake_page)
 
     assert term._c_bg == QColor("#282a36")     # Dracula の背景
     assert term._font.families()[0] == "DejaVu Sans Mono"

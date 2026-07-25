@@ -4,21 +4,74 @@ import re
 from hashi import style
 
 
-def test_palette_matches_fusion_theme():
-    """style.py のパレットは main.py の Fusion ダークと一致させる決まり。"""
-    import inspect
+def test_palette_applied_from_style_constants(qapp):
+    """main の Fusion パレットが style.py の定数から作られている(#111)。
+
+    main.apply_dark_theme が style 定数を参照するので、適用後のパレット色が
+    定数と一致することを確認する(片方だけ変えると落ちる)。"""
+    from PySide6.QtGui import QColor, QPalette
+    from PySide6.QtWidgets import QApplication
 
     import main
-    src = inspect.getsource(main)
-    for const in (style.BG, style.BG_BASE, style.BG_RAISED, style.FG,
-                  style.FG_DISABLED, style.ACCENT):
-        assert const in src, f"{const} が main.py のテーマに見当たらない"
+    main.apply_dark_theme(QApplication.instance())
+    pal = QApplication.instance().palette()
+    assert pal.color(QPalette.Window) == QColor(style.BG)
+    assert pal.color(QPalette.Base) == QColor(style.BG_BASE)
+    assert pal.color(QPalette.WindowText) == QColor(style.FG)
+    assert pal.color(QPalette.Highlight) == QColor(style.ACCENT)
 
 
 def test_colors_are_hex():
-    for name in ("BG", "BG_BASE", "BG_RAISED", "FG", "FG_MUTED",
-                 "FG_DISABLED", "ACCENT", "BORDER", "WARN", "ERROR", "OK"):
+    for name in ("BG", "BG_BASE", "BG_RAISED", "PANEL", "PANEL2", "HOVER",
+                 "SEL", "DOT_OK", "FG", "FG_MUTED",
+                 "FG_DISABLED", "ACCENT", "ACCENT_HOVER", "BORDER",
+                 "WARN", "ERROR", "OK"):
         assert re.fullmatch(r"#[0-9a-f]{6}", getattr(style, name), re.I), name
+
+
+def test_chip_style_variants():
+    base = style.chip_style()
+    # 枠線なし・透明背景・ホバー塗りの柔らかいチップ(#113)
+    assert "transparent" in base and "border:none" in base
+    assert style.HOVER in base
+    active = style.chip_style(active=True)
+    assert style.ACCENT in active and style.SEL in active
+    danger = style.chip_style(active=True, danger=True)
+    assert style.DANGER_BG in danger
+
+
+def test_app_stylesheet_is_valid_qss(qapp):
+    """全体 QSS が定数から作られ、主要な色を含み、% 置換が残っていない(#113)。"""
+    qss = style.app_stylesheet()
+    assert "%(" not in qss and "%s" not in qss   # 未置換プレースホルダが無い
+    for token in (style.ACCENT, style.BORDER, style.PANEL, style.PANEL2,
+                  style.HOVER, style.SEL, style.FG):
+        assert token in qss
+    # 主要ウィジェットのセレクタが含まれる
+    for sel in ("QTabBar::tab", "QScrollBar", "QMenu", "QLineEdit", "QPushButton"):
+        assert sel in qss
+    # 実際に適用できる(パースエラーがあれば Qt が警告するが例外にはならない)
+    qapp.setStyleSheet(qss)
+    qapp.setStyleSheet("")
+
+
+def test_line_icons_render_and_cache(qapp):
+    """線画アイコンが全名前で描け、色ごとにキャッシュされる(#113)。
+
+    QtSvg を使わない(凍結時の取りこぼしを避ける)方針なので、QPainter 実装が
+    全アイコンで例外なく描けることを固定する。
+    """
+    names = style.icon_names()
+    assert {"key", "snippet", "forward", "log", "terminal", "folder"} <= set(names)
+    for name in names:
+        ic = style.icon(name, style.FG, 18)
+        assert not ic.isNull()
+        assert ic.availableSizes()          # 実際にピクスマップを持つ
+    # 同じ引数なら同一インスタンス(キャッシュ)、色を変えれば別物
+    assert style.icon("key", style.FG) is style.icon("key", style.FG)
+    assert style.icon("key", style.ACCENT) is not style.icon("key", style.FG)
+    # 未知の名前でも落とさない
+    assert style.icon("存在しないアイコン") is not None
 
 
 def test_warning_and_muted_labels(qapp):

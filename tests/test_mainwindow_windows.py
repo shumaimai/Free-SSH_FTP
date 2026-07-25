@@ -1,7 +1,7 @@
-"""ランチャー + 1接続1ウィンドウ(Issue #14 段階2)のテスト。
+"""ブラウザ風タブ(Issue #115)のテスト。
 
-ランチャーから接続すると、ストアを共有した独立 SessionWindow が開き、そこで
-接続処理が始まることを確認する。実接続はさせない(start_connect を差し替え)。
+AppWindow が「サーバー一覧」タブを持ち、接続すると新しいタブ(SessionPage)が
+開くことを確認する。実接続はさせない(start_connect を差し替え)。
 """
 import pytest
 
@@ -9,78 +9,276 @@ from hashi.config import Profile
 
 
 @pytest.fixture()
-def launcher(qapp, tmp_path, monkeypatch):
+def app_win(qapp, tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("APPDATA", str(tmp_path))
     from hashi.config import config_dir
-    from hashi.mainwindow import LauncherWindow, SessionWindow
+    from hashi.mainwindow import AppWindow, SessionPage
     (config_dir() / "settings.json").write_text(
         '{"update_check": false}', encoding="utf-8"
     )
-    before = list(SessionWindow._windows)
-    w = LauncherWindow()
+    # 接続処理は起こさない
+    monkeypatch.setattr(SessionPage, "start_connect", lambda self: None)
+    before = list(SessionPage._pages)
+    w = AppWindow()
     yield w
-    for win in list(SessionWindow._windows):
-        if win not in before:
-            win.session_tab = None   # shutdown を避ける
-            win.close()
+    for page in list(SessionPage._pages):
+        if page not in before:
+            page.session_tab = None
+            page._alive_timer.stop()
+            if page in SessionPage._pages:
+                SessionPage._pages.remove(page)
     w.close()
 
 
-def test_connect_opens_session_window_sharing_services(launcher, monkeypatch):
-    from hashi.mainwindow import SessionWindow
+def test_open_session_adds_tab_sharing_services(app_win):
+    from hashi.mainwindow import SessionPage
 
-    started = []
-    monkeypatch.setattr(SessionWindow, "start_connect",
-                        lambda self: started.append(self))
-
-    n_before = len(SessionWindow._windows)
+    n_before = app_win.tabs.count()
     profile = Profile(host="h", username="u")
-    launcher._connect(profile)
+    page = app_win.open_session(profile)
 
-    assert len(SessionWindow._windows) == n_before + 1
-    win = SessionWindow._windows[-1]
-    assert win.profile is profile
+    assert isinstance(page, SessionPage)
+    assert app_win.tabs.count() == n_before + 1
+    assert app_win.tabs.currentWidget() is page
+    assert page.profile is profile
     # ストア類は同一実体を共有
-    assert win.store is launcher.store
-    assert win.known_hosts is launcher.known_hosts
-    assert win.credentials is launcher.credentials
-    assert win.settings is launcher.settings
-    # 接続が始まった / セッションメニューは接続完了まで無効
-    assert started == [win]
-    assert not win.m_sess.isEnabled()
+    assert page.store is app_win.store
+    assert page.known_hosts is app_win.known_hosts
+    assert page.credentials is app_win.credentials
+    assert page.settings is app_win.settings
+    # 接続完了まではセッションメニュー無効
+    assert not app_win.m_sess.isEnabled()
 
 
-def test_doubleclick_connects(launcher, monkeypatch):
-    launcher.store.profiles.append(Profile(host="h", username="u"))
-    launcher._reload_list()
-    connected = []
-    monkeypatch.setattr(type(launcher), "_connect",
-                        lambda self, p: connected.append(p))
-    launcher._connect_item(launcher.list.item(0))
-    assert len(connected) == 1
+def test_launcher_tab_is_first_and_not_closable(app_win):
+    from PySide6.QtWidgets import QTabBar
+
+    from hashi.mainwindow import LauncherPage
+    assert isinstance(app_win.tabs.widget(0), LauncherPage)
+    # ランチャータブには閉じるボタンが無い
+    assert app_win.tabs.tabBar().tabButton(0, QTabBar.ButtonPosition.RightSide) is None
 
 
-def test_session_close_deregisters(launcher, monkeypatch):
-    from hashi.mainwindow import SessionWindow
+def test_doubleclick_opens_session(app_win, monkeypatch):
+    app_win.launcher.store.profiles.append(Profile(host="h", username="u"))
+    app_win.launcher._reload_list()
+    opened = []
+    monkeypatch.setattr(app_win, "open_session",
+                        lambda p, mode="both": opened.append((p, mode)))
+    app_win.launcher._connect_item(app_win.launcher.list.item(0))
+    assert len(opened) == 1
 
-    monkeypatch.setattr(SessionWindow, "start_connect", lambda self: None)
-    launcher._connect(Profile(host="h", username="u"))
-    win = SessionWindow._windows[-1]
-    assert win in SessionWindow._windows
-    win.close()
-    assert win not in SessionWindow._windows
+
+def test_close_tab_removes_page(app_win):
+    from hashi.mainwindow import SessionPage
+    page = app_win.open_session(Profile(host="h", username="u"))
+    idx = app_win.tabs.indexOf(page)
+    assert page in SessionPage._pages
+    app_win._on_tab_close(idx)
+    assert page not in SessionPage._pages
 
 
-def test_import_from_session_refreshes_launcher_list(launcher, monkeypatch):
-    """セッションウィンドウでの読み込みがランチャーの一覧を更新する。"""
-    from hashi.mainwindow import SessionWindow
-
-    monkeypatch.setattr(SessionWindow, "start_connect", lambda self: None)
-    launcher._connect(Profile(host="h", username="u"))
-    win = SessionWindow._windows[-1]
-    # ストアに直接足して _refresh_profile_lists を呼ぶ
-    launcher.store.profiles.append(Profile(host="new", username="x"))
-    win._refresh_profile_lists()
-    labels = [launcher.list.item(i).text() for i in range(launcher.list.count())]
+def test_import_refreshes_launcher_list(app_win):
+    """読み込み等が反映される refresh_launcher。"""
+    app_win.store.profiles.append(Profile(host="new", username="x"))
+    app_win.refresh_launcher()
+    lst = app_win.launcher.list
+    labels = [lst.item(i).text() for i in range(lst.count())]
     assert any("new" in name or "x@new" in name for name in labels)
+
+
+def test_launcher_detail_pane_follows_selection(app_win):
+    """2 カラムカードの右側が選択に追従し、未選択ならボタンを無効化(#113)。"""
+    lp = app_win.launcher
+    lp.store.profiles.clear()
+    lp.store.profiles.append(
+        Profile(name="本番 web", host="203.0.113.9", port=2222,
+                username="deploy", tags=["prod"]))
+    lp._reload_list()
+
+    # 未選択では接続系ボタンが無効
+    lp.list.setCurrentItem(None)
+    lp._update_detail()
+    assert not lp.bt_connect_both.isEnabled()
+    assert not lp.bt_edit.isEnabled()
+
+    lp.list.setCurrentRow(0)
+    assert lp.bt_connect_both.isEnabled()
+    assert lp._detail_name.text() == "本番 web"
+    assert "deploy@203.0.113.9:2222" in lp._detail_addr.text()
+    assert "prod" in lp._detail_meta.text()
+
+
+def test_launcher_connect_buttons_pass_mode(app_win, monkeypatch):
+    """SSH のみ / ファイルのみ ボタンが正しい mode で接続する(#112/#113)。"""
+    lp = app_win.launcher
+    lp.store.profiles.clear()
+    lp.store.profiles.append(Profile(host="h", username="u"))
+    lp._reload_list()
+    lp.list.setCurrentRow(0)
+
+    opened = []
+    monkeypatch.setattr(app_win, "open_session",
+                        lambda p, mode="both": opened.append(mode))
+    lp.bt_connect_both.click()
+    lp.bt_connect_ssh.click()
+    lp.bt_connect_sftp.click()
+    assert opened == ["both", "ssh", "sftp"]
+
+
+def test_launcher_empty_state(app_win):
+    """接続先ゼロ / 検索一致なしで空状態プレースホルダを出す(#113)。"""
+    lp = app_win.launcher
+    lp.store.profiles.clear()
+    lp._reload_list()
+    assert lp._empty.isVisibleTo(lp) and not lp.list.isVisibleTo(lp)
+    assert "まだ接続先がありません" in lp._empty.text()
+
+    lp.store.profiles.append(Profile(name="srv", host="h", username="u"))
+    lp._reload_list()
+    assert lp.list.isVisibleTo(lp) and not lp._empty.isVisibleTo(lp)
+
+    lp.ed_search.setText("該当しないはず")
+    assert lp._empty.isVisibleTo(lp)
+    assert "一致する接続先がありません" in lp._empty.text()
+
+
+class _FakeSFTP:
+    def listdir_attr(self, path="."): return []
+    def normalize(self, path): return path or "/home/u"
+    def stat(self, path): raise IOError("no such file")
+    def close(self): pass
+
+
+class _ModeSession:
+    """SessionTab のモード別構築テスト用の最小フェイク session。"""
+
+    class _Prof:
+        username = "u"
+        host = "h"
+        port = 22
+        initial_path = ""
+        id = "u@h:22"
+
+        def label(self):
+            return "u@h"
+
+        def id_str(self):
+            return "u@h:22"
+
+    def __init__(self):
+        self.profile = self._Prof()
+        self.transport = None
+        self.shell_opened = 0
+
+    def open_shell(self, cols=80, rows=24):
+        self.shell_opened += 1
+        class _Ch:
+            def get_transport(self): return None
+            def settimeout(self, *a): pass
+            def recv(self, n): return b""
+            def recv_ready(self): return False
+            def send(self, d): pass
+            def resize_pty(self, **k): pass
+            def close(self): pass
+            active = True
+        return _Ch()
+
+    def open_sftp(self):
+        return _FakeSFTP()
+
+    def run_sudo(self, cmd, pw): return (1, "", "")
+    def is_alive(self): return True
+    def close(self): pass
+
+
+def _make_tab(qapp, mode):
+    import pathlib
+    import tempfile
+    from types import SimpleNamespace
+
+    from hashi.config import Settings
+    from hashi.mainwindow import SessionTab
+    st = Settings(pathlib.Path(tempfile.mkdtemp()) / "s.json")
+    ctx = SimpleNamespace(
+        get_sudo_password=lambda allow_prompt=True: None,
+        get_login_password=lambda: None)
+    return SessionTab(_ModeSession(), st, ctx, mode=mode)
+
+
+def _cleanup(qapp, tab):
+    """ワーカースレッドを確実に止めてから破棄する(他テストへの漏れ防止)。"""
+    tab.session_log = None
+    tab.shutdown()
+    for _ in range(20):
+        qapp.processEvents()
+    tab.deleteLater()
+    qapp.processEvents()
+
+
+def test_toolbar_buttons_emit_requests_not_logic(qapp):
+    """ツールバーは依頼(シグナル)を投げるだけ。処理は Page 側が持つ(#113)。"""
+    tab = _make_tab(qapp, "both")
+    got = []
+    tab.request_snippets.connect(lambda: got.append("snippets"))
+    tab.request_tunnel.connect(lambda: got.append("tunnel"))
+    tab.request_session_log.connect(lambda: got.append("log"))
+    tab.bt_snippets.click()
+    tab.bt_tunnel.click()
+    tab.bt_log.click()
+    assert got == ["snippets", "tunnel", "log"]
+    _cleanup(qapp, tab)
+
+
+def test_toolbar_icons_track_state(qapp):
+    """トグルのアイコン色が状態に追従する(チェック時はアクセント色)(#113)。"""
+    from hashi import style
+
+    tab = _make_tab(qapp, "both")
+    # チェック中はアクセント色のアイコン、外すと通常色
+    tab.bt_term.setChecked(True)
+    on_icon = style.icon("terminal", style.ACCENT).cacheKey()
+    assert tab.bt_term.icon().cacheKey() == on_icon
+    tab.bt_term.setChecked(False)
+    off_icon = style.icon("terminal", style.FG).cacheKey()
+    assert tab.bt_term.icon().cacheKey() == off_icon
+    _cleanup(qapp, tab)
+
+
+def test_sftp_only_disables_terminal_side_buttons(qapp):
+    """ファイルのみモードでは端末側の操作ボタンを無効化(#112/#113)。"""
+    tab = _make_tab(qapp, "sftp")
+    assert not tab.bt_sendpw.isEnabled()
+    assert not tab.bt_snippets.isEnabled()
+    assert not tab.bt_log.isEnabled()
+    _cleanup(qapp, tab)
+
+
+def test_session_tab_ssh_only_has_no_browser(qapp):
+    tab = _make_tab(qapp, "ssh")
+    assert tab.terminal is not None
+    assert tab.browser is None
+    assert tab.session.shell_opened == 1
+    assert not tab.bt_files.isEnabled()
+    assert tab.bt_term.isEnabled()
+    _cleanup(qapp, tab)
+
+
+def test_session_tab_sftp_only_has_no_terminal(qapp):
+    tab = _make_tab(qapp, "sftp")
+    assert tab.terminal is None
+    assert tab.browser is not None
+    assert tab.session.shell_opened == 0   # シェルを開かない
+    assert not tab.bt_term.isEnabled()
+    assert not tab.bt_sendpw.isEnabled()
+    assert tab.toggle_session_log() is False   # ターミナルなし → 何もしない
+    tab._on_password_prompt("manual")          # None ガードで落ちない
+    _cleanup(qapp, tab)
+
+
+def test_session_tab_both_has_terminal_and_browser(qapp):
+    tab = _make_tab(qapp, "both")
+    assert tab.terminal is not None and tab.browser is not None
+    assert tab.bt_term.isEnabled() and tab.bt_files.isEnabled()
+    _cleanup(qapp, tab)
