@@ -270,6 +270,9 @@ _ICONS: dict[str, list[tuple]] = {
                ("line", 1.5, 3.5, 1.5, 5.5)],
     "server": [("rect", 2, 2, 12, 9), ("line", 5, 14, 11, 14),
                ("line", 8, 11, 8, 14)],
+    "bookmark": [("line", 4, 2, 12, 2), ("line", 12, 2, 12, 14),
+                 ("line", 12, 14, 8, 10.5), ("line", 8, 10.5, 4, 14),
+                 ("line", 4, 14, 4, 2)],
 }
 
 _icon_cache: dict[tuple, QIcon] = {}

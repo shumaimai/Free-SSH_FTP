@@ -282,3 +282,15 @@ def test_session_tab_both_has_terminal_and_browser(qapp):
     assert tab.terminal is not None and tab.browser is not None
     assert tab.bt_term.isEnabled() and tab.bt_files.isEnabled()
     _cleanup(qapp, tab)
+
+
+def test_browser_hidden_toggle_syncs_with_menu(qapp):
+    """ツールバーの隠しファイルトグルとメニューの状態が同期する(#80)。"""
+    tab = _make_tab(qapp, "sftp")
+    b = tab.browser
+    assert not b.btn_hidden.isChecked()
+    b.btn_hidden.setChecked(True)
+    assert b._act_hidden.isChecked() and b._show_hidden
+    b._act_hidden.setChecked(False)
+    assert not b.btn_hidden.isChecked() and not b._show_hidden
+    _cleanup(qapp, tab)
