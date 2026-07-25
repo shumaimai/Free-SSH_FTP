@@ -275,6 +275,32 @@ def test_looks_text_covers_expanded_extensions(qapp):
     assert not SftpBrowser._looks_text("archive.tar.gz")
 
 
+def test_looks_text_covers_game_server_formats(qapp):
+    """ゲームサーバーで触る設定 / スクリプトを内蔵エディタ対象にする(#122)。"""
+    from hashi.filebrowser import SftpBrowser
+
+    for name in ("pack.mcmeta", "give.mcfunction", "libraryfolders.vdf",
+                 "appmanifest_740.acf", "plugin.sp", "mission.sqf",
+                 "gamemode.pwn", "player.gd", "config.jsonc", "ops.json",
+                 "server.properties", "bukkit.yml"):
+        assert SftpBrowser._looks_text(name), name
+
+
+def test_should_edit_internally_includes_ambiguous_extensions(qapp):
+    """.dat 等は拡張子で決めず内蔵エディタへ回す(中身で判定するため)(#122)。"""
+    from hashi.filebrowser import SftpBrowser
+
+    # 中身次第でテキスト/バイナリになるもの → エディタへ回す(HEX で開く)
+    for name in ("level.dat", "playerdata.dat", "world.sav", "cache.bin",
+                 "r.0.0.mca", "stats.db"):
+        assert SftpBrowser._should_edit_internally(name), name
+    # 明確なテキストも当然対象
+    assert SftpBrowser._should_edit_internally("server.properties")
+    # 明確なメディア / 書庫は外部アプリへ(内蔵エディタで開かない)
+    for name in ("photo.png", "archive.tar.gz", "movie.mp4", "song.mp3"):
+        assert not SftpBrowser._should_edit_internally(name), name
+
+
 def test_sftp_worker_reconnect_swaps_session_and_sftp(qapp):
     from hashi.filebrowser import SftpWorker
 

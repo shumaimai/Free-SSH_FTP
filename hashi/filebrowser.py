@@ -70,6 +70,24 @@ TEXT_EXTS = {
     "spec", "desktop", "socket", "timer", "target", "mount", "network",
     "editorconfig", "gitattributes", "gitmodules", "npmrc", "lock", "pem",
     "pub", "crt", "csr", "license", "readme", "changelog", "authors",
+    # Issue #122: ゲームサーバーで実際に触る設定 / データ / スクリプト
+    # Minecraft 系
+    "mcmeta", "mcfunction", "snbt", "mcfunc",
+    # Source / Steam 系(VDF テキスト)
+    "vdf", "acf", "vmt", "res", "gi",
+    # サーバー用スクリプト言語
+    "sp", "sma", "inc", "nut", "sqf", "sqm", "pwn", "gd", "as", "gsc", "cs2",
+    # 設定 / データのバリエーション
+    "jsonc", "json5", "jsonl", "ndjson", "geojson", "props", "plist",
+    "inf", "manifest", "reg", "cnf", "config", "settings", "params", "opts",
+    "ruleset", "banlist", "whitelist", "motd", "srv",
+}
+
+# 「テキストのこともバイナリのこともある」拡張子(Issue #122)。
+# ここに載るものは拡張子で決めず、必ず中身を見てから判定する。
+AMBIGUOUS_EXTS = {
+    "dat", "db", "sav", "save", "bin", "data", "cache", "idx", "index",
+    "pak", "bak", "dump", "store", "state", "meta", "nbt", "mca", "mcr",
 }
 
 
@@ -1236,7 +1254,8 @@ class SftpBrowser(QWidget):
             return
         use_editor = (
             self.settings and self.settings.get("open_text_in_editor")
-            and self._looks_text(e["name"]) and size <= EDIT_SIZE_LIMIT
+            and self._should_edit_internally(e["name"])
+            and size <= EDIT_SIZE_LIMIT
         )
         if use_editor:
             self.xfer.enqueue({"kind": "open_edit", "remote": full, "size": size})
@@ -1258,6 +1277,20 @@ class SftpBrowser(QWidget):
             return True
         ext = base.rsplit(".", 1)[-1] if "." in base else ""
         return ext in TEXT_EXTS or "." not in base
+
+    @classmethod
+    def _should_edit_internally(cls, name: str) -> bool:
+        """内蔵エディタで開くべきか(Issue #122)。
+
+        テキスト拡張子に加えて、**中身次第でテキストにもバイナリにもなる拡張子**
+        (`.dat` 等)と拡張子なしも内蔵エディタへ回す。テキストかバイナリかの
+        最終判断は、ダウンロード後に中身を見る `EditorWindow` 側で行い、
+        バイナリなら 16 進エディタで開く(壊さずに覗ける)。
+        """
+        if cls._looks_text(name):
+            return True
+        ext = name.lower().rsplit(".", 1)[-1] if "." in name else ""
+        return ext in AMBIGUOUS_EXTS
 
     def _on_opened_for_edit(self, remote: str, local: str):
         try:
