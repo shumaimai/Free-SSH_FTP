@@ -303,6 +303,7 @@ class SftpWorker(QThread):
     """ジョブキュー方式の SFTP ワーカー。sftp チャネルはこのスレッド内で開く。"""
 
     listed = Signal(str, list)          # path, entries
+    sync_failed = Signal(str)           # 同期ブラウズの移動に失敗(#82 第 2 段)
     search_result = Signal(list)        # リモート検索結果
     home_resolved = Signal(str)
     precheck_result = Signal(object)    # plan dict + conflicts
@@ -597,6 +598,18 @@ class SftpWorker(QThread):
                 "mode_str": statmod.filemode(mode),
             })
         self.listed.emit(path, entries)
+
+    def _job_list_sync(self, job):
+        """同期ブラウズ(#82)の追随移動。
+
+        追随先が無いのは**普通に起こる**(左右でフォルダ構成が違う)。エラー
+        ダイアログを出すと同期ブラウズが使い物にならないので、失敗は
+        `sync_failed` で静かに知らせるだけにする。
+        """
+        try:
+            self._job_list(job)
+        except Exception as e:  # noqa: BLE001
+            self.sync_failed.emit(str(e))
 
     def _job_mkdir(self, job):
         self.sftp.mkdir(job["path"])
@@ -1050,6 +1063,8 @@ class SftpBrowser(QWidget):
 
     status_message = Signal(str)
     terminal_input = Signal(str)
+    path_changed = Signal(str)   # 表示中のディレクトリが変わった(#82 第 2 段)
+    sync_failed = Signal(str)    # 同期ブラウズの追随に失敗(#82 第 2 段)
 
     def __init__(self, session, initial_path: str = "", settings=None,
                  sudo_provider=None, sudo_provider_silent=None, parent=None):
@@ -1085,6 +1100,7 @@ class SftpBrowser(QWidget):
             w.status.connect(self._on_status)
             w.worker_failed.connect(self._on_worker_failed)
         self.nav.listed.connect(self._on_listed)
+        self.nav.sync_failed.connect(self.sync_failed)
         self.nav.search_result.connect(self._on_search_result)
         self.nav.home_resolved.connect(self._on_home)
         self.nav.precheck_result.connect(self._on_precheck)
@@ -1413,6 +1429,7 @@ class SftpBrowser(QWidget):
         self.home = home
 
     def _on_listed(self, path: str, entries: list):
+        moved = path != self.cwd
         self.cwd = path
         self._entries = entries
         self.ed_path.setText(path)
@@ -1420,6 +1437,9 @@ class SftpBrowser(QWidget):
         if self._pending_select:
             self._select_by_name(self._pending_select)
             self._pending_select = None
+        # 同期ブラウズ(#82)へ通知。更新(F5)では出さない
+        if moved:
+            self.path_changed.emit(path)
 
     def _toggle_search_bar(self):
         self.search_frame.setVisible(not self.search_frame.isVisible())
@@ -1635,6 +1655,10 @@ class SftpBrowser(QWidget):
 
     def cd(self, path: str):
         self.nav.enqueue({"kind": "list", "path": path})
+
+    def cd_sync(self, path: str):
+        """同期ブラウズ(#82)の追随移動。行き先が無くてもダイアログを出さない。"""
+        self.nav.enqueue({"kind": "list_sync", "path": path})
 
     def refresh(self):
         if self.cwd:

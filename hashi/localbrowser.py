@@ -20,13 +20,22 @@ from __future__ import annotations
 
 import logging
 import os
+import posixpath
 import shutil
 import stat as statmod
 import subprocess
 import sys
 from html import escape
 
-from PySide6.QtCore import QFileSystemWatcher, QMimeData, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import (
+    QFileSystemWatcher,
+    QMimeData,
+    QObject,
+    Qt,
+    QTimer,
+    QUrl,
+    Signal,
+)
 from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -111,6 +120,58 @@ def delete_local_path(path: str) -> None:
         shutil.rmtree(path)
     elif os.path.lexists(path):
         os.unlink(path)
+
+
+# ---- 同期ブラウズ(Issue #82 の第 2 段) -----------------------------------
+# 左右のパスは体系が違う(C:\Users\me と /srv/app)ので、**絶対パスは写せない**。
+# 写すのは「相対的な移動」だけ: 片方が logs へ入ったらもう片方も logs へ入り、
+# 片方が 1 つ上がったらもう片方も 1 つ上がる。WinSCP の同期ブラウズと同じ考え方。
+
+
+def path_components(path: str, mod) -> tuple[str, list[str]]:
+    """パスを (ルート, 構成要素) に分解する。mod は `os.path` か `posixpath`。
+
+    ルートにはドライブレターを含む("C:\\" / "/" / "")。
+    """
+    norm = mod.normpath(path or mod.sep)
+    drive, rest = mod.splitdrive(norm)
+    root = drive + (mod.sep if rest.startswith(mod.sep) else "")
+    parts = [p for p in rest.split(mod.sep) if p and p != "."]
+    return root, parts
+
+
+def join_components(root: str, parts: list[str], mod) -> str:
+    """path_components の逆。"""
+    if not parts:
+        return root or mod.sep
+    return mod.join(root or mod.sep, *parts)
+
+
+def mirror_move(old: str, new: str, other: str, mod, other_mod) -> str | None:
+    """片側の old→new という移動を、もう片方の `other` へ相対的に写す。
+
+    返すのは other 側の行き先。追随できない場合は None:
+    - 移動元と移動先でルート(ドライブ)が違う  … 相対移動として解釈できない
+    - もう片方がルートを突き抜けてしまう      … 上がりすぎ
+
+    「共通の親までさかのぼって、そこから新しい側へ降りる」という素直な計算なので、
+    1 段の上下だけでなく、離れたフォルダへのジャンプもできる範囲で写す。
+    """
+    root_old, old_parts = path_components(old, mod)
+    root_new, new_parts = path_components(new, mod)
+    if root_old != root_new:
+        return None
+    common = 0
+    while (common < len(old_parts) and common < len(new_parts)
+           and old_parts[common] == new_parts[common]):
+        common += 1
+    ups = len(old_parts) - common
+    downs = new_parts[common:]
+    root_other, other_parts = path_components(other, other_mod)
+    if ups > len(other_parts):
+        return None
+    kept = other_parts[:len(other_parts) - ups] if ups else list(other_parts)
+    return join_components(root_other, kept + list(downs), other_mod)
 
 
 def open_in_file_manager(path: str) -> bool:
@@ -599,3 +660,82 @@ class LocalBrowser(QWidget):
         self.lb_status.setText(msg)
         self._status_timer.start(5000)
         self.status_message.emit(msg)
+
+
+class SyncBrowse(QObject):
+    """同期ブラウズ(Issue #82 の第 2 段)。
+
+    片方のペインの移動を**相対移動として**もう片方へ写す。左右でパスの体系が
+    違う(`C:\\Users\\me` と `/srv/app`)ため、絶対パスは決して写さない。
+
+    どちらのペインの実装にも手を入れず、`path_changed` を聞いて `cd` を呼ぶだけの
+    調停役に徹する(ローカル/リモートのどちらにもロジックを二重に持たせない)。
+
+    **写した移動が自分へ跳ね返るのを防ぐ**のがこのクラスの主な仕事:
+    自分が動かした側からは必ず `path_changed` が返ってくるので、それを 1 回だけ
+    読み飛ばす。読み飛ばし待ちのまま移動が失敗すると次の本物の移動を取りこぼす
+    ため、リモート側の失敗通知(`sync_failed`)で確実に解除する。
+    """
+
+    failed = Signal(str)     # 追随できなかったときの説明(UI が出す)
+
+    def __init__(self, local: LocalBrowser, remote, parent=None):
+        super().__init__(parent)
+        self._local = local
+        self._remote = remote
+        self.enabled = False
+        self._local_path = local.cwd
+        self._remote_path = getattr(remote, "cwd", "")
+        self._skip_local = False
+        self._skip_remote = False
+        local.path_changed.connect(self._on_local_changed)
+        remote.path_changed.connect(self._on_remote_changed)
+        remote.sync_failed.connect(self._on_remote_sync_failed)
+
+    def set_enabled(self, on: bool) -> None:
+        """同期を入/切する。入れた時点では動かさない(勝手に片方を飛ばさない)。"""
+        self.enabled = bool(on)
+        # 今の位置を基準に取り直す。切っている間の移動は写さない。
+        self._local_path = self._local.cwd
+        self._remote_path = self._remote.cwd
+        self._skip_local = False
+        self._skip_remote = False
+
+    # -- ローカルが動いた -> リモートを追随させる --------------------------
+    def _on_local_changed(self, new: str) -> None:
+        old, self._local_path = self._local_path, new
+        if self._skip_local:
+            self._skip_local = False
+            return
+        if not self.enabled or not old or old == new or not self._remote_path:
+            return
+        target = mirror_move(old, new, self._remote_path, os.path, posixpath)
+        if target is None:
+            self.failed.emit("同期ブラウズ: リモート側は同じ移動ができません")
+            return
+        self._skip_remote = True
+        self._remote.cd_sync(target)
+
+    # -- リモートが動いた -> ローカルを追随させる --------------------------
+    def _on_remote_changed(self, new: str) -> None:
+        old, self._remote_path = self._remote_path, new
+        if self._skip_remote:
+            self._skip_remote = False
+            return
+        if not self.enabled or not old or old == new or not self._local_path:
+            return
+        target = mirror_move(old, new, self._local_path, posixpath, os.path)
+        if target is None or not os.path.isdir(target):
+            self.failed.emit(
+                "同期ブラウズ: ローカル側に対応するフォルダがありません")
+            return
+        self._skip_local = True
+        self._local.cd(target)
+        if self._local.cwd != target:
+            # cd が弾かれた(消された等)。読み飛ばし待ちを残さない
+            self._skip_local = False
+
+    def _on_remote_sync_failed(self, message: str) -> None:
+        # 追随の移動が失敗した = path_changed は来ない。待ち状態を必ず解除する
+        self._skip_remote = False
+        self.failed.emit(f"同期ブラウズ: リモート側へ移動できません ({message})")

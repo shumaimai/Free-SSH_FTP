@@ -66,7 +66,7 @@ from .dialogs import (
 from .filebrowser import SftpBrowser
 from .forward import DynamicForward, Forward, LocalForward, RemoteForward
 from .keygen import generate_key, register_public_key
-from .localbrowser import LocalBrowser
+from .localbrowser import LocalBrowser, SyncBrowse
 from .sessionlog import SessionLog
 from .snippets import Snippet, SnippetStore, expand_snippet
 from .ssh_core import ConnectCancelled, SshSession
@@ -641,6 +641,7 @@ class SessionTab(QWidget):
         self.terminal = None
         self.browser = None
         self.local = None                   # ローカル側ペイン(#82)
+        self.sync_browse = None             # 同期ブラウズの調停役(#82 第 2 段)
         self._term_pane = None
         self._browser_pane = None
         self._local_pane = None
@@ -694,6 +695,12 @@ class SessionTab(QWidget):
             "2 ペイン", "dualpane",
             "ローカル側ペインを表示して WinSCP 流の 2 ペインにします",
             checkable=True)
+        # 同期ブラウズ(#82 第 2 段)。2 ペインのときだけ意味を持つ。
+        self.bt_sync = self._tool_button(
+            "同期ブラウズ", "sync",
+            "片方のペインでフォルダを移動したら、もう片方も同じ移動をします\n"
+            "(左右でパスの体系が違うので、写すのは相対的な移動だけです)",
+            checkable=True)
         self.bt_term.setEnabled(self._use_terminal)
         self.bt_files.setEnabled(self._use_browser)
         self.bt_local.setEnabled(self._use_browser)
@@ -701,6 +708,10 @@ class SessionTab(QWidget):
         self.bt_files.setChecked(self._use_browser)
         self.bt_local.setChecked(
             self._use_browser and bool(settings.get("dual_pane")))
+        self.bt_sync.setChecked(
+            self.bt_local.isChecked() and bool(settings.get("sync_browse")))
+        # 同期は 2 ペインが出ているときだけ操作できる
+        self.bt_sync.setEnabled(self._use_browser and self.bt_local.isChecked())
 
         for w in (self.bt_sendpw, self.bt_snippets, self.bt_tunnel, self.bt_log):
             bar.addWidget(w)
@@ -708,6 +719,7 @@ class SessionTab(QWidget):
         bar.addWidget(self.bt_term)
         bar.addWidget(self.bt_files)
         bar.addWidget(self.bt_local)
+        bar.addWidget(self.bt_sync)
         bar.addStretch(1)
         root.addWidget(bar_w)
 
@@ -772,6 +784,12 @@ class SessionTab(QWidget):
             # 実際の転送・確認ダイアログはすべてリモート側 (#82) が持つ。
             self.local.upload_requested.connect(self.browser.upload_paths)
             self.local.download_requested.connect(self.browser.download_to)
+            # 同期ブラウズ(#82 第 2 段)。どちらのペインにも手を入れず、
+            # path_changed を聞いて相手の cd を呼ぶ調停役として外に置く。
+            self.sync_browse = SyncBrowse(self.local, self.browser, parent=self)
+            self.sync_browse.failed.connect(lambda msg: self._flash(msg, warn=True))
+            self.sync_browse.set_enabled(self.bt_sync.isChecked())
+        self.bt_sync.toggled.connect(self._on_sync_browse_toggled)
         self._apply_visibility()
         if self._use_terminal:
             self.terminal.password_prompt.connect(self._on_password_prompt)
@@ -857,7 +875,8 @@ class SessionTab(QWidget):
 
     def _refresh_toolbar_icons(self) -> None:
         for b in (self.bt_sendpw, self.bt_snippets, self.bt_tunnel,
-                  self.bt_log, self.bt_term, self.bt_files, self.bt_local):
+                  self.bt_log, self.bt_term, self.bt_files, self.bt_local,
+                  self.bt_sync):
             self._refresh_button_icon(b)
 
     def _toolbar_separator(self) -> QWidget:
@@ -1041,7 +1060,30 @@ class SessionTab(QWidget):
             self.settings.set("dual_pane", bool(on))
         except Exception:
             logger.debug("dual_pane の保存に失敗 (無視)", exc_info=True)
+        # ローカル側が消えている間の同期は意味がないので一緒に畳む
+        # (設定は消さないので、2 ペインへ戻すと元の状態で復帰する)
+        if not on and self.bt_sync.isChecked():
+            self.bt_sync.blockSignals(True)
+            self.bt_sync.setChecked(False)
+            self.bt_sync.blockSignals(False)
+            self._refresh_button_icon(self.bt_sync)
+            if self.sync_browse is not None:
+                self.sync_browse.set_enabled(False)
+        elif on and self.settings.get("sync_browse") and not self.bt_sync.isChecked():
+            self.bt_sync.setChecked(True)
+        self.bt_sync.setEnabled(self._use_browser and on)
         self._apply_visibility()
+
+    def _on_sync_browse_toggled(self, on: bool):
+        """同期ブラウズ切替(#82 第 2 段)。"""
+        try:
+            self.settings.set("sync_browse", bool(on))
+        except Exception:
+            logger.debug("sync_browse の保存に失敗 (無視)", exc_info=True)
+        if self.sync_browse is not None:
+            self.sync_browse.set_enabled(on)
+        if on:
+            self._flash("同期ブラウズ ON: 片方を移動するともう片方も追随します")
 
     def _apply_visibility(self):
         if not self.bt_term.isChecked() and not self.bt_files.isChecked():

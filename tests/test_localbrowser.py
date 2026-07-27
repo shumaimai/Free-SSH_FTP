@@ -6,7 +6,7 @@
 import os
 
 import pytest
-from PySide6.QtCore import QMimeData, QUrl
+from PySide6.QtCore import QMimeData, QObject, QUrl, Signal
 from PySide6.QtWidgets import QToolButton, QWidget
 
 from hashi import localbrowser
@@ -232,12 +232,22 @@ def tab(qapp):
 
     host = QWidget()
 
+    class _SyncBrowse:
+        """SyncBrowse の代役。set_enabled の呼ばれ方だけ見る。"""
+
+        def __init__(self):
+            self.enabled = None
+
+        def set_enabled(self, on):
+            self.enabled = on
+
     class T:
         def __init__(self):
-            self.settings = _Settings({"dual_pane": False})
+            self.settings = _Settings({"dual_pane": False, "sync_browse": False})
             self.terminal = object()
             self.browser = object()
             self._host = host                       # GC 防止
+            self._use_browser = True
             self._term_pane = QWidget(host)
             self._local_pane = QWidget(host)
             self._browser_pane = QWidget(host)
@@ -247,16 +257,26 @@ def tab(qapp):
             self.bt_term = QToolButton(host)
             self.bt_files = QToolButton(host)
             self.bt_local = QToolButton(host)
-            for b in (self.bt_term, self.bt_files, self.bt_local):
+            self.bt_sync = QToolButton(host)
+            for b in (self.bt_term, self.bt_files, self.bt_local, self.bt_sync):
                 b.setCheckable(True)
             self.bt_term.setChecked(True)
             self.bt_files.setChecked(True)
+            self.sync_browse = _SyncBrowse()
+            self.flashes = []
 
         def sender(self):
             return None
 
+        def _refresh_button_icon(self, _b):
+            pass
+
+        def _flash(self, text, warn=False):
+            self.flashes.append((text, warn))
+
         _apply_visibility = SessionTab._apply_visibility
         _on_dual_pane_toggled = SessionTab._on_dual_pane_toggled
+        _on_sync_browse_toggled = SessionTab._on_sync_browse_toggled
 
     return T()
 
@@ -291,3 +311,178 @@ def test_dual_pane_toggle_is_remembered(tab):
     assert tab.settings.get("dual_pane") is True
     tab._on_dual_pane_toggled(False)
     assert tab.settings.get("dual_pane") is False
+
+
+def test_sync_toggle_follows_dual_pane(tab):
+    """2 ペインを畳んだら同期も畳む(ローカルが無い間の同期は無意味)。"""
+    tab.bt_local.setChecked(True)
+    tab._on_dual_pane_toggled(True)
+    tab.bt_sync.setChecked(True)
+    tab._on_sync_browse_toggled(True)
+    assert tab.settings.get("sync_browse") is True
+    assert tab.sync_browse.enabled is True
+
+    tab.bt_local.setChecked(False)
+    tab._on_dual_pane_toggled(False)
+    assert not tab.bt_sync.isChecked()
+    assert not tab.bt_sync.isEnabled()
+    assert tab.sync_browse.enabled is False
+    # 設定は消さないので 2 ペインへ戻せば復帰する
+    assert tab.settings.get("sync_browse") is True
+
+    tab.bt_local.setChecked(True)
+    tab._on_dual_pane_toggled(True)
+    assert tab.bt_sync.isChecked()
+    assert tab.bt_sync.isEnabled()
+
+
+# ---- 同期ブラウズの相対移動 (Issue #82 第 2 段) --------------------------------
+def test_path_components_splits_root_and_parts():
+    import posixpath
+
+    assert localbrowser.path_components("/srv/app/logs", posixpath) == (
+        "/", ["srv", "app", "logs"])
+    assert localbrowser.path_components("/", posixpath) == ("/", [])
+
+
+def test_mirror_move_down_and_up():
+    """1 段下る / 上がる移動がそのまま相手側へ写る。"""
+    import posixpath
+
+    # ローカルが logs へ入る → リモートも logs へ
+    assert localbrowser.mirror_move(
+        "/home/me/proj", "/home/me/proj/logs", "/srv/app",
+        posixpath, posixpath) == "/srv/app/logs"
+    # ローカルが 1 つ上がる → リモートも 1 つ上がる
+    assert localbrowser.mirror_move(
+        "/home/me/proj", "/home/me", "/srv/app/logs",
+        posixpath, posixpath) == "/srv/app"
+
+
+def test_mirror_move_handles_sideways_jump():
+    """兄弟フォルダへの移動は「1 つ上がって別名へ降りる」として写る。"""
+    import posixpath
+
+    assert localbrowser.mirror_move(
+        "/home/me/a", "/home/me/b", "/srv/app/a",
+        posixpath, posixpath) == "/srv/app/b"
+
+
+def test_mirror_move_multi_level():
+    """複数段の移動もまとめて写る。"""
+    import posixpath
+
+    assert localbrowser.mirror_move(
+        "/home/me/proj", "/home/me/proj/x/y", "/srv/app",
+        posixpath, posixpath) == "/srv/app/x/y"
+
+
+def test_mirror_move_gives_up_past_root():
+    """相手がルートを突き抜ける移動は追随しない(None を返す)。"""
+    import posixpath
+
+    assert localbrowser.mirror_move(
+        "/a/b/c", "/", "/srv", posixpath, posixpath) is None
+
+
+def test_mirror_move_gives_up_across_drives():
+    """ドライブ(ルート)が変わる移動は相対移動として解釈しない。"""
+    import ntpath
+
+    assert localbrowser.mirror_move(
+        r"C:\Users\me", r"D:\data", r"C:\other", ntpath, ntpath) is None
+
+
+# ---- SyncBrowse の調停 ------------------------------------------------------
+class _FakeRemote(QObject):
+    """SftpBrowser のうち SyncBrowse が触る部分だけのフェイク。"""
+
+    path_changed = Signal(str)
+    sync_failed = Signal(str)
+
+    def __init__(self, cwd="/srv/app"):
+        super().__init__()
+        self.cwd = cwd
+        self.sync_calls = []
+
+    def cd_sync(self, path):
+        self.sync_calls.append(path)
+
+
+@pytest.fixture()
+def synced(qapp, tmp_path):
+    """ローカル実体つきの SyncBrowse。tmp/base と tmp/base/logs を用意する。"""
+    from hashi.localbrowser import SyncBrowse
+
+    base = tmp_path / "base"
+    (base / "logs").mkdir(parents=True)
+    local = LocalBrowser(start_dir=str(base))
+    remote = _FakeRemote()
+    sync = SyncBrowse(local, remote)
+    sync.set_enabled(True)
+    yield sync, local, remote, base
+    local.deleteLater()
+
+
+def test_local_move_drives_remote(synced):
+    sync, local, remote, base = synced
+    local.cd(str(base / "logs"))
+    assert remote.sync_calls == ["/srv/app/logs"]
+
+
+def test_disabled_sync_does_not_move_remote(synced):
+    sync, local, remote, base = synced
+    sync.set_enabled(False)
+    local.cd(str(base / "logs"))
+    assert remote.sync_calls == []
+
+
+def test_remote_move_drives_local(synced):
+    sync, local, remote, base = synced
+    remote.cwd = "/srv/app/logs"
+    remote.path_changed.emit("/srv/app/logs")
+    assert local.cwd == os.path.abspath(str(base / "logs"))
+
+
+def test_no_feedback_loop(synced):
+    """写した移動が跳ね返って無限に往復しないこと。"""
+    sync, local, remote, base = synced
+    local.cd(str(base / "logs"))
+    assert remote.sync_calls == ["/srv/app/logs"]
+    # リモートが実際に移動を完了した通知が返ってくる
+    remote.cwd = "/srv/app/logs"
+    remote.path_changed.emit("/srv/app/logs")
+    # ここで再びローカルを動かそうとしない(ローカルは既にそこに居る)
+    assert remote.sync_calls == ["/srv/app/logs"]
+    assert local.cwd == os.path.abspath(str(base / "logs"))
+
+
+def test_remote_failure_clears_the_skip_flag(synced):
+    """追随に失敗したら待ち状態を残さない(次の移動を取りこぼさない)。"""
+    sync, local, remote, base = synced
+    problems = []
+    sync.failed.connect(problems.append)
+
+    local.cd(str(base / "logs"))            # リモートへ追随を依頼
+    remote.sync_failed.emit("No such file")  # が、行き先が無かった
+    assert problems and "移動できません" in problems[0]
+
+    # 次にリモートが自力で動いたとき、ちゃんとローカルが追随する
+    remote.cwd = "/srv/app/logs"
+    remote.path_changed.emit("/srv/app/logs/deeper")
+    # base/logs から見て deeper は無いので追随できない旨が出る(黙って無視しない)
+    assert len(problems) == 2
+
+
+def test_local_target_missing_reports_instead_of_moving(synced):
+    """ローカルに対応フォルダが無ければ、黙らずに知らせて動かない。"""
+    sync, local, remote, base = synced
+    problems = []
+    sync.failed.connect(problems.append)
+    before = local.cwd
+
+    remote.cwd = "/srv/app/nope"
+    remote.path_changed.emit("/srv/app/nope")
+
+    assert local.cwd == before
+    assert problems and "ローカル側" in problems[0]
