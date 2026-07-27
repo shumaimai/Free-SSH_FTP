@@ -107,14 +107,32 @@ def scan_dir(path: str) -> list[dict]:
     return entries
 
 
+def _is_reparse_point(path: str) -> bool:
+    """Windows の reparse point(シンボリックリンク / ジャンクション)か。
+
+    os.path.isjunction() は Python 3.12 以降にしかないので、st_file_attributes
+    を直接見る。他 OS では st_file_attributes が無く自然に False になる。
+    """
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    flag = getattr(statmod, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    return bool(getattr(st, "st_file_attributes", 0) & flag)
+
+
 def delete_local_path(path: str) -> None:
     """ローカルの 1 項目を削除する。
 
-    🔴 **シンボリックリンクは中身を辿らない。** `os.path.isdir()` はリンク先が
-    ディレクトリなら True になるため、先に islink を見ないと `shutil.rmtree` が
-    **リンク先の実体を消してしまう**。
+    🔴 **シンボリックリンク/ジャンクションは中身を辿らない。** `os.path.isdir()`
+    はリンク先がディレクトリなら True になるため、先に reparse point を
+    見ないと `shutil.rmtree` が **リンク先の実体を消してしまう**。
     """
-    if os.path.islink(path) or os.path.isfile(path):
+    if (
+        os.path.islink(path)
+        or _is_reparse_point(path)
+        or os.path.isfile(path)
+    ):
         os.unlink(path)
     elif os.path.isdir(path):
         shutil.rmtree(path)
