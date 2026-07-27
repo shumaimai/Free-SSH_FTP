@@ -110,11 +110,15 @@ def scan_dir(path: str) -> list[dict]:
 def delete_local_path(path: str) -> None:
     """ローカルの 1 項目を削除する。
 
-    🔴 **シンボリックリンクは中身を辿らない。** `os.path.isdir()` はリンク先が
-    ディレクトリなら True になるため、先に islink を見ないと `shutil.rmtree` が
-    **リンク先の実体を消してしまう**。
+    🔴 **シンボリックリンク/ジャンクションは中身を辿らない。** `os.path.isdir()`
+    はリンク先がディレクトリなら True になるため、先に islink/isjunction を
+    見ないと `shutil.rmtree` が **リンク先の実体を消してしまう**。
     """
-    if os.path.islink(path) or os.path.isfile(path):
+    if (
+        os.path.islink(path)
+        or (hasattr(os.path, "isjunction") and os.path.isjunction(path))
+        or os.path.isfile(path)
+    ):
         os.unlink(path)
     elif os.path.isdir(path):
         shutil.rmtree(path)
