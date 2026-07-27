@@ -82,6 +82,35 @@ def test_delete_local_path_removes_file_and_tree(tmp_path):
     assert not d.exists()
 
 
+def test_delete_local_path_unlinks_windows_junction(tmp_path, monkeypatch):
+    """🔴 Windows のディレクトリジャンクションは rmtree に渡さない。
+
+    実際のジャンクションは Linux CI では作れないので、reparse point 判定だけ
+    差し替えて「どちらの削除経路が選ばれたか」を固定する。
+    """
+    target = tmp_path / "real"
+    target.mkdir()
+    (target / "keep.txt").write_text("大事なファイル", encoding="utf-8")
+    junction = tmp_path / "junction"
+    junction.mkdir()
+
+    monkeypatch.setattr(
+        localbrowser, "_is_reparse_point",
+        lambda p: str(p) == str(junction))
+    calls = []
+    monkeypatch.setattr(
+        localbrowser.shutil, "rmtree",
+        lambda *a, **k: calls.append("rmtree"))
+    monkeypatch.setattr(
+        localbrowser.os, "unlink",
+        lambda p: calls.append(("unlink", str(p))))
+
+    localbrowser.delete_local_path(str(junction))
+
+    assert calls == [("unlink", str(junction))]   # rmtree は呼ばれない
+    assert (target / "keep.txt").exists()
+
+
 # ---- ウィジェット ---------------------------------------------------------
 def _names(browser) -> set[str]:
     tree = browser.tree
