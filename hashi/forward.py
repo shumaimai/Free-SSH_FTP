@@ -78,11 +78,12 @@ def _pump_stream(sock: socket.socket, chan):
             return b""
 
     while True:
-        # 読み取りは real socket を select で待つ。paramiko チャネルの fileno() は
-        # 内部パイプの読み取り端で、Windows では select に入れるとエラーになる。
-        # チャネルの受信可否は recv_ready()、送信可否は send_ready() で判定して
-        # 直接 recv/send する。
-        rlist = [sock]
+        # 読み取りは両方 select で待てる。書き込みは real socket だけ select の
+        # 書き込みリストに入れられる。paramiko チャネルの fileno() は内部パイプの
+        # 読み取り端なので select の書き込みリストでは「書ける」と報告されず、
+        # ここに入れると返り(sock→chan)経路が永久に流れない。チャネルの送信可否は
+        # send_ready() だけで判断し、直接 send する。
+        rlist = [sock, chan]
         wlist = []
         if to_sock and _send_ready(sock):
             wlist.append(sock)
@@ -116,22 +117,19 @@ def _pump_stream(sock: socket.socket, chan):
             else:
                 to_chan += data
 
-        try:
-            chan_ready = getattr(chan, "recv_ready", lambda: True)()
-        except OSError:
-            chan_ready = False
-        if chan_ready:
-            data = _recv(chan, 16384)
-            if data is None:
-                pass
-            elif data == b"":
+        if chan in r:
+            if getattr(chan, "recv_ready", lambda: True)():
+                data = _recv(chan, 16384)
+                if data is None:
+                    pass
+                elif data == b"":
+                    if not to_sock:
+                        break
+                else:
+                    to_sock += data
+            if getattr(chan, "closed", False) or getattr(chan, "eof_received", False):
                 if not to_sock:
                     break
-            else:
-                to_sock += data
-        if getattr(chan, "closed", False) or getattr(chan, "eof_received", False):
-            if not to_sock:
-                break
 
 
 def _recv_exact(sock: socket.socket, n: int) -> bytes:
