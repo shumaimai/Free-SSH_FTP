@@ -165,8 +165,8 @@ def test_local_drag_carries_file_urls(browser, tree_dir):
     item = _select(browser, "notes.txt")
     md = browser.tree.mimeData([item])
     assert md.hasUrls()
-    assert [u.toLocalFile() for u in md.urls()] == [
-        os.path.join(str(tree_dir), "notes.txt")
+    assert [os.path.normpath(u.toLocalFile()) for u in md.urls()] == [
+        os.path.normpath(os.path.join(str(tree_dir), "notes.txt"))
     ]
 
 
