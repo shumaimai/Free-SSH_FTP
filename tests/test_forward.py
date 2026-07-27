@@ -291,8 +291,7 @@ class _PipeChannel:
         pass
 
     def recv_ready(self):
-        r, _, _ = select.select([self._r], [], [], 0)
-        return bool(r)
+        return len(self._inbox) > 0
 
     def recv(self, n):
         try:
