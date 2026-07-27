@@ -359,6 +359,79 @@ def test_local_download_request_reaches_remote_browser(qapp, tmp_path):
     _cleanup(qapp, tab)
 
 
+def test_sync_browse_is_wired_and_gated_on_dual_pane(qapp):
+    """同期ブラウズ(#82 第 2 段)の配線と、2 ペインへの従属を確認する。"""
+    tab = _make_tab(qapp, "sftp")
+    # 調停役が実際に両ペインへつながっている
+    assert tab.sync_browse is not None
+    assert tab.sync_browse._local is tab.local
+    assert tab.sync_browse._remote is tab.browser
+    # 既定は 2 ペイン OFF なので、同期は押せない
+    assert not tab.bt_local.isChecked()
+    assert not tab.bt_sync.isEnabled()
+    assert tab.sync_browse.enabled is False
+
+    tab.bt_local.setChecked(True)
+    assert tab.bt_sync.isEnabled()
+    tab.bt_sync.setChecked(True)
+    assert tab.sync_browse.enabled is True
+    assert tab.settings.get("sync_browse") is True
+
+    # 2 ペインを畳むと同期も畳まれる
+    tab.bt_local.setChecked(False)
+    assert not tab.bt_sync.isChecked()
+    assert tab.sync_browse.enabled is False
+    _cleanup(qapp, tab)
+
+
+def test_local_move_enqueues_sync_list_on_remote(qapp, tmp_path):
+    """同期 ON でローカルを移動すると、リモートへ list_sync が積まれる。
+
+    通常の list ではなく list_sync を使うのは、追随先が無いのは普通に起こる
+    ことで、そのたびにエラーダイアログを出さないため。
+    """
+    tab = _make_tab(qapp, "sftp")
+    (tmp_path / "base" / "logs").mkdir(parents=True)
+    tab.local.cd(str(tmp_path / "base"))
+    tab.browser.cwd = "/srv/app"
+    tab.sync_browse.set_enabled(True)
+    jobs = []
+    tab.browser.nav.enqueue = jobs.append   # ワーカーへ流さず横取りする
+
+    tab.local.cd(str(tmp_path / "base" / "logs"))
+
+    assert jobs == [{"kind": "list_sync", "path": "/srv/app/logs"}]
+    _cleanup(qapp, tab)
+
+
+def test_sync_list_job_reports_failure_without_error_dialog(qapp):
+    """追随先が無いとき、error(ダイアログ)ではなく sync_failed で知らせる。
+
+    左右でフォルダ構成が違うのは当たり前なので、追随の失敗でダイアログを出すと
+    同期ブラウズが使い物にならない。通常の list は従来どおり例外を上げる。
+    """
+    import pytest
+
+    from hashi.filebrowser import SftpWorker
+
+    class _Boom:
+        def normalize(self, path):
+            raise IOError("No such file")
+
+    worker = SftpWorker(None, "test")     # スレッドは起こさない
+    worker.sftp = _Boom()
+    errors, failures, listed = [], [], []
+    worker.error.connect(errors.append)
+    worker.sync_failed.connect(failures.append)
+    worker.listed.connect(lambda *a: listed.append(a))
+
+    worker._job_list_sync({"path": "/no/such/dir"})
+    assert failures and not errors and not listed
+
+    with pytest.raises(IOError):          # 通常の list は握り潰さない
+        worker._job_list({"path": "/no/such/dir"})
+
+
 def test_download_to_without_selection_does_nothing(qapp, tmp_path):
     """選択が無ければ何も投入しない(ドロップ先だけ決まった状態での事故防止)。"""
     tab = _make_tab(qapp, "sftp")
