@@ -267,12 +267,17 @@ class _PipeChannel:
     「データ到着で読み取り可能」にはなるが「書き込みリストで select しても
     書き込み可能にはならない」。FakeChannel は実ソケットを使うためこの差が
     出ず、_pump_stream が chan を select の書き込みリストに入れていたバグを
-    見逃していた。このフェイクは fileno にパイプ読み取り端を使うことで、
+    見逃していた。このフェイクは fileno に読み取りソケットを使うことで、
     返り(sock→chan)経路が send_ready() 経由で正しく流れることを検証する。
+
+    Windows では os.pipe() の fd を select できないため、paramiko と同じく
+    socket.socketpair() を使う。
     """
 
     def __init__(self):
-        self._r, self._w = os.pipe()
+        self._rs, self._ws = socket.socketpair()
+        self._rs.setblocking(False)
+        self._ws.setblocking(False)
         self._inbox = bytearray()   # recv() で返すデータ
         self.outbox = bytearray()   # send() されたデータ(検証用)
         self.closed = False
@@ -282,22 +287,28 @@ class _PipeChannel:
     def feed(self, data: bytes):
         with self._lock:
             self._inbox += data
-        os.write(self._w, b"\x00")  # 読み取り可能シグナル
+        try:
+            self._ws.send(b"\x00")  # 読み取り可能シグナル
+        except (BlockingIOError, InterruptedError):
+            pass
 
     def fileno(self):
-        return self._r
+        return self._rs.fileno()
 
     def setblocking(self, flag):
-        pass
+        self._rs.setblocking(flag)
+        self._ws.setblocking(flag)
 
     def recv_ready(self):
-        r, _, _ = select.select([self._r], [], [], 0)
+        if self.closed or self._rs.fileno() == -1:
+            return False
+        r, _, _ = select.select([self._rs], [], [], 0)
         return bool(r)
 
     def recv(self, n):
         try:
-            os.read(self._r, 1)  # シグナルを1つ消費
-        except OSError:
+            self._rs.recv(1)  # シグナルを1つ消費
+        except (BlockingIOError, InterruptedError, OSError):
             pass
         with self._lock:
             data = bytes(self._inbox[:n])
@@ -313,9 +324,9 @@ class _PipeChannel:
 
     def close(self):
         self.closed = True
-        for fd in (self._r, self._w):
+        for s in (self._rs, self._ws):
             try:
-                os.close(fd)
+                s.close()
             except OSError:
                 pass
 
