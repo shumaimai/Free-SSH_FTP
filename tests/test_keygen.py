@@ -1,3 +1,5 @@
+import os
+
 import paramiko
 
 from hashi.keygen import (
@@ -17,7 +19,8 @@ def test_generate_ed25519_with_passphrase(tmp_path):
     assert isinstance(generated.pkey, paramiko.Ed25519Key)
     assert generated.public_line.startswith("ssh-ed25519 ")
     assert generated.public_line.endswith(" テスト")
-    assert path.stat().st_mode & 0o777 == 0o600
+    if os.name != "nt":
+        assert path.stat().st_mode & 0o777 == 0o600
     loaded = paramiko.Ed25519Key.from_private_key_file(str(path), password="秘密")
     assert loaded.get_base64() == generated.pkey.get_base64()
 
