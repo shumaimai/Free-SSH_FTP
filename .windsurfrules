@@ -55,6 +55,13 @@
 - **`forward._pump_stream` では paramiko チャネルを `select` の書き込みリストに入れないこと**。
   チャネルの `fileno()` は内部パイプの読み取り端で「書き込み可能」と報告されず、-R/-D の
   返り経路が永久に止まる。送信可否は `chan.send_ready()` で判定して直接 `send` すること。
+- **逆に、チャネルを `select` の「読み取り」リストからは外さないこと。** Windows でも
+  本物のチャネルは select 可能（paramiko が `WindowsPipe` をループバックのソケット対で
+  実装しているため）。外すとアイドル時の select タイムアウト（1 秒）まで `chan→sock` が
+  遅れる（実測 0.000 秒 → 0.701 秒）。
+- **閉じた相手に対する `select` は `OSError` と `ValueError` の両方を捕まえること。**
+  パイプの fd は close 後も古い整数のままなので `OSError`(EBADF)だが、ソケットは
+  `fileno()` が -1 になり `ValueError` になる。Windows は後者の経路に入る。
 - **SFTP 転送は全体をメモリへプリフェッチせず、チャンク単位でストリーミングすること**。
   `SFTPClient.get/put` の既定は全体プリフェッチで、大容量ではメモリが肥大しキャンセルも
   効かなくなる。チャンクごとにキャンセル判定・進捗通知する既存設計（`_download_file`/
@@ -157,9 +164,12 @@
   `download_requested(dest)` を投げるだけにし、実際の転送・上書き確認・キュー登録・
   権限無視はリモート側（`SftpBrowser.upload_paths` / `download_to`）に任せる
   （ロジックを二重に持たない）。
-- **ローカル削除でシンボリックリンクを辿らないこと。** `os.path.isdir()` はリンク先が
-  ディレクトリなら True を返すため、islink を先に見ないと `shutil.rmtree` がリンク先の
-  実体を消す。`delete_local_path` の判定順（islink → isfile → isdir）を崩さないこと。
+- **ローカル削除でシンボリックリンク / ジャンクションを辿らないこと。** `os.path.isdir()` は
+  リンク先がディレクトリなら True を返すため、先に見ないと `shutil.rmtree` がリンク先の
+  実体を消す。`delete_local_path` の判定順（islink → `_is_reparse_point` → isfile → isdir）を
+  崩さないこと。**`os.path.islink()` は Windows のジャンクションに False を返す**ので
+  islink だけでは足りない。`os.path.isjunction()` は Python 3.12 以降にしか無く本プロジェクトは
+  3.10+ 対象なので、`os.lstat().st_file_attributes` を直接見る `_is_reparse_point()` を使うこと。
 - ローカル削除もゴミ箱を経由しないため、リモートと同じ **2 段階確認**（`DoubleCheckDialog`）を
   必須とすること。
 - **ペイン間 D&D でリモート由来のデータを解釈しないこと。** リモート → ローカルのドラッグに

@@ -503,3 +503,45 @@ def test_pump_stream_returns_quietly_when_already_closed():
             pass
 
     _pump_stream(a, _Chan())     # 例外を投げず静かに戻ること
+
+
+def test_pump_stream_survives_closed_socket_fileno():
+    """fileno() が -1 を返すチャネルでもポンプが未処理例外で死なない。
+
+    回帰: select の例外を OSError しか捕まえていなかった。**閉じ方で例外の種類が
+    変わる** —— パイプの fd は close 後も古い整数のままなので select は
+    OSError(EBADF)を投げるが、**ソケットは fileno() が -1 になるので
+    ValueError** になる。
+
+    本番の Windows では paramiko が WindowsPipe(ループバックのソケット対)を
+    使うため、停止処理と競合してチャネルが閉じるとこちらの経路に入り、
+    ポンプスレッドが未処理例外で落ちていた。
+
+    タイミング依存にならないよう、最初から fileno() が -1 のチャネルを渡して
+    1 回目の select で確実にこの経路を通す。
+    """
+    from hashi.forward import _pump_stream
+
+    class _ClosedFdChannel:
+        """close 済みソケットを持つチャネル相当(fileno が -1)。"""
+
+        closed = False          # 早期 break の経路を塞いで select まで到達させる
+
+        def setblocking(self, flag):
+            pass
+
+        def fileno(self):
+            return -1
+
+        def send_ready(self):
+            return False
+
+        def recv_ready(self):
+            return False
+
+    a, b = socket.socketpair()
+    try:
+        _pump_stream(a, _ClosedFdChannel())   # 例外を投げず静かに戻ること
+    finally:
+        a.close()
+        b.close()
