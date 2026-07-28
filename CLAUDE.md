@@ -7,8 +7,8 @@
 
 ## 0. 現在の状況(引き継ぎ・最初に読む)
 
-- **最新リリース: v0.8.0**(2026-07-25)。`main` = `e4c6a41` 時点でオープン PR は 0 件。
-- テストは **429 passed, 2 skipped**(`QT_QPA_PLATFORM=offscreen pytest`)。
+- **最新リリース: v0.8.0**(2026-07-25)。`main` = `97884ac` 時点でオープン PR は 0 件。
+- テストは **431 passed, 2 skipped**(`QT_QPA_PLATFORM=offscreen pytest`)。
   `ruff check .` / `compileall` も緑。この状態を壊さないこと。
 - 直近の大きな動き(v0.8.0 前後):
   - **ブラウザ風タブ UI へ移行**(#115)。「1 接続 = 1 ウィンドウ」を廃止 → タブ方式。
@@ -208,6 +208,14 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
    ならない**ので、返り経路は `chan.send_ready()` で判定して直接 `send` する。
    また**ポンプ開始時に fd が閉じていると `setblocking()` が OSError を投げる**ため
    (停止処理との競合)、そこは捕まえて静かに戻す。
+   🔴 **閉じた相手に対する select の例外は「閉じ方」で種類が変わる**(#129 の実機検証で発覚)。
+   パイプの fd は close 後も古い整数のままなので `OSError`(EBADF)だが、**ソケットは
+   `fileno()` が -1 になるので `ValueError`**。**本番の Windows では paramiko が
+   `WindowsPipe`(ループバックのソケット対)を使う**ので、`except (OSError, ValueError)`
+   の両方を捕まえないとポンプスレッドが未処理例外で落ちる。
+   ついでに: **Windows でも本物のチャネルは select 可能**(paramiko が上記のとおり
+   ソケットで実装しているため)。「Windows だから chan を select から外す」は誤りで、
+   実際にやると `chan→sock` が最大 1 秒遅れる(実測 0.000 秒 → 0.701 秒)。
 10. 🔴 **信頼できない文字列は `style.plain_label()` で出す**(#113 の安全化)。
     QLabel の既定 `textFormat` は AutoText で、`<b>` や `<img src=…>` を含む文字列を
     **HTML として解釈**する。**リモートのファイル名・サーバーのエラー文・ホスト鍵の指紋・
@@ -234,9 +242,14 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
     取り決め。GUI 側(`ConnectWorker.get_secret`)はこの目印で、**接続先の保存済み
     パスワードを踏み台へ流用しない / 踏み台の秘密を保存もしない**。
 19. **インポート時、既存の known_hosts は上書きしない**(TOFU の骨抜き防止)。
-20. 🔴 **ローカル削除はシンボリックリンクを辿らない**(#82)。`os.path.isdir()` はリンク先が
-    ディレクトリなら True を返すため、islink を先に見ないと `shutil.rmtree` が**リンク先の
-    実体を消す**。`localbrowser.delete_local_path` の順序(islink → isfile → isdir)を崩さない。
+20. 🔴 **ローカル削除はシンボリックリンク / ジャンクションを辿らない**(#82、#129 で強化)。
+    `os.path.isdir()` はリンク先がディレクトリなら True を返すため、先に見ないと
+    `shutil.rmtree` が**リンク先の実体を消す**。`localbrowser.delete_local_path` の順序
+    (islink → `_is_reparse_point` → isfile → isdir)を崩さない。
+    **`os.path.islink()` は Windows のジャンクションに False を返す**ので islink だけでは
+    足りない。`os.path.isjunction()` は **Python 3.12 以降にしか無い**(本プロジェクトは
+    3.10+ 対象)ため、`os.lstat().st_file_attributes` の `FILE_ATTRIBUTE_REPARSE_POINT` を
+    直接見る `_is_reparse_point()` を使う(他 OS では自然に False)。
 21. **デュアルペイン(#82)は「依頼」と「実行」を分ける**。ローカル側は
     `upload_requested(paths)` / `download_requested(dest)` を投げるだけで、転送・上書き確認・
     キュー登録・権限無視はすべてリモート側(`SftpBrowser.upload_paths` / `download_to`)が持つ。
@@ -266,7 +279,7 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 
 ## 7. テスト方針 / 検証済みと未検証
 
-- **pytest(ネットワーク不要)**: `tests/` 43 ファイル、429 passed / 2 skipped。
+- **pytest(ネットワーク不要)**: `tests/` 43 ファイル、431 passed / 2 skipped。
   ジャーナル・参照カウント・クラッシュ復元・認証情報の暗号化往復・Settings/Profile/TOFU・
   パスワードプロンプト検知・端末のキー変換/リサイズ/マウス/検索・エディタの往復・
   16 進編集・スタイルの一致をカバー。フェイク SSH は `tests/conftest.py`。

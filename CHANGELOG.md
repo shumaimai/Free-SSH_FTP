@@ -3,6 +3,26 @@
 このプロジェクトは [Semantic Versioning](https://semver.org/lang/ja/) に緩く従います。
 
 ## [Unreleased]
+### セキュリティ / 修正(Windows 実機検証 #129 の反映)
+- 🔴 **ローカルペインで Windows のディレクトリジャンクションを削除できなかった(#133)**。
+  `os.path.islink()` はジャンクションに False を返すため `shutil.rmtree` に渡っていた。
+  `os.lstat().st_file_attributes` の `FILE_ATTRIBUTE_REPARSE_POINT` を直接見る判定に変更
+  (`os.path.isjunction()` は Python 3.12 以降にしか無く、本プロジェクトは 3.10+ 対象のため)。
+  リンク先の実体を消さないことは回帰テストで固定した。
+- **ポートフォワードのポンプが Windows で未処理例外になり得た**。閉じた相手に対する
+  `select` の例外は**閉じ方で種類が変わり**、ソケットは `fileno()` が -1 になるため
+  `ValueError` を投げる(パイプは `OSError`)。**本番の Windows では paramiko が
+  `WindowsPipe`(ループバックのソケット対)を使う**ので、`ValueError` も捕まえるようにした。
+
+### 変更
+- テストのフェイクチャネル `_PipeChannel` を `os.pipe()` から `socket.socketpair()` へ(#130)。
+  `os.pipe()` の fd は Windows で select できず、実機でテストが落ちていた。
+  **本番の `hashi/forward.py` は変更していない**(本物のチャネルは Windows でも select 可能で、
+  select から外すと `chan→sock` が最大 1 秒遅れる回帰が出ることを実測で確認した)。
+- Windows では鍵ファイルのパーミッション検証をスキップ(#131)。`hashi/keygen.py` は
+  Windows で `os.chmod` を行わないため、テストの前提を実装に合わせた。
+- ローカルドラッグ URL の比較をパス区切りで正規化(#132)。
+
 ### 追加
 - **同期ブラウズ(Issue #82 の第 2 段)**。ツールバーの「同期ブラウズ」を ON にすると、
   片方のペインでフォルダを移動したときにもう片方も同じ移動をする(WinSCP 流)。

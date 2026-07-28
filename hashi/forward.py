@@ -46,7 +46,7 @@ def _pump_stream(sock: socket.socket, chan):
     try:
         sock.setblocking(False)
         chan.setblocking(False)
-    except OSError:
+    except (OSError, ValueError):
         logger.debug("ポンプ開始時に接続が閉じられていた (中断)", exc_info=True)
         return
     to_chan = b""
@@ -91,7 +91,12 @@ def _pump_stream(sock: socket.socket, chan):
         timeout = 0.1 if (to_chan or to_sock) else 1.0
         try:
             r, w, _ = select.select(rlist, wlist, [], timeout)
-        except OSError:
+        except (OSError, ValueError):
+            # 停止処理と競合して相手が閉じられた。閉じ方で例外の種類が変わる:
+            # パイプの fd は close 後も古い整数のままなので OSError(EBADF)、
+            # ソケットは fileno() が -1 になるので ValueError になる。
+            # **本番の Windows では paramiko が WindowsPipe(ソケット)を使う**
+            # ので、ValueError も捕まえないとポンプスレッドが未処理例外で死ぬ。
             break
 
         if sock in w and to_sock:
