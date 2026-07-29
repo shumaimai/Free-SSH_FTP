@@ -185,8 +185,16 @@ class _TerminalScreen(pyte.HistoryScreen):
             self.wrapped.add(self.cursor.y)
 
     def index(self):
+        top = self.margins.top if self.margins else 0
         bottom = self.margins.bottom if self.margins else self.lines - 1
         scrolls = self.cursor.y == bottom
+        if scrolls:
+            # 履歴へ押し出される行に「前行の継続か」と当時の幅を刻む。
+            # リサイズ時の全画面リフロー(#100 第 2 段)が履歴行を
+            # 論理行へ結合し直すために使う。
+            row = self.buffer[top]
+            row.hashi_wrapped = top in self.wrapped
+            row.hashi_cols = self.columns
         super().index()
         if scrolls and self.wrapped:
             self.wrapped = {y - 1 for y in self.wrapped if y >= 1}
@@ -217,8 +225,10 @@ class _TerminalScreen(pyte.HistoryScreen):
         columns = columns or self.columns
         old_lines, old_cols = self.lines, self.columns
         plan = None
+        above = None
         if not self.in_alt_screen and columns != old_cols:
             plan = self._extract_cursor_logical_line(old_cols)
+            above = self._extract_above_logical_lines(plan[2], old_cols)
         super().resize(lines, columns)
         if plan is None:
             self.wrapped.clear()
@@ -229,6 +239,8 @@ class _TerminalScreen(pyte.HistoryScreen):
         self.wrapped.clear()
         if start < 0:
             return
+        if above is not None:
+            self._reflow_above(above, start)
         self._relayout_cursor_line(cells, cursor_off, start, span)
 
     def _extract_cursor_logical_line(self, old_cols):
@@ -259,6 +271,82 @@ class _TerminalScreen(pyte.HistoryScreen):
             for x in range(used):
                 cells.append(row[x])
         return cells, cursor_off, start, end - start + 1
+
+    # ---- リフロー第 2 段 (Issue #100): 過去出力(履歴 + カーソルより上) ----
+    def _row_used_width(self, row, limit):
+        """行の末尾の空白を除いた使用幅を返す。"""
+        used = 0
+        for x in range(limit - 1, -1, -1):
+            ch = row[x]
+            if ch.data and ch.data != " ":
+                used = x + 1
+                break
+        return used
+
+    def _extract_above_logical_lines(self, start, old_cols):
+        """履歴 + カーソル論理行より上の画面行を論理行の列へ結合する。
+
+        戻り値はセル列のリスト(1 要素 = 1 論理行。空行は空リスト)。
+        履歴行の継続フラグと幅は index() が行へ刻んだ属性を使う。
+        """
+        rows = []
+        for row in self.history.top:
+            cols = getattr(row, "hashi_cols", None)
+            if cols is None:
+                cols = (max(row.keys()) + 1) if row else 0
+            rows.append((row, getattr(row, "hashi_wrapped", False), cols))
+        for y in range(start):
+            rows.append((self.buffer[y], y in self.wrapped, old_cols))
+        logical = []
+        for i, (row, cont, cols) in enumerate(rows):
+            # 次の行が継続ならこの行は幅いっぱい使っている
+            if i + 1 < len(rows) and rows[i + 1][1]:
+                used = cols
+            else:
+                used = self._row_used_width(row, cols)
+            cells = [row[x] for x in range(used)]
+            if cont and logical:
+                logical[-1].extend(cells)
+            else:
+                logical.append(cells)
+        return logical
+
+    def _reflow_above(self, logical, start):
+        """論理行を新しい幅で再折返しし、カーソル行より上と履歴を置き換える。
+
+        カーソル行の開始位置(start)は動かさない(PTY 側のカーソル把握と
+        のずれを避ける)。画面に収まらない分は履歴へ、足りない分は上を
+        空行にする。
+        """
+        new_cols = self.columns
+        chunks = []   # (セル列, 継続フラグ)
+        for cells in logical:
+            if not cells:
+                chunks.append(([], False))
+                continue
+            for off in range(0, len(cells), new_cols):
+                chunks.append((cells[off:off + new_cols], off > 0))
+        n_screen = min(start, len(chunks))
+        screen_chunks = chunks[len(chunks) - n_screen:]
+        history_chunks = chunks[:len(chunks) - n_screen]
+        self.history.top.clear()
+        for cells, cont in history_chunks:
+            row = self.buffer.default_factory()
+            for x, cell in enumerate(cells):
+                row[x] = cell
+            row.hashi_wrapped = cont
+            row.hashi_cols = new_cols
+            self.history.top.append(row)
+        for y in range(start):
+            self.buffer.pop(y, None)
+        base = start - n_screen
+        for i, (cells, cont) in enumerate(screen_chunks):
+            y = base + i
+            for x, cell in enumerate(cells):
+                self.buffer[y][x] = cell
+            if cont:
+                self.wrapped.add(y)
+        self.dirty.update(range(self.lines))
 
     def _relayout_cursor_line(self, cells, cursor_off, start, old_span):
         new_cols = self.columns

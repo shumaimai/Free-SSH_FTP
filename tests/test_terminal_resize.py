@@ -209,6 +209,66 @@ def test_reflow_shrink_rewraps_cursor_line(term):
     assert term.screen.wrapped == {1, 2}
 
 
+def _row_text(row, width):
+    return "".join(row[x].data or " " for x in range(width)).rstrip()
+
+
+def test_reflow_rewraps_past_output_above_cursor(term):
+    """カーソルより上の過去出力も新しい幅で再折返しされる(#100 第 2 段)。"""
+    term._pending_grid = (40, 30)
+    term._apply_pending_grid()
+    term._on_data(b"A" * 100)      # 40+40+20 → 行 0-2
+    term._on_data(b"\r\n$ ")       # プロンプトは行 3
+    assert term.screen.cursor.y == 3
+
+    term._pending_grid = (120, 30)
+    term._apply_pending_grid()
+    # 100 文字の過去行が 1 行へ戻り、プロンプト行の直上に来る
+    assert term.screen.display[2].startswith("A" * 100)
+    assert term.screen.display[3].startswith("$ ")
+    assert term.screen.cursor.y == 3
+
+
+def test_reflow_shrink_pushes_past_output_to_history(term):
+    """縮小時、収まらない過去出力は履歴へ押し出される(#100 第 2 段)。"""
+    term._pending_grid = (100, 10)
+    term._apply_pending_grid()
+    term._on_data(b"B" * 90)
+    term._on_data(b"\r\n$ ")
+    assert term.screen.cursor.y == 1
+
+    term._pending_grid = (40, 10)
+    term._apply_pending_grid()
+    # 90 文字の過去行は 40 幅で 3 行(40+40+10)。上 2 行は履歴へ
+    hist = list(term.screen.history.top)
+    assert [_row_text(r, 40) for r in hist[-2:]] == ["B" * 40, "B" * 40]
+    assert term.screen.display[0].startswith("B" * 10)
+    assert term.screen.display[1].startswith("$ ")
+
+    # 拡大すると履歴から画面へ戻り、1 行へ結合される
+    term._pending_grid = (100, 10)
+    term._apply_pending_grid()
+    assert term.screen.display[0].startswith("B" * 90)
+    assert not term.screen.history.top
+    assert term.screen.display[1].startswith("$ ")
+
+
+def test_reflow_rejoins_lines_scrolled_into_history(term):
+    """画面から履歴へ流れた折返し行も、拡大時に 1 論理行へ戻る(#100 第 2 段)。"""
+    term._pending_grid = (40, 5)
+    term._apply_pending_grid()
+    term._on_data(b"C" * 100)                 # 40+40+20 → 行 0-2
+    term._on_data(b"\r\n1\r\n2\r\n3\r\n$ ")   # スクロールで上へ押し出す
+    assert term.screen.history.top            # 履歴に折返し行が入った
+
+    term._pending_grid = (120, 5)
+    term._apply_pending_grid()
+    rows = [_row_text(r, 120) for r in term.screen.history.top]
+    rows += [term.screen.display[y].rstrip() for y in range(5)]
+    assert "C" * 100 in rows                  # 1 行へ結合されている
+    assert not any(r == "C" * 40 for r in rows)
+
+
 def test_reflow_skips_alt_screen(term):
     """代替画面(vim 等)ではリフローしない(#100)。"""
     term._pending_grid = (60, 30)
