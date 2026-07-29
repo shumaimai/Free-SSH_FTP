@@ -112,6 +112,38 @@ def write_private_key(
         os.chmod(destination, 0o600)
 
 
+def location_warning(
+    path: str | os.PathLike[str],
+    *,
+    is_windows: bool | None = None,
+    home: str | os.PathLike[str] | None = None,
+) -> str | None:
+    """Windows で保存先が ~/.ssh 外なら注意文を返す(#135 案 3)。
+
+    Windows では os.chmod による保護が効かず、秘密鍵は保存先フォルダの
+    ACL をそのまま継承する。~/.ssh 配下なら通常は本人のみだが、それ以外の
+    場所では他ユーザーから読める可能性があるため、ユーザーへ知らせる。
+    ``is_windows`` / ``home`` はテスト用の差し替え口。
+    """
+    if is_windows is None:
+        is_windows = os.name == "nt"
+    if not is_windows:
+        return None
+    base = os.path.expanduser(os.fspath(home) if home is not None else "~")
+    ssh_dir = os.path.normcase(os.path.abspath(os.path.join(base, ".ssh")))
+    destination = os.path.normcase(
+        os.path.abspath(os.path.expanduser(os.fspath(path)))
+    )
+    if destination.startswith(ssh_dir + os.sep):
+        return None
+    return (
+        "保存先が ~/.ssh 以外です。Windows ではファイルの権限を変更しないため、"
+        "秘密鍵は保存先フォルダのアクセス権をそのまま引き継ぎます。\n"
+        "他のユーザーが読める場所の可能性があります。保存先のアクセス権を"
+        "確認してください。"
+    )
+
+
 def register_public_key(session, public_line: str) -> bool:
     """接続中のセッションへ公開鍵を重複なく登録する。
 
