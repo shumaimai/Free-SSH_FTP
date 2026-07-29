@@ -5,9 +5,33 @@ import paramiko
 from hashi.keygen import (
     KeygenError,
     generate_key,
+    location_warning,
     public_key_line,
     register_public_key,
 )
+
+
+def test_location_warning_windows_outside_ssh_dir(tmp_path):
+    home = tmp_path / "home"
+    inside = home / ".ssh" / "id_ed25519"
+    outside = tmp_path / "share" / "id_ed25519"
+
+    assert location_warning(inside, is_windows=True, home=home) is None
+    warning = location_warning(outside, is_windows=True, home=home)
+    assert warning is not None
+    assert "~/.ssh" in warning
+    # POSIX は chmod 0o600 で保護されるので対象外
+    assert location_warning(outside, is_windows=False, home=home) is None
+
+
+def test_location_warning_ignores_case_and_prefix(tmp_path):
+    home = tmp_path / "home"
+    upper = str(home / ".SSH" / "id_ed25519") if os.name == "nt" else None
+    if upper is not None:
+        assert location_warning(upper, is_windows=True, home=home) is None
+    # ".ssh" を接頭辞に持つだけの別フォルダは対象外にしない
+    sibling = str(home) + os.sep + ".ssh-backup" + os.sep + "id_ed25519"
+    assert location_warning(sibling, is_windows=True, home=home) is not None
 
 
 def test_generate_ed25519_with_passphrase(tmp_path):

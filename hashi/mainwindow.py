@@ -65,7 +65,7 @@ from .dialogs import (
 )
 from .filebrowser import SftpBrowser
 from .forward import DynamicForward, Forward, LocalForward, RemoteForward
-from .keygen import generate_key, register_public_key
+from .keygen import generate_key, location_warning, register_public_key
 from .localbrowser import LocalBrowser, SyncBrowse
 from .sessionlog import SessionLog
 from .snippets import Snippet, SnippetStore, expand_snippet
@@ -1461,7 +1461,11 @@ class _SharedOps:
             "SSH 鍵を生成しました" + ("（公開鍵を登録しました）" if registered else ""),
             5000,
         )
-        QMessageBox.information(self, "SSH 鍵の生成", message)
+        warning = location_warning(path)
+        if warning:
+            QMessageBox.warning(self, "SSH 鍵の生成", f"{message}\n\n{warning}")
+        else:
+            QMessageBox.information(self, "SSH 鍵の生成", message)
 
     # 設定ダイアログと即時反映は AppWindow が実装する(タブ全体に反映するため)。
 
@@ -2100,7 +2104,11 @@ class SessionPage(QWidget):
         message = f"秘密鍵を保存しました:\n{path}"
         if registered:
             message += "\n公開鍵を接続先の authorized_keys に登録しました。"
-        QMessageBox.information(self, "SSH 鍵の生成", message)
+        warning = location_warning(path)
+        if warning:
+            QMessageBox.warning(self, "SSH 鍵の生成", f"{message}\n\n{warning}")
+        else:
+            QMessageBox.information(self, "SSH 鍵の生成", message)
 
     def _harden_sshd(self):
         tab = self.session_tab
