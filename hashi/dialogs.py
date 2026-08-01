@@ -140,7 +140,7 @@ class HostKeyDialog(QDialog):
         if mismatch:
             warn = QLabel(
                 f"<b style='color:{style.ERROR}; font-size:14px;'>"
-                "⚠ 警告: このホストの鍵が以前と異なります。</b><br>"
+                "警告: このホストの鍵が以前と異なります。</b><br>"
                 "サーバーの再構築が原因の場合もありますが、"
                 "<b>中間者攻撃(なりすまし)の可能性</b>もあります。<br>"
                 "心当たりがない場合は接続を中止してください。"
@@ -213,7 +213,7 @@ class SecretDialog(QDialog):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(20, 18, 20, 16)
         lay.setSpacing(10)
-        header = QLabel("🔒 認証情報の入力")
+        header = QLabel("認証情報の入力")
         header.setStyleSheet("font-size:14px; font-weight:bold;")
         lay.addWidget(header)
         # prompt にはホスト名や踏み台名が入る → PlainText 固定
@@ -487,7 +487,7 @@ class TunnelDialog(QDialog):
         self._label_dest_port = form.labelForWidget(self.sp_dest_port)
 
         self.note = QLabel(
-            "例: ローカル 8080 → サーバー側から見た 127.0.0.1:80 に転送。\n"
+            "例: ローカル 8080 からサーバー側の 127.0.0.1:80 へ転送。\n"
             "localhost:ローカルポート にアクセスすると、SSH 経由で転送先へ繋がります。"
         )
         self.note.setStyleSheet(f"color:{style.FG_MUTED};")
@@ -515,7 +515,7 @@ class TunnelDialog(QDialog):
             self._label_dest_port.setText("転送先ポート")
             self._set_dest_visible(True)
             self.note.setText(
-                "例: ローカル 8080 → サーバー側から見た 127.0.0.1:80 に転送。\n"
+                "例: ローカル 8080 からサーバー側の 127.0.0.1:80 へ転送。\n"
                 "localhost:ローカルポート にアクセスすると、SSH 経由で転送先へ繋がります。"
             )
         elif kind == "remote":
@@ -525,7 +525,7 @@ class TunnelDialog(QDialog):
             self._label_dest_port.setText("転送先ポート")
             self._set_dest_visible(True)
             self.note.setText(
-                "例: サーバー側 8080 → ローカル 127.0.0.1:80 に転送。\n"
+                "例: サーバー側 8080 からローカル 127.0.0.1:80 へ転送。\n"
                 "リモートホスト:ポート にアクセスすると、SSH 経由でローカル転送先へ繋がります。"
             )
         elif kind == "dynamic":
@@ -706,7 +706,7 @@ class NetAdminDialog(QDialog):
         form.addRow("自動ロールバック", self.sp_rollback)
 
         warn = QLabel(
-            "⚠ ネットワーク設定を変更します。誤ると SSH ごと切断されます。安全のため、"
+            "注意: ネットワーク設定を変更します。誤ると SSH ごと切断されます。安全のため、"
             "適用前にバックアップし、指定秒数内に新しい IP への疎通が確認できなければ"
             "自動で元へ戻します。netplan(Ubuntu Server)以外の環境では実行しません。"
             "\nsudo パスワードが必要です。")
@@ -889,7 +889,7 @@ class SshdHardenDialog(QDialog):
         form.addRow(self.chk_change_port, self.sp_port)
 
         warn = QLabel(
-            "⚠ サーバーの SSH 設定を変更します。安全のため、変更前に設定を"
+            "注意: サーバーの SSH 設定を変更します。安全のため、変更前に設定を"
             "バックアップし、構文検証・疎通確認をします。パスワード認証の無効化は"
             "「登録済みの鍵で実際にログインできること」を確認できた場合のみ実行します。"
             "\nsudo パスワードが必要です。")
@@ -1183,8 +1183,8 @@ class SnippetsManageDialog(QDialog):
         self.bt_add = QPushButton("追加")
         self.bt_edit = QPushButton("編集")
         self.bt_del = QPushButton("削除")
-        self.bt_up = QPushButton("↑")
-        self.bt_down = QPushButton("↓")
+        self.bt_up = QPushButton("上へ")
+        self.bt_down = QPushButton("下へ")
         toolbar.addWidget(self.bt_add)
         toolbar.addWidget(self.bt_edit)
         toolbar.addWidget(self.bt_del)

@@ -820,7 +820,7 @@ class TerminalWidget(QWidget):
     def find_in_scrollback(self, backward: bool = True) -> bool:
         """スクロールバックから検索語を探し、ヒット行が見えるまでスクロールする。
 
-        `前へ(▲)` = backward(ログ調査の主方向)。ヒットが無ければ False。
+        `前へ(上)` = backward(ログ調査の主方向)。ヒットが無ければ False。
         端まで行ったら反対側へ回り込む。
         """
         if not self._search_query:
@@ -913,18 +913,18 @@ class TerminalWidget(QWidget):
         self._search_edit.returnPressed.connect(
             lambda: self.find_in_scrollback(backward=True))
         b_up = QToolButton()
-        b_up.setText("▲")
+        b_up.setText("上")
         b_up.setToolTip("上(過去)へ検索")
         b_up.clicked.connect(lambda: self.find_in_scrollback(backward=True))
         b_dn = QToolButton()
-        b_dn.setText("▼")
+        b_dn.setText("下")
         b_dn.setToolTip("下(新しい方)へ検索")
         b_dn.clicked.connect(lambda: self.find_in_scrollback(backward=False))
         case = QCheckBox("Aa")
         case.setToolTip("大文字と小文字を区別する")
         case.toggled.connect(self._on_search_case)
         b_close = QToolButton()
-        b_close.setText("✕")
+        b_close.setText("閉")
         b_close.setToolTip("検索を閉じる (Esc)")
         b_close.clicked.connect(self.close_search)
         for w in (self._search_edit, b_up, b_dn, case, b_close):
@@ -1202,7 +1202,7 @@ class TerminalWidget(QWidget):
         act_copy.setEnabled(self._has_selection())
         act_paste = menu.addAction("貼り付け")
         menu.addSeparator()
-        act_pw = menu.addAction("🔑 保存したパスワードを送信")
+        act_pw = menu.addAction("保存したパスワードを送信")
         act_clear_sel = menu.addAction("選択解除")
         if self._snippet_store is not None and self._snippet_store.snippets:
             menu.addSeparator()

@@ -48,7 +48,7 @@ def test_find_scrolls_back_to_hit_and_wraps(term):
 
 
 def test_find_forward_moves_down(term):
-    """▼(下方向)で次のヒットへ進む。"""
+    """下方向で次のヒットへ進む。"""
     _feed_lines(term, 120)
     term._search_query = "line-00"      # 0000..0099 が該当
     assert term.find_in_scrollback(backward=True)   # 最も近い上のヒット(0099)

@@ -166,7 +166,7 @@ class LocalForward(Forward):
         self.error: str | None = None
 
     def label(self) -> str:
-        return (f"{self.local_host}:{self.local_port} → "
+        return (f"{self.local_host}:{self.local_port} -> "
                 f"{self.remote_host}:{self.remote_port}")
 
     def start(self) -> None:
@@ -250,7 +250,7 @@ class RemoteForward(Forward):
         self.error: str | None = None
 
     def label(self) -> str:
-        return (f"{self.remote_host}:{self.remote_port} ← "
+        return (f"{self.remote_host}:{self.remote_port} <- "
                 f"{self.local_host}:{self.local_port}")
 
     def start(self) -> None:

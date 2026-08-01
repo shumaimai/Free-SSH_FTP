@@ -457,7 +457,7 @@ class EditorWindow(QMainWindow):
         return self.editor.document().isModified()
 
     def _update_title(self):
-        dirty = "●" if self._is_dirty() else ""
+        dirty = "*" if self._is_dirty() else ""
         mode = " [HEX]" if self.is_hex else ""
         self.setWindowTitle(
             f"{dirty}{os.path.basename(self.remote_path)}{mode} — "

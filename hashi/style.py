@@ -213,9 +213,9 @@ def app_stylesheet() -> str:
 
 
 def warning_label(text: str) -> QLabel:
-    """⚠ 付きの警告文ラベル。危険が伴う操作の説明に使う。"""
-    if not text.startswith("⚠"):
-        text = "⚠ " + text
+    """注意書き付きの警告文ラベル。危険が伴う操作の説明に使う。"""
+    if not text.startswith("注意:"):
+        text = "注意: " + text
     lbl = QLabel(text)
     lbl.setWordWrap(True)
     lbl.setStyleSheet(f"color:{WARN};")
@@ -347,7 +347,7 @@ def plain_label(text: str = "", muted: bool = False) -> QLabel:
 
 
 def color_dot_icon(color: str, size: int = 12) -> QIcon:
-    """色マーカー(●)アイコン。空文字なら控えめな輪郭だけの丸を返す。"""
+    """色マーカー(丸)アイコン。空文字なら控えめな輪郭だけの丸を返す。"""
     pm = QPixmap(size, size)
     pm.fill(Qt.transparent)
     painter = QPainter(pm)
