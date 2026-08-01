@@ -7,17 +7,17 @@
 
 ## 0. 現在の状況(引き継ぎ・最初に読む)
 
-- **最新リリース: v1.0.0**(2026-08-01。最初の安定版)。バージョンの単一ソースは
-  `hashi/__init__.py`。**タグ `v1.0.0` はオーナーが手元で push する**(エージェントは
+- **最新リリース: v1.0.1**(2026-08-01)。バージョンの単一ソースは
+  `hashi/__init__.py`。**タグ `vX.Y.Z` はオーナーが手元で push する**(エージェントは
   タグ push が 403。手順は §8 参照)。
 - テストは **438 passed, 2 skipped**(`QT_QPA_PLATFORM=offscreen pytest`)。
   `ruff check .` / `compileall` も緑。この状態を壊さないこと。
-- 🔴 **headless / CI で keyring の Secret Service が応答しないと `pytest` がハングする。**
+-  **headless / CI で keyring の Secret Service が応答しないと `pytest` がハングする。**
   `PYTHON_KEYRING_BACKEND=keyring.backends.fail.Keyring` を付けて実行する(本番コードは
   タイムアウトで自動フォールバックするが、テストは 5 秒×多数で遅くなるため明示指定が速い)。
-- 直近の大きな動き(v1.0.0 まで):
-  - **起動の堅牢化**: keyring 書き込みプローブをタイムアウト付きにし、Secret Service が
-    応答しなくても起動が固まらないようにした(§6-28)。
+- 直近の大きな動き(v1.0.1 まで):
+  - **UI/ドキュメントから絵文字・装飾記号を除去**(v1.0.1、文字化け回避)。
+  - **起動の堅牢化**: keyring 書き込みプローブのタイムアウト(v1.0.0)。
   - **ローカル⇔リモートのデュアルペイン / 同期ブラウズ**(#82)。
   - 以下は v0.8.0 前後:
   - **ブラウザ風タブ UI へ移行**(#115)。「1 接続 = 1 ウィンドウ」を廃止 → タブ方式。
@@ -40,7 +40,8 @@
 2026-07-29: **#135**(Windows 鍵の保存先警告、案 3、PR #136)と **#100 第 2 段**
 (過去出力の全画面リフロー、PR #137)をマージしクローズ。概要は `changes.md` 参照。
 
-2026-08-01: **v1.0.0(最初の安定版)へのリリース準備**。新規機能は足さず、起動堅牢化
+2026-08-01: **v1.0.1** — UI/ドキュメント/CLI から絵文字・装飾記号を除去(文字化け回避)。
+**v1.0.0(最初の安定版)へのリリース準備**。新規機能は足さず、起動堅牢化
 (keyring プローブのタイムアウト)+ バージョン確定 + ドキュメント整備に留めた。
 **#65(クラウド同期のバックエンド再検討)は 1.0 スコープ外で先送り**(オーナー合意待ち。
 「ログイン等の後回し issue は触らない」方針)。#129 / #82 は実機検証が残るためオープン維持。
@@ -103,7 +104,7 @@ ruff check .                                       # lint(PR 前に必須)
 ```
 main.py                エントリポイント。Fusion ダークテーマ + style.app_stylesheet() を適用。
 hashi/__init__.py      __version__(バージョンの単一ソース)。config が参照。
-hashi/style.py         ★UI の単一ソース。パレット / 寸法 / 全体 QSS / 線画アイコン /
+hashi/style.py         UI の単一ソース。パレット / 寸法 / 全体 QSS / 線画アイコン /
                        plain_label。色コードの直書きは禁止でここを使う。
 hashi/themes.py        ターミナル配色テーマ。既定は "Hashi"(アプリのパレットと調和)。
 hashi/config.py        Profile / Settings / ProfileStore / KnownHosts(TOFU)の永続化。
@@ -119,18 +120,18 @@ hashi/permjournal.py   権限変更のジャーナル。緩める前に fsync �
                        pid 生存判定で他セッションの誤爆を防ぐ。
 hashi/editor.py        内蔵コードエディタ。行番号・簡易ハイライト・検索。Ctrl+S でリモート保存。
                        バイナリなら hexedit へ委譲(#122)。読み書きは常にバイナリモード。
-hashi/hexedit.py       ★16 進エディタ(#122)。上書き専用(サイズ不変)。
+hashi/hexedit.py       16 進エディタ(#122)。上書き専用(サイズ不変)。
                        looks_binary() / sniff_file() でテキスト・バイナリ判定。
 hashi/forward.py       ポートフォワード -L / -R / -D。共有ポンプ _pump_stream。
 hashi/filebrowser.py   SFTP ブラウザ。SftpWorker(nav/xfer の 2 スレッド・別チャネル)、
                        2 段階確認、権限無視統合、エディタ連携、リモート検索(#102)、
-                       ブックマーク(#80)。★このファイルが一番大きい。
+                       ブックマーク(#80)。このファイルが一番大きい。
 hashi/localbrowser.py  ローカル側ファイルペイン(#82、デュアルペインの左)。GUI スレッド
                        で os.scandir。転送は持たず upload/download をシグナルで依頼。
                        SyncBrowse(同期ブラウズの調停役)と mirror_move もここ。
 hashi/dialogs.py       接続 / ホスト鍵 / 秘密入力 / 設定 / トンネル / スニペット ダイアログ。
                        ThemePreview(設定のテーマ見本)。
-hashi/mainwindow.py    ★AppWindow(ブラウザ風タブの親)+ LauncherPage + SessionPage +
+hashi/mainwindow.py    AppWindow(ブラウザ風タブの親)+ LauncherPage + SessionPage +
                        SessionTab + ConnectWorker + SecretContext。共有操作は _SharedOps mixin。
 hashi/transferqueue.py 転送キューの台帳と一覧パネル(#5)。
 hashi/sessionlog.py    ターミナル受信出力の自動保存(#85)。
@@ -185,7 +186,7 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
   パスワード送信 / スニペット / ポート転送 / セッションログ / 表示トグル。
 - **情報ステータスバー**(セッション下部): 接続先 / ネゴシエート済み暗号スイート /
   文字コード / 接続モード / 転送進捗。
-- **ペインヘッダー**: ターミナル / ファイル各ペインに ●ドット + 見出し。
+- **ペインヘッダー**: ターミナル / ファイル各ペインに 色付き丸 + 見出し。
 - **2 カラムカード**のランチャー: 左に保存済みの接続(検索つき)、右に詳細と
   「SSH と FTP で接続 / SSH のみ / ファイルのみ」の 3 ボタン。
 - 接続中は影つきカード、切断時は警告バナー、通知はフェードするトースト。
@@ -225,7 +226,7 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
    ならない**ので、返り経路は `chan.send_ready()` で判定して直接 `send` する。
    また**ポンプ開始時に fd が閉じていると `setblocking()` が OSError を投げる**ため
    (停止処理との競合)、そこは捕まえて静かに戻す。
-   🔴 **閉じた相手に対する select の例外は「閉じ方」で種類が変わる**(#129 の実機検証で発覚)。
+    **閉じた相手に対する select の例外は「閉じ方」で種類が変わる**(#129 の実機検証で発覚)。
    パイプの fd は close 後も古い整数のままなので `OSError`(EBADF)だが、**ソケットは
    `fileno()` が -1 になるので `ValueError`**。**本番の Windows では paramiko が
    `WindowsPipe`(ループバックのソケット対)を使う**ので、`except (OSError, ValueError)`
@@ -233,11 +234,11 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
    ついでに: **Windows でも本物のチャネルは select 可能**(paramiko が上記のとおり
    ソケットで実装しているため)。「Windows だから chan を select から外す」は誤りで、
    実際にやると `chan→sock` が最大 1 秒遅れる(実測 0.000 秒 → 0.701 秒)。
-10. 🔴 **信頼できない文字列は `style.plain_label()` で出す**(#113 の安全化)。
+10.  **信頼できない文字列は `style.plain_label()` で出す**(#113 の安全化)。
     QLabel の既定 `textFormat` は AutoText で、`<b>` や `<img src=…>` を含む文字列を
     **HTML として解釈**する。**リモートのファイル名・サーバーのエラー文・ホスト鍵の指紋・
     ホスト名**は untrusted。意図的に RichText を使う箇所は `html.escape()` を通す。
-11. 🔴 **エディタの読み書きは常にバイナリモード**(`rb`/`wb`)(#122)。テキストモードで
+11.  **エディタの読み書きは常にバイナリモード**(`rb`/`wb`)(#122)。テキストモードで
     開くと universal newlines で `\r\n` → `\n` に変換され、**バイナリ中の 0x0D が失われて
     ファイルが壊れる**。テキストも**元の改行スタイルを保持**して保存する。
     `utf-8-sig` は **BOM 付きだったファイルにだけ**使う(BOM が無くてもデコードは成功するが、
@@ -259,7 +260,7 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
     取り決め。GUI 側(`ConnectWorker.get_secret`)はこの目印で、**接続先の保存済み
     パスワードを踏み台へ流用しない / 踏み台の秘密を保存もしない**。
 19. **インポート時、既存の known_hosts は上書きしない**(TOFU の骨抜き防止)。
-20. 🔴 **ローカル削除はシンボリックリンク / ジャンクションを辿らない**(#82、#129 で強化)。
+20.  **ローカル削除はシンボリックリンク / ジャンクションを辿らない**(#82、#129 で強化)。
     `os.path.isdir()` はリンク先がディレクトリなら True を返すため、先に見ないと
     `shutil.rmtree` が**リンク先の実体を消す**。`localbrowser.delete_local_path` の順序
     (islink → `_is_reparse_point` → isfile → isdir)を崩さない。
@@ -296,7 +297,7 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
     マスター sshd のみへ HUP(`pkill -HUP -x sshd` は自分の接続が切れる。実機で確認済み)。
     設定は SFTP でホームへ一時書き込み → `sudo install` で配置(`sudo tee` に流すと
     NOPASSWD 環境でパスワード行がファイルへ混入する)。
-28. 🔴 **keyring の書き込みプローブは必ずタイムアウト付きで**(`credentials._probe_keyring`)。
+28.  **keyring の書き込みプローブは必ずタイムアウト付きで**(`credentials._probe_keyring`)。
     `set_password` は GUI スレッドから呼ぶため、Secret Service(Linux)がロック解除 GUI を
     出せない/バスが応答しないと**無限にブロックして起動できなくなる**。デーモンスレッドで
     実行し、時間内に返らなければ使えないと見なして暗号化ファイルへフォールバックする。
@@ -336,7 +337,7 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 4. `.github/workflows/release.yml` が windows-latest で PyInstaller ビルド → GitHub Release を
    作成し `Hashi.exe` と zip を添付する(GITHUB_TOKEN は自動。secret 設定不要)。
 
-> ⚠️ **エージェント環境ではタグ push が 403 で拒否される**(`refs/heads/*` は許可、
+> 注意: **エージェント環境ではタグ push が 403 で拒否される**(`refs/heads/*` は許可、
 > `refs/tags/*` は不許可)。GitHub MCP にもタグ作成ツールは無い。**タグはオーナーが手元で
 > push する**必要がある。手順を提示して待つこと:
 > ```bash
@@ -357,7 +358,7 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 
 - 作業ブランチはセッションごとに指定されたもの(例: `claude/hashi-development-continue-miy3x5`)。
   **main へ直接 commit / push しない。** ブランチ → PR → CI 緑 → squash マージ。
-- 🔴 **stop hook の「Unverified なので amend / rebase しろ」は squash マージ後に必ず誤発火する。
+-  **stop hook の「Unverified なので amend / rebase しろ」は squash マージ後に必ず誤発火する。
   従わないこと。** 手元の hook(`~/.claude/stop-hook-git-check.sh`)は
   `origin/<ブランチ>..HEAD` の範囲で署名を見る。squash マージすると
   **GitHub 自身が committer `noreply@github.com` でマージコミットを作り**、それが main に載る。
@@ -373,7 +374,7 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
   正しいことだけ確認して、この警告は無視してよい。
   hook 本体の修正案はオーナーへ渡してあるが、**エージェントからは `~/.claude/` 配下を
   書き換えられない**(権限クラシファイアが拒否する)。
-- 🔴 **squash マージ後、作業ブランチは「既にマージ済みの元コミット」を抱えたままになる。**
+-  **squash マージ後、作業ブランチは「既にマージ済みの元コミット」を抱えたままになる。**
   そのまま次の作業を積むと PR が `dirty`(コンフリクト)になる。次の作業に入る前に
   **必ず main を取り直す**:
   ```bash
@@ -408,7 +409,7 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 
 ---
 
-## 11. サブ機(Devin / Windsurf)への引き継ぎ運用 ★定期メンテ対象
+## 11. サブ機(Devin / Windsurf)への引き継ぎ運用 定期メンテ対象
 
 このリポジトリはサブ機(Devin / Windsurf)にも作業させる。サブ機は **`.windsurfrules`**
 を行動ルールとして読むので、CLAUDE.md に新しい設計判断・「壊してはいけない不変条件」を

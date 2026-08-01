@@ -51,7 +51,7 @@ def test_is_hidden_dotfiles():
 
 
 def test_delete_local_path_does_not_follow_symlinked_dir(tmp_path):
-    """🔴 リンクを辿ってリンク先の実体を消さないこと。
+    """重要: リンクを辿ってリンク先の実体を消さないこと。
 
     os.path.isdir() はリンク先がディレクトリなら True になるため、islink を
     先に見ないと shutil.rmtree がリンク先を丸ごと消してしまう。
@@ -83,7 +83,7 @@ def test_delete_local_path_removes_file_and_tree(tmp_path):
 
 
 def test_delete_local_path_unlinks_windows_junction(tmp_path, monkeypatch):
-    """🔴 Windows のディレクトリジャンクションは rmtree に渡さない。
+    """重要: Windows のディレクトリジャンクションは rmtree に渡さない。
 
     実際のジャンクションは Linux CI では作れないので、reparse point 判定だけ
     差し替えて「どちらの削除経路が選ばれたか」を固定する。

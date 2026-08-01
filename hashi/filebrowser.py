@@ -1152,7 +1152,7 @@ class SftpBrowser(QWidget):
         btn_clear.clicked.connect(self._clear_search)
 
         btn_close = QToolButton()
-        btn_close.setText("×")
+        btn_close.setText("閉")
         btn_close.setToolTip("検索バーを閉じる")
         btn_close.clicked.connect(self._close_search_bar)
 
@@ -1245,7 +1245,7 @@ class SftpBrowser(QWidget):
             lambda on: self.btn_hidden.setIcon(
                 style.icon("eye", style.ACCENT if on else style.FG)))
 
-        self._act_override = menu.addAction("🔓 権限無視")
+        self._act_override = menu.addAction("権限無視")
         self._act_override.setCheckable(True)
         self._act_override.setToolTip(
             "ON にすると、権限で弾かれたファイルを一時的に読み書き可能にして\n"
@@ -1362,9 +1362,9 @@ class SftpBrowser(QWidget):
     def _update_queue_button(self):
         text = self._queue_status_text()
         if self.queue_panel.isVisible():
-            text = "▼ " + text
+            text = f"開 {text}"
         else:
-            text = "▶ " + text
+            text = f"閉 {text}"
         self._btn_queue.setText(text)
 
     def _queue_status_text(self) -> str:
@@ -1374,7 +1374,9 @@ class SftpBrowser(QWidget):
                 pct = min(100, int(running.done * 100 / running.total))
             else:
                 pct = 0
-            kind_mark = {"upload": "↑", "download": "↓", "delete": "×"}.get(running.kind, running.kind)
+            kind_mark = {
+                "upload": "UP", "download": "DN", "delete": "DEL",
+            }.get(running.kind, running.kind)
             label = running.label
             if len(label) > 12:
                 label = label[:11] + "…"
@@ -1636,12 +1638,12 @@ class SftpBrowser(QWidget):
         if cur:
             if cur in marks:
                 menu.addAction(
-                    "★ このフォルダをブックマークから外す",
+                    "[登録済] このフォルダをブックマークから外す",
                     lambda: self._save_bookmarks(
                         [p for p in self._bookmarks() if p != cur]))
             else:
                 menu.addAction(
-                    "☆ このフォルダをブックマーク",
+                    "このフォルダをブックマーク",
                     lambda: self._save_bookmarks(self._bookmarks() + [cur]))
         menu.addSeparator()
         if not marks:
@@ -1904,7 +1906,7 @@ class SftpBrowser(QWidget):
             rows.append(
                 f"・{escape(posixpath.basename(c['remote']))} "
                 f"(リモート {human_size(c['r_size'])} {fmt_mtime(c['r_mtime'])}"
-                f" → 新 {human_size(c['l_size'])})"
+                f" 新 {human_size(c['l_size'])})"
             )
         shown = "<br>".join(rows)
         if len(conflicts) > 8:

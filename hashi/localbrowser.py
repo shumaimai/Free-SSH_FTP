@@ -124,7 +124,7 @@ def _is_reparse_point(path: str) -> bool:
 def delete_local_path(path: str) -> None:
     """ローカルの 1 項目を削除する。
 
-    🔴 **シンボリックリンク/ジャンクションは中身を辿らない。** `os.path.isdir()`
+    重要: **シンボリックリンク/ジャンクションは中身を辿らない。** `os.path.isdir()`
     はリンク先がディレクトリなら True になるため、先に reparse point を
     見ないと `shutil.rmtree` が **リンク先の実体を消してしまう**。
     """
@@ -326,10 +326,9 @@ class LocalBrowser(QWidget):
         self.btn_hidden.toggled.connect(self._toggle_hidden)
         bar.addWidget(self.btn_hidden)
 
-        # 転送ボタン(#82)。矢印は**ペインの位置関係**を表す(左=ローカル /
-        # 右=リモート)ので、↑↓ のアイコンは付けず文字の → ← だけにする。
+        # 転送ボタン(#82)。左=ローカル / 右=リモートの位置関係を示すラベルにする。
         self.btn_upload = QToolButton()
-        self.btn_upload.setText("→ アップロード")
+        self.btn_upload.setText("アップロード")
         self.btn_upload.setToolTip(
             "選択したローカルの項目をリモートの現在のフォルダへ送ります\n"
             "(リモート側ペインへのドラッグ&ドロップでも同じことができます)")
@@ -337,7 +336,7 @@ class LocalBrowser(QWidget):
         bar.addWidget(self.btn_upload)
 
         self.btn_download = QToolButton()
-        self.btn_download.setText("← ダウンロード")
+        self.btn_download.setText("ダウンロード")
         self.btn_download.setToolTip(
             "リモート側で選択中の項目をこのフォルダへ受け取ります\n"
             "(リモート側からこのペインへドラッグ&ドロップでも同じ)")
@@ -634,8 +633,8 @@ class LocalBrowser(QWidget):
     def _context_menu(self, pos) -> None:
         sel = self._selected_entries()
         menu = QMenu(self)
-        a_up = menu.addAction("→ リモートへアップロード")
-        a_dl = menu.addAction("← リモートからここへダウンロード")
+        a_up = menu.addAction("リモートへアップロード")
+        a_dl = menu.addAction("リモートからここへダウンロード")
         menu.addSeparator()
         a_open = menu.addAction("関連付けアプリで開く")
         a_ren = menu.addAction("名前の変更 (F2)")

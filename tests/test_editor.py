@@ -148,10 +148,10 @@ def test_update_title_reflects_modified(editor_window):
     w = editor_window
     w.editor.document().setModified(False)
     w._update_title()
-    assert not w.windowTitle().startswith("●")
+    assert not w.windowTitle().startswith("*")
     w.editor.document().setModified(True)
     w._update_title()
-    assert w.windowTitle().startswith("●")
+    assert w.windowTitle().startswith("*")
     assert "sample.py" in w.windowTitle()
 
 

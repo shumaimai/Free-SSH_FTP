@@ -112,7 +112,7 @@ def test_no_saved_password_warns(tab):
 
 
 def test_manual_send_uses_sudo_then_login_password(tab):
-    """🔑 ボタン / メニューの手動送信 (Issue #40)。sudo → ログインの順で使う。"""
+    """sudo ボタン / メニューの手動送信 (Issue #40)。sudo からログインの順で使う。"""
     tab.secret_ctx.get_login_password = lambda: "login-pw"
     tab._on_password_prompt("manual")
     assert tab.terminal.sent == ["saved-sudo"]

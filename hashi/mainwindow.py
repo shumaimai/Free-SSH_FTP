@@ -820,7 +820,7 @@ class SessionTab(QWidget):
 
         # sudo ワンタップ送信ボタン。リモートはプロンプトを偽装できるため
         # 自動送信はしない(送る判断は常に人間)。ただしワンタップで済むようにする。
-        self._sudo_btn = QPushButton("🔑 sudo パスワードを送信", self)
+        self._sudo_btn = QPushButton("sudo パスワードを送信", self)
         self._sudo_btn.setStyleSheet(
             f"QPushButton {{ background:{style.OK}; color:#12200f;"
             f" border:none; border-radius:{style.TOAST_RADIUS}px;"
@@ -887,7 +887,7 @@ class SessionTab(QWidget):
 
     # ---- ペインヘッダー(#113 / 参考デザイン) -------------------------------
     def _make_pane(self, title: str, inner: QWidget) -> QWidget:
-        """ターミナル / ファイルの各ペインに、●ドット + ラベルの見出しを付けて包む。"""
+        """ターミナル / ファイルの各ペインに、色付き丸 + ラベルの見出しを付けて包む。"""
         pane = QWidget()
         v = QVBoxLayout(pane)
         v.setContentsMargins(0, 0, 0, 0)
@@ -900,8 +900,10 @@ class SessionTab(QWidget):
         h = QHBoxLayout(header)
         h.setContentsMargins(12, 5, 12, 5)
         h.setSpacing(8)
-        dot = QLabel("●")
-        dot.setStyleSheet(f"color:{style.DOT_OK}; font-size:9px;")
+        dot = QLabel()
+        dot.setFixedSize(8, 8)
+        dot.setStyleSheet(
+            f"background:{style.DOT_OK}; border-radius:4px;")
         lbl = QLabel(title)
         lbl.setStyleSheet(
             f"color:{style.FG_MUTED}; font-size:11px; font-weight:600;")
@@ -924,16 +926,16 @@ class SessionTab(QWidget):
         h.setContentsMargins(10, 3, 10, 3)
         h.setSpacing(14)
         p = self.session.profile
-        mode_txt = {"both": "🖥+📁", "ssh": "🖥", "sftp": "📁"}.get(self.mode, "")
+        mode_txt = {"both": "端末+ファイル", "ssh": "端末", "sftp": "ファイル"}.get(self.mode, "")
         # ホスト名・暗号名はプロファイル/サーバー由来なので PlainText で出す
-        h.addWidget(style.plain_label(f"🔗 {p.username}@{p.host}:{p.port}"))
+        h.addWidget(style.plain_label(f"{p.username}@{p.host}:{p.port}"))
         try:
             cipher = self.session.security_summary()
         except Exception:
             logger.debug("暗号スイートの取得に失敗 (無視)", exc_info=True)
             cipher = ""
         if cipher:
-            lbl = style.plain_label(f"🔒 {cipher}")
+            lbl = style.plain_label(cipher)
             lbl.setToolTip("ネゴシエート済みの暗号スイート")
             h.addWidget(lbl)
         h.addWidget(QLabel("UTF-8"))
@@ -966,13 +968,13 @@ class SessionTab(QWidget):
                   or self.secret_ctx.get_login_password())
             if pw:
                 self.terminal.send_password(pw)
-                self._flash("🔑 保存したパスワードを送信しました")
+                self._flash("保存したパスワードを送信しました")
             else:
                 self._flash("送信できるパスワードがありません", warn=True)
             return
         if kind == "sudo":
             if not self.settings.get("sudo_autofill"):
-                self._flash("sudo パスワード要求: 上の 🔑 ボタンで送信できます")
+                self._flash("sudo パスワード要求: 上のボタンで送信できます")
                 return
             now = time.monotonic()
             if now - self._last_autofill_ts < 8.0:
@@ -983,7 +985,7 @@ class SessionTab(QWidget):
             self._show_sudo_button()
         elif kind in ("password", "passphrase"):
             # 別ホストの可能性があるので自動送信しない(手動送信は可能)
-            self._flash("パスワード要求: 上の 🔑 ボタンで保存済みを送れます")
+            self._flash("パスワード要求: 上のボタンで保存済みを送れます")
 
     def _show_sudo_button(self):
         self._sudo_btn.adjustSize()
@@ -1001,7 +1003,7 @@ class SessionTab(QWidget):
         if pw:
             self._last_autofill_ts = time.monotonic()
             self.terminal.send_password(pw)
-            self._flash("🔑 sudo パスワードを送信しました")
+            self._flash("sudo パスワードを送信しました")
         else:
             self._flash("送信できる sudo パスワードがありません", warn=True)
 
@@ -1558,7 +1560,7 @@ class LauncherPage(QWidget):
             f"color:{style.FG_MUTED}; font-size:11px; font-weight:600;")
         # インクリメンタル検索(#81)。名前/ホスト/ユーザー/タグで絞り込み
         self.ed_search = QLineEdit()
-        self.ed_search.setPlaceholderText("🔍 検索 (名前 / ホスト / タグ)")
+        self.ed_search.setPlaceholderText("検索 (名前 / ホスト / タグ)")
         self.ed_search.setClearButtonEnabled(True)
         self.ed_search.textChanged.connect(self._reload_list)
         self.list = QListWidget()
@@ -1653,7 +1655,7 @@ class LauncherPage(QWidget):
         for idx, p in _launcher_order(self.store.profiles, query):
             second = f"{p.username}@{p.host}:{p.port}"
             if p.tags:
-                second += "   🏷 " + ", ".join(p.tags)
+                second += "   タグ: " + ", ".join(p.tags)
             if p.last_connected:
                 second += f"   ⏱ {_relative_time(p.last_connected)}"
             item = QListWidgetItem(f"{p.label()}\n{second}")
@@ -1666,7 +1668,7 @@ class LauncherPage(QWidget):
         if empty:
             if self.store.profiles and query:
                 self._empty.setText(
-                    f"🔍「{query}」に一致する接続先がありません")
+                    f"「{query}」に一致する接続先がありません")
             else:
                 self._empty.setText(
                     "まだ接続先がありません。\n"
@@ -1850,7 +1852,7 @@ class SessionPage(QWidget):
         h = QHBoxLayout(bar)
         h.setContentsMargins(12, 6, 10, 6)
         h.setSpacing(8)
-        label = QLabel("⚠ 接続が切断されました")
+        label = QLabel("接続が切断されました")
         btn = QPushButton("↻ 再接続")
         btn.setProperty("primary", True)
         btn.setCursor(Qt.PointingHandCursor)
@@ -2136,7 +2138,7 @@ class SessionPage(QWidget):
         if changes["disable_password"]:
             summary.append("・パスワード認証を無効化(鍵認証のみに)")
         if changes["new_port"] is not None:
-            summary.append(f"・ポート番号を {cur_port} → {changes['new_port']} へ変更")
+            summary.append(f"・ポート番号を {cur_port} から {changes['new_port']} へ変更")
         extra = ("<br>成功すると接続プロファイルのポートも自動更新されます。"
                  if changes["new_port"] is not None else "")
         if not DoubleCheckDialog.confirm(
@@ -2204,7 +2206,7 @@ class SessionPage(QWidget):
         if not dlg.exec():
             return
         cfg = dlg.result_settings()
-        replace_note = ("<br>⚠ 前回 Hashi が固定した設定(90-hashi.yaml)が"
+        replace_note = ("<br>注意: 前回 Hashi が固定した設定(90-hashi.yaml)が"
                         "見つかりました。<b>今回の内容で置き換えます</b>。"
                         if netadmin.dropin_exists(session) else "")
         if not DoubleCheckDialog.confirm(
@@ -2351,7 +2353,7 @@ class AppWindow(_SharedOps, QMainWindow):
 
         self.launcher = LauncherPage(self)
         self.tabs.addTab(self.launcher, "サーバー一覧")
-        # ランチャータブは閉じさせない(× ボタンを消す)
+        # ランチャータブは閉じさせない(x ボタンを消す)
         from PySide6.QtWidgets import QTabBar
         self.tabs.tabBar().setTabButton(0, QTabBar.ButtonPosition.RightSide, None)
         self.tabs.tabBar().setTabButton(0, QTabBar.ButtonPosition.LeftSide, None)
@@ -2374,7 +2376,7 @@ class AppWindow(_SharedOps, QMainWindow):
         self._update_label.setWordWrap(True)
         self._update_label.setOpenExternalLinks(True)
         self._update_label.setTextInteractionFlags(Qt.TextBrowserInteraction)
-        close = QPushButton("×")
+        close = QPushButton("x")
         close.setFlat(True)
         close.setToolTip("閉じる")
         close.clicked.connect(lambda: w.setVisible(False))
@@ -2433,7 +2435,7 @@ class AppWindow(_SharedOps, QMainWindow):
         if idx < 0:
             return
         base = page.tab_title()
-        self.tabs.setTabText(idx, f"⚠ {base}" if disconnected else base)
+        self.tabs.setTabText(idx, f"[切断] {base}" if disconnected else base)
 
     def _on_tab_close(self, index: int):
         w = self.tabs.widget(index)

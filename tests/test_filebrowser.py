@@ -491,13 +491,14 @@ def test_bookmark_menu_add_remove_and_navigate(qapp, tmp_path):
 
     b._populate_bookmark_menu()
     acts = b._bookmark_menu.actions()
-    assert "☆" in acts[0].text()
+    assert "ブックマーク" in acts[0].text()
+    assert "[登録済]" not in acts[0].text()
     acts[0].trigger()                       # 現在のフォルダを登録
     assert b._bookmarks() == ["/srv/www"]
 
     b._populate_bookmark_menu()
     acts = b._bookmark_menu.actions()
-    assert "★" in acts[0].text()            # 登録済み → 解除に変わる
+    assert "[登録済]" in acts[0].text()            # 登録済みなら解除に変わる
     entry = [a for a in acts if a.text() == "/srv/www"]
     assert entry
     entry[0].trigger()                      # クリックで cd

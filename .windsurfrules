@@ -151,7 +151,7 @@
 ### ウィンドウ構成（`hashi/mainwindow.py`、Issue #115 でブラウザ風タブへ）
 
 - **ブラウザ風タブ方式**: `AppWindow(QMainWindow)` が中央に `QTabWidget` を持ち、
-  各タブ = 1 接続（`SessionPage`）。`+` で新規接続、`✕` でタブを閉じる。
+  各タブ = 1 接続（`SessionPage`）。`+` で新規接続、`x` でタブを閉じる。
   （#14 段階2 の「1 接続 = 1 ウィンドウ / タブ方式に戻さない」はオーナー決定 #115 で
   反転済み。この決定を勝手に元へ戻さないこと。）
 - `SessionPage(QWidget)` は接続・再接続・セッション操作を保持し、`title_changed` /
@@ -295,7 +295,7 @@ ruff check .
   ```
 - 実機で見つけたバグは、**同じ状況を捉える回帰テストを足してから**修正すること
   （例: `test_pump_stream_return_path_via_send_ready` はパイプ端 fileno でチャネル特性を固定）。
-- 🔴 **`SftpBrowser` / `SessionTab` を生成するテストは、必ず `shutdown()` してから
+-  **`SftpBrowser` / `SessionTab` を生成するテストは、必ず `shutdown()` してから
   `processEvents()` を数回回して破棄すること。** これらはワーカースレッド（nav / xfer）を
   起こすため、止めずに捨てると**後続のテストがハングする**（#112 で実際に踏んだ）。
   `tests/test_mainwindow_windows.py` の `_cleanup` ヘルパーを使い回すこと。
@@ -308,13 +308,13 @@ ruff check .
 
 ## Git 運用（実際に踏んだ罠。従わないと公開履歴を壊す）
 
-- 🔴 **squash マージ後、作業ブランチは「既にマージ済みの元コミット」を抱えたままになる。**
+-  **squash マージ後、作業ブランチは「既にマージ済みの元コミット」を抱えたままになる。**
   そのまま次の作業を積むと PR がコンフリクトする。次の作業に入る前に**必ず main を取り直す**:
   ```bash
   git fetch origin main
   git checkout -B <branch> origin/main
   ```
-- 🔴 **squash マージ直後に出る「Unverified なので amend / rebase しろ」という警告に
+-  **squash マージ直後に出る「Unverified なので amend / rebase しろ」という警告に
   従わないこと。** squash マージでは **GitHub 自身が committer `noreply@github.com` で
   コミットを作り**、それが main に載る。作業ブランチを main から取り直すと、置き去りの
   `origin/<ブランチ>` との差分にそれが現れ「未 push の自作コミット」に見えるだけ。

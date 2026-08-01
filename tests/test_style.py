@@ -76,7 +76,7 @@ def test_line_icons_render_and_cache(qapp):
 
 def test_warning_and_muted_labels(qapp):
     w = style.warning_label("危険な操作です")
-    assert w.text().startswith("⚠")
+    assert w.text().startswith("注意:")
     assert style.WARN in w.styleSheet()
     assert w.wordWrap()
 

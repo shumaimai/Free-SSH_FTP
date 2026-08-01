@@ -4,7 +4,7 @@
   python tools/doctor.py <host> <user> [--port 22] [--key PATH | --password | --agent]
 
 TCP 接続 → SSH ネゴシエーション → ホスト鍵 → 認証 → SFTP → シェル
-の順に確認して ✓ / ✗ を表示する。
+の順に確認して OK / NG を表示する。
 """
 from __future__ import annotations
 
@@ -73,30 +73,30 @@ def main() -> int:
     try:
         session.connect(ui)
     except ConnectCancelled:
-        print("✗ キャンセルされました")
+        print("NG キャンセルされました")
         return 1
     except ConnectError as e:
-        print(f"✗ 接続失敗: {e}")
+        print(f"NG 接続失敗: {e}")
         return 1
-    print(f"✓ [2] 接続 + ホスト鍵検証 + 認証 OK ({time.time() - t0:.2f}s)")
+    print(f"OK [2] 接続 + ホスト鍵検証 + 認証 OK ({time.time() - t0:.2f}s)")
 
     try:
         sftp = session.open_sftp()
         home = sftp.normalize(".")
         names = sftp.listdir(home)
-        print(f"✓ [3] SFTP OK  ホーム: {home} ({len(names)} 項目)")
+        print(f"OK [3] SFTP OK  ホーム: {home} ({len(names)} 項目)")
         sftp.close()
     except Exception as e:  # noqa: BLE001
-        print(f"✗ [3] SFTP 失敗: {e}")
+        print(f"NG [3] SFTP 失敗: {e}")
 
     try:
         ch = session.open_shell(80, 24)
         time.sleep(1.0)
         data = ch.recv(4096) if ch.recv_ready() else b""
-        print(f"✓ [4] 対話シェル OK (初期出力 {len(data)} bytes)")
+        print(f"OK [4] 対話シェル OK (初期出力 {len(data)} bytes)")
         ch.close()
     except Exception as e:  # noqa: BLE001
-        print(f"✗ [4] シェル失敗: {e}")
+        print(f"NG [4] シェル失敗: {e}")
 
     session.close()
     print("診断終了")

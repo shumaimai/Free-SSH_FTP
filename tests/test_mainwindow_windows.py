@@ -329,7 +329,7 @@ def test_dual_pane_defaults_off_and_toggles(qapp):
 
 
 def test_local_upload_request_reaches_remote_precheck(qapp, tmp_path):
-    """ローカルの「→ アップロード」が実際に nav の上書き事前確認へ届く(#82)。
+    """ローカルの「アップロード」が実際に nav の上書き事前確認へ届く(#82)。
 
     SessionTab が張った本番の接続をそのまま通す(テスト用に張り直さない)。
     """
@@ -348,7 +348,7 @@ def test_local_upload_request_reaches_remote_precheck(qapp, tmp_path):
 
 
 def test_local_download_request_reaches_remote_browser(qapp, tmp_path):
-    """ローカルへのドロップ/「← ダウンロード」が本番の download_to へ届く。"""
+    """ローカルへのドロップ/「ダウンロード」が本番の download_to へ届く。"""
     tab = _make_tab(qapp, "sftp")
     tab.browser.lb_status.setText("")
 
