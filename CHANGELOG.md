@@ -4,6 +4,20 @@
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-08-01
+v1.0.0 直後のメンテナンスリリース。文字化けやフォント依存を避けるため、
+UI・ドキュメント・CLI 出力から絵文字と装飾記号を除去し、日本語テキストまたは
+ASCII に統一した(PRs #140)。
+
+### 変更
+- **UI から絵文字・装飾記号を除去**。sudo/パスワード送信ボタン、ターミナル検索バー、
+  ブックマーク、転送キュー、権限無視メニュー、ランチャー検索、接続モード表示、
+  切断タブ表示など。ペインヘッダーの丸は QSS で描画。エディタ未保存は `*`。
+  警告ラベルは「注意:」接頭辞に統一。ポートフォワード一覧は `->` / `<-`。
+- **ドキュメント** (README / CHANGELOG / CLAUDE.md / `.windsurfrules` /
+  `docs/ui-style-guide.md`) から絵文字を除去し、スタイルガイドに禁止を明記。
+- **`tools/doctor.py`**: チェックマーク/バツ印を OK / NG に変更。
+
 ## [1.0.0] - 2026-08-01
 最初の安定版(1.0)。v0.8.0 のブラウザ風タブ UI・接続モード・意匠刷新を土台に、
 ローカル⇔リモートのデュアルペイン/同期ブラウズ(#82)、16 進エディタ(#122)、
@@ -454,7 +468,8 @@
 - 削除・上書きの 2 段階確認。
 - CLI 接続診断ツール `tools/doctor.py`。
 
-[Unreleased]: https://github.com/shumaimai/Free-SSH_FTP/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/shumaimai/Free-SSH_FTP/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/shumaimai/Free-SSH_FTP/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/shumaimai/Free-SSH_FTP/compare/v0.8.0...v1.0.0
 [0.8.0]: https://github.com/shumaimai/Free-SSH_FTP/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/shumaimai/Free-SSH_FTP/compare/v0.6.0...v0.7.0

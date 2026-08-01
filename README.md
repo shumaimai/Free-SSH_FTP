@@ -117,7 +117,7 @@ pyinstaller --noconfirm Hashi.spec      # dist/Hashi.exe
 2. `vX.Y.Z` タグを push(タグは `__version__` と一致必須。CI が検証)
 
 ```bash
-git tag v1.0.0 && git push origin v1.0.0
+git tag v1.0.1 && git push origin v1.0.1
 ```
 
 GitHub Actions が Windows で `Hashi.exe` をビルドし、Release に添付します。
