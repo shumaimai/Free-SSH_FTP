@@ -7,7 +7,7 @@
 
 橋 (bridge)。ローカルとリモートをつなぐ、Windows でまともに使える SSH ターミナル + SFTP ファイルブラウザ.
 PuTTY + WinSCP を別々に開かなくていいのがコンセプト。起動すると接続先を選ぶランチャーが開き、
-接続すると 1 接続 = 1 ウィンドウでターミナルとファイル操作が横に並ぶ。
+接続すると **ブラウザ風のタブ**(1 接続 = 1 タブ)でターミナルとファイル操作が横に並ぶ。
 
 ## 起動
 
@@ -117,7 +117,7 @@ pyinstaller --noconfirm Hashi.spec      # dist/Hashi.exe
 2. `vX.Y.Z` タグを push(タグは `__version__` と一致必須。CI が検証)
 
 ```bash
-git tag v0.2.0 && git push origin main --tags
+git tag v1.0.0 && git push origin v1.0.0
 ```
 
 GitHub Actions が Windows で `Hashi.exe` をビルドし、Release に添付します。

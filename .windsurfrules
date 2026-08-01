@@ -66,6 +66,12 @@
   `SFTPClient.get/put` の既定は全体プリフェッチで、大容量ではメモリが肥大しキャンセルも
   効かなくなる。チャンクごとにキャンセル判定・進捗通知する既存設計（`_download_file`/
   `_upload_file`）を維持する。
+- **keyring の書き込みプローブは必ずタイムアウト付きで行うこと**（`credentials._probe_keyring`）。
+  `set_password` は GUI スレッドから呼ぶため、Secret Service（Linux）が応答しないと
+  無限にブロックして起動できなくなる。デーモンスレッドで実行し、時間内に返らなければ
+  使えないと見なして暗号化ファイルへフォールバックする。例外だけでなく「返ってこない」
+  ケースも弾くこと。このタイムアウトを外さない。
+  （テスト/CI は `PYTHON_KEYRING_BACKEND=keyring.backends.fail.Keyring` を付けて実行する。）
 
 ## UI の共通ルール（Issue #87）
 

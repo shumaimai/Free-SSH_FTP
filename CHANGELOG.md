@@ -3,6 +3,22 @@
 このプロジェクトは [Semantic Versioning](https://semver.org/lang/ja/) に緩く従います。
 
 ## [Unreleased]
+
+## [1.0.0] - 2026-08-01
+最初の安定版(1.0)。v0.8.0 のブラウザ風タブ UI・接続モード・意匠刷新を土台に、
+ローカル⇔リモートのデュアルペイン/同期ブラウズ(#82)、16 進エディタ(#122)、
+ターミナルのスクロールバック検索(#79)、リフロー第 2 段(#100)などを積み上げ、
+起動の堅牢性を高めて 1.0 とした。**クラウド同期のバックエンド再検討(#65)は
+1.0 のスコープ外**(先送り)。Windows 実機の通し検証(#129)は継続。
+
+### セキュリティ / 修正(起動の堅牢化)
+- 🔴 **Secret Service(Linux)が応答しない環境で起動が固まり得た**。keyring の書き込み
+  プローブ(`credentials.CredentialStore`)は GUI スレッドで `set_password` を呼ぶため、
+  ロック解除 GUI を出せない/バスが応答しない状態だと**無限にブロックして起動できない**
+  ことがあった。プローブをデーモンスレッドで実行し、時間内(5 秒)に返らなければ
+  使えないと見なして暗号化ファイルへフォールバックするようにした。例外だけでなく
+  「返ってこない」ケースも弾く。回帰テスト 3 件追加。
+
 ### セキュリティ / 修正(Windows 実機検証 #129 の反映)
 - 🔴 **ローカルペインで Windows のディレクトリジャンクションを削除できなかった(#133)**。
   `os.path.islink()` はジャンクションに False を返すため `shutil.rmtree` に渡っていた。
@@ -438,7 +454,9 @@
 - 削除・上書きの 2 段階確認。
 - CLI 接続診断ツール `tools/doctor.py`。
 
-[Unreleased]: https://github.com/shumaimai/Free-SSH_FTP/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/shumaimai/Free-SSH_FTP/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/shumaimai/Free-SSH_FTP/compare/v0.8.0...v1.0.0
+[0.8.0]: https://github.com/shumaimai/Free-SSH_FTP/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/shumaimai/Free-SSH_FTP/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/shumaimai/Free-SSH_FTP/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/shumaimai/Free-SSH_FTP/compare/v0.4.0...v0.5.0
