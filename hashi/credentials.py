@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 
 from .config import Profile, config_dir
 
@@ -22,6 +23,10 @@ logger = logging.getLogger(__name__)
 
 SERVICE = "Hashi"
 _KINDS = ("password", "passphrase", "sudo")
+# keyring 書き込みプローブのタイムアウト(秒)。Secret Service が応答しない
+# (ロック解除待ちの GUI が出ない headless やバスの不調)と set_password が
+# 無限にブロックし、起動が固まる。時間内に返らなければ使えないと見なす。
+_PROBE_TIMEOUT = 5.0
 
 
 class _FernetFile:
@@ -101,13 +106,7 @@ class CredentialStore:
             usable = not isinstance(kr, _fail.Keyring)
             # 一部環境の chainer は空。実際に書けるか軽く試す
             if usable:
-                try:
-                    keyring.set_password(SERVICE, "__probe__", "1")
-                    keyring.delete_password(SERVICE, "__probe__")
-                except Exception:
-                    logger.debug("keyring 書き込みプローブ失敗→ファイルにフォールバック",
-                                 exc_info=True)
-                    usable = False
+                usable = self._probe_keyring(keyring)
             if usable:
                 self._keyring = keyring
                 self.backend_name = type(kr).__name__
@@ -123,6 +122,37 @@ class CredentialStore:
             logger.warning("暗号化ファイルバックエンドも使えません。認証情報は保存されません",
                            exc_info=True)
             self.backend_name = "none"  # 保存不可 (メモリのみ)
+
+    @staticmethod
+    def _probe_keyring(keyring, timeout: float = _PROBE_TIMEOUT) -> bool:
+        """実際に書けるかを別スレッドで試す。時間内に返らなければ使えないと判断。
+
+        Secret Service(Linux)がロック解除の GUI を出せない環境や、バスが応答
+        しない状態だと `set_password` が無限にブロックし、GUI スレッドで呼んで
+        いる本メソッドがそのまま固まって**起動できなくなる**。例外だけでなく
+        「返ってこない」ケースも弾くため、デーモンスレッドで実行して待つ。
+        取り残したスレッドはデーモンなのでプロセス終了を妨げない。
+        """
+        result = {"ok": False}
+
+        def _run():
+            try:
+                keyring.set_password(SERVICE, "__probe__", "1")
+                keyring.delete_password(SERVICE, "__probe__")
+                result["ok"] = True
+            except Exception:
+                logger.debug("keyring 書き込みプローブ失敗→ファイルにフォールバック",
+                             exc_info=True)
+
+        t = threading.Thread(target=_run, name="keyring-probe", daemon=True)
+        t.start()
+        t.join(timeout)
+        if t.is_alive():
+            logger.warning(
+                "keyring 書き込みプローブが %.0f 秒で完了しません"
+                "(バックエンドが応答しない)→ファイルにフォールバック", timeout)
+            return False
+        return result["ok"]
 
     @property
     def available(self) -> bool:
