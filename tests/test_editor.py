@@ -10,12 +10,14 @@ from PySide6.QtGui import QTextDocument
     ("/x/lib.rs", "c"),
     ("/x/Main.java", "c"),
     ("/x/app.tsx", "js"),
-    ("/x/package.json", "js"),
+    ("/x/package.json", "json"),
     ("/home/tester/.bashrc", "shell"),
     ("/x/deploy.sh", "shell"),
     ("/etc/nginx/nginx.conf", "conf"),
     ("/x/pyproject.toml", "conf"),
-    ("/x/README.md", "plain"),
+    ("/x/README.md", "markup"),
+    ("/x/style.css", "css"),
+    ("/x/query.sql", "sql"),
     ("/x/noext", "plain"),
 ])
 def test_lang_for(path, expected):
@@ -29,6 +31,13 @@ _SAMPLES = {
     "js": 'const f = (x) => { return `t`; } // c\n/* b */\n',
     "shell": 'if [ -f x ]; then\n  echo "hi" # c\nfi\n',
     "conf": '[section]\nkey = value  # c\n',
+    "ruby": 'def f\n  # c\nend\n',
+    "php": '<?php\n// c\necho "hi";\n',
+    "lua": 'function f()\n  -- not hash\nend\n',
+    "sql": 'SELECT * FROM t; -- c\n',
+    "css": '.foo { color: red; /* c */ }\n',
+    "markup": '<div class="x">text</div>\n',
+    "json": '{"a": 1, "b": "c"}\n',
     "plain": 'ただのテキスト\n',
 }
 
@@ -167,7 +176,7 @@ def test_cursor_status_is_one_based(editor_window):
 
 
 def test_lang_for_expanded_extensions():
-    """Issue #64: 追加拡張子の言語判定。"""
+    """追加拡張子の言語判定。"""
     from hashi.editor import _lang_for
 
     assert _lang_for("Main.kt") == "c"
@@ -177,7 +186,39 @@ def test_lang_for_expanded_extensions():
     assert _lang_for("analysis.R") == "shell"
     assert _lang_for(".editorconfig") == "conf"
     assert _lang_for("app.properties") == "conf"
+    assert _lang_for("Gemfile") == "shell"
+    assert _lang_for("schema.graphql") == "js"
     assert _lang_for("readme.unknownext") == "plain"
+
+
+def test_replace_all(editor_window):
+    w = editor_window
+    w.find_edit.setText("alpha")
+    w.replace_edit.setText("omega")
+    w._replace_all()
+    assert "omega" in w.editor.toPlainText()
+    assert "alpha" not in w.editor.toPlainText()
+
+
+def test_goto_line(editor_window):
+    w = editor_window
+    from PySide6.QtGui import QTextCursor
+    cur = w.editor.textCursor()
+    cur.movePosition(QTextCursor.End)
+    w.editor.setTextCursor(cur)
+    block = w.editor.document().findBlockByNumber(1)
+    cur.setPosition(block.position())
+    w.editor.setTextCursor(cur)
+    w._update_cursor_status()
+    assert "行 2" in w.statusBar().currentMessage()
+
+
+def test_status_shows_encoding_and_language(editor_window):
+    w = editor_window
+    w._update_cursor_status()
+    msg = w.statusBar().currentMessage()
+    assert "utf-8" in msg
+    assert "python" in msg
 
 
 # ---- バイナリ / 改行 / BOM を壊さない(Issue #122) --------------------------

@@ -27,6 +27,7 @@ from PySide6.QtGui import (
     QTextFormat,
 )
 from PySide6.QtWidgets import (
+    QInputDialog,
     QLineEdit,
     QMainWindow,
     QMessageBox,
@@ -38,6 +39,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import style
+from .editlang import language_for
 from .hexedit import SNIFF_BYTES, HexEdit, looks_binary
 from .windowfit import fit_to_screen
 
@@ -110,29 +112,41 @@ _SH_KW = (
     "until break continue local export readonly declare source echo cd exit set "
     "unset trap eval exec test"
 ).split()
+_RB_KW = (
+    "def class module end if elsif else unless while until for do begin rescue "
+    "ensure retry return yield break next super self nil true false and or not "
+    "in when then require load include extend attr_reader attr_writer attr_accessor"
+).split()
+_PHP_KW = (
+    "function class public private protected static return if else elseif endif "
+    "while endfor foreach as switch case break continue echo print require "
+    "include namespace use trait interface extends implements new true false "
+    "null array string int float bool void"
+).split()
+_LUA_KW = (
+    "function end if then else elseif while do repeat until for in local return "
+    "break true false nil and or not"
+).split()
+_SQL_KW = (
+    "select from where join inner left right outer on group by order having limit "
+    "offset insert into values update set delete create drop alter table index view "
+    "primary key foreign references not null default and or as distinct union all "
+    "case when then else end exists between like in is"
+).split()
+_CSS_KW = (
+    "color background margin padding border width height display position top left "
+    "right bottom font-size font-weight text-align important inherit none block "
+    "inline flex grid absolute relative fixed static"
+).split()
+_MK_KW = (
+    "html head body div span p a img table tr td th ul ol li h1 h2 h3 h4 h5 h6 "
+    "script style link meta title doctype xmlns"
+).split()
 
 
 def _lang_for(path: str) -> str:
-    ext = os.path.splitext(path)[1].lower().lstrip(".")
-    name = os.path.basename(path).lower()
-    if not ext and name.startswith("."):
-        ext = name.lstrip(".")   # .editorconfig / .gitignore などのドットファイル
-    if ext in ("py", "pyw"):
-        return "python"
-    # Kotlin/Scala/Swift/Dart は C 系のコメント・文字列規則で十分読める(#64)
-    if ext in ("c", "h", "cpp", "cc", "hpp", "cxx", "java", "cs", "go", "rs",
-               "kt", "kts", "scala", "swift", "dart"):
-        return "c"
-    if ext in ("js", "jsx", "ts", "tsx", "json", "vue", "svelte"):
-        return "js"
-    # R / Julia / PowerShell は # コメント + 引用符文字列でシェル規則が近い(#64)
-    if ext in ("sh", "bash", "zsh", "ps1", "psm1", "r", "jl") or name in (
-            "bashrc", ".bashrc", "profile"):
-        return "shell"
-    if ext in ("yml", "yaml", "conf", "cfg", "ini", "toml", "env",
-               "properties", "desktop", "service", "editorconfig"):
-        return "conf"
-    return "plain"
+    """後方互換。新規コードは editlang.language_for を使う。"""
+    return language_for(path)
 
 
 class Highlighter(QSyntaxHighlighter):
@@ -156,37 +170,59 @@ class Highlighter(QSyntaxHighlighter):
 
     def _build(self):
         lang = self.lang
-        kw = {"python": _PY_KW, "c": _C_KW, "js": _JS_KW, "shell": _SH_KW}.get(lang)
+        kw_map = {
+            "python": _PY_KW, "c": _C_KW, "js": _JS_KW, "shell": _SH_KW,
+            "ruby": _RB_KW, "php": _PHP_KW, "lua": _LUA_KW, "sql": _SQL_KW,
+            "css": _CSS_KW, "markup": _MK_KW,
+        }
+        kw = kw_map.get(lang)
         if kw:
             kw_fmt = self._fmt(C_KEYWORD, bold=True)
             self.rules.append(
                 (re.compile(r"\b(" + "|".join(kw) + r")\b"), kw_fmt))
         # 関数呼び出し / 定義名
-        if lang in ("python", "c", "js"):
+        if lang in ("python", "c", "js", "ruby", "php", "lua", "sql"):
             self.rules.append(
                 (re.compile(r"\b([A-Za-z_]\w*)\s*(?=\()"), self._fmt(C_FUNC)))
         # 数値
         self.rules.append(
             (re.compile(r"\b\d+\.?\d*([eE][+-]?\d+)?\b"), self._fmt(C_NUMBER)))
-        # 文字列 (シングル/ダブル)
+        # 文字列 (シングル/ダブル/バッククォート)
         str_fmt = self._fmt(C_STRING)
         self.rules.append((re.compile(r'"[^"\\]*(\\.[^"\\]*)*"'), str_fmt))
         self.rules.append((re.compile(r"'[^'\\]*(\\.[^'\\]*)*'"), str_fmt))
+        if lang in ("js", "shell", "ruby", "php", "lua"):
+            self.rules.append((re.compile(r"`[^`\\]*(\\.[^`\\]*)*`"), str_fmt))
         # デコレータ / プリプロセッサ
         if lang == "python":
             self.rules.append(
                 (re.compile(r"^\s*@\w+"), self._fmt(C_DECORATOR)))
+        if lang == "c":
+            self.rules.append(
+                (re.compile(r"^\s*#\w+"), self._fmt(C_DECORATOR)))
+        if lang == "markup":
+            self.rules.append(
+                (re.compile(r"</?[\w:.-]+"), self._fmt(C_FUNC)))
+            self.rules.append(
+                (re.compile(r"<!--.*?-->"), self._fmt(C_COMMENT, italic=True)))
+        if lang == "css":
+            self.rules.append(
+                (re.compile(r"#[\w-]+"), self._fmt(C_DECORATOR)))
+            self.rules.append(
+                (re.compile(r"\.[\w-]+"), self._fmt(C_FUNC)))
         # コメント (行コメントのみ簡易対応; 末尾で上書き)
         cmt_fmt = self._fmt(C_COMMENT, italic=True)
-        if lang in ("python", "shell", "conf"):
+        if lang in ("python", "shell", "conf", "ruby", "php", "lua", "sql"):
             self._line_comment = (re.compile(r"#.*$"), cmt_fmt)
-        elif lang in ("c", "js"):
+        elif lang in ("c", "js", "css", "json"):
             self._line_comment = (re.compile(r"//.*$"), cmt_fmt)
+        elif lang == "markup":
+            self._line_comment = None
         else:
             self._line_comment = None
         self._cmt_fmt = cmt_fmt
-        # C/JS ブロックコメント用
-        self._block = lang in ("c", "js")
+        # C/JS/CSS ブロックコメント用
+        self._block = lang in ("c", "js", "css", "json")
 
     def highlightBlock(self, text: str):
         for pattern, fmt in self.rules:
@@ -348,7 +384,8 @@ class EditorWindow(QMainWindow):
             self.editor.setPlainText(text)
             self.editor.document().setModified(False)
             self._hl = Highlighter(self.editor.document(),
-                                   _lang_for(remote_path))
+                                   language_for(remote_path))
+            self._lang = language_for(remote_path)
         fit_to_screen(self, 900, 640)
 
         self._build_toolbar()
@@ -365,6 +402,8 @@ class EditorWindow(QMainWindow):
         if not self.is_hex:
             QShortcut(QKeySequence.Find, self, self._focus_find)
             QShortcut(QKeySequence.FindNext, self, lambda: self._find(True))
+            QShortcut(QKeySequence.Replace, self, self._focus_replace)
+            QShortcut(QKeySequence("Ctrl+G"), self, self._goto_line)
             QShortcut(QKeySequence(Qt.Key_Escape), self, self._hide_find)
 
     # ---- ツールバー / 検索 --------------------------------------------------
@@ -385,19 +424,76 @@ class EditorWindow(QMainWindow):
             tb.addWidget(lbl)
             return
         self.find_edit = QLineEdit()
-        self.find_edit.setPlaceholderText("検索 (Ctrl+F)…")
-        self.find_edit.setMaximumWidth(240)
+        self.find_edit.setPlaceholderText("検索 (Ctrl+F)")
+        self.find_edit.setMaximumWidth(200)
         self.find_edit.returnPressed.connect(lambda: self._find(True))
         tb.addWidget(self.find_edit)
+        self.replace_edit = QLineEdit()
+        self.replace_edit.setPlaceholderText("置換 (Ctrl+H)")
+        self.replace_edit.setMaximumWidth(200)
+        tb.addWidget(self.replace_edit)
         tb.addAction("次へ", lambda: self._find(True))
         tb.addAction("前へ", lambda: self._find(False))
+        tb.addAction("置換", self._replace_one)
+        tb.addAction("すべて置換", self._replace_all)
+        tb.addSeparator()
+        self._act_wrap = tb.addAction("折返し", self._toggle_wrap)
+        self._act_wrap.setCheckable(True)
+        tb.addAction("行へ移動", self._goto_line)
 
     def _focus_find(self):
         self.find_edit.setFocus()
         self.find_edit.selectAll()
 
+    def _focus_replace(self):
+        self.replace_edit.setFocus()
+        self.replace_edit.selectAll()
+
     def _hide_find(self):
         self.editor.setFocus()
+
+    def _toggle_wrap(self):
+        if self.editor.lineWrapMode() == QPlainTextEdit.NoWrap:
+            self.editor.setLineWrapMode(QPlainTextEdit.WidgetWidth)
+        else:
+            self.editor.setLineWrapMode(QPlainTextEdit.NoWrap)
+
+    def _goto_line(self):
+        cur = self.editor.textCursor().blockNumber() + 1
+        total = self.editor.blockCount()
+        line, ok = QInputDialog.getInt(
+            self, "行へ移動", f"行番号 (1-{total}):", cur, 1, total)
+        if not ok:
+            return
+        block = self.editor.document().findBlockByNumber(line - 1)
+        cur = self.editor.textCursor()
+        cur.setPosition(block.position())
+        self.editor.setTextCursor(cur)
+        self.editor.setFocus()
+
+    def _replace_one(self):
+        needle = self.find_edit.text()
+        if not needle:
+            return
+        repl = self.replace_edit.text()
+        cur = self.editor.textCursor()
+        if cur.hasSelection() and cur.selectedText().replace("\u2029", "\n") == needle:
+            cur.insertText(repl)
+        self._find(True)
+
+    def _replace_all(self):
+        needle = self.find_edit.text()
+        if not needle:
+            return
+        repl = self.replace_edit.text()
+        text = self.editor.toPlainText()
+        count = text.count(needle)
+        if not count:
+            self.statusBar().showMessage("置換対象が見つかりません", 2000)
+            return
+        self.editor.selectAll()
+        self.editor.insertPlainText(text.replace(needle, repl))
+        self.statusBar().showMessage(f"{count} 件を置換しました", 3000)
 
     def _find(self, forward: bool):
         text = self.find_edit.text()
@@ -465,8 +561,12 @@ class EditorWindow(QMainWindow):
 
     def _update_cursor_status(self):
         c = self.editor.textCursor()
+        eol = {"\r\n": "CRLF", "\r": "CR", "\n": "LF"}.get(
+            self._newline or "\n", "LF")
+        enc = self._encoding or "?"
         self.statusBar().showMessage(
-            f"行 {c.blockNumber() + 1}, 列 {c.columnNumber() + 1}", 0)
+            f"行 {c.blockNumber() + 1}, 列 {c.columnNumber() + 1}  |  "
+            f"{enc}  |  {eol}  |  {self._lang}", 0)
 
     def _update_hex_status(self, offset: int):
         data = self.hex.data()
