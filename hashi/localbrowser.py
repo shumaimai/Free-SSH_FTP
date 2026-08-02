@@ -54,6 +54,7 @@ from PySide6.QtWidgets import (
 
 from . import style
 from .dialogs import DoubleCheckDialog
+from .editlang import should_edit_internally
 from .filebrowser import REMOTE_DRAG_MIME, _SortItem, fmt_mtime, human_size
 
 logger = logging.getLogger(__name__)
@@ -272,9 +273,11 @@ class LocalBrowser(QWidget):
     status_message = Signal(str)
     path_changed = Signal(str)
 
-    def __init__(self, settings=None, start_dir: str = "", parent=None):
+    def __init__(self, settings=None, start_dir: str = "", *,
+                 editor_hub=None, parent=None):
         super().__init__(parent)
         self.settings = settings
+        self.editor_hub = editor_hub
         self.cwd = ""
         self.home = os.path.expanduser("~")
         self._entries: list[dict] = []
@@ -493,12 +496,33 @@ class LocalBrowser(QWidget):
     def selected_paths(self) -> list[str]:
         return [e["path"] for e in self._selected_entries() if e]
 
+    def _should_use_editor(self, e: dict) -> bool:
+        if e.get("is_dir"):
+            return False
+        if self.editor_hub is None or self.settings is None:
+            return False
+        if not self.settings.get("open_text_in_editor", True):
+            return False
+        return should_edit_internally(e["name"])
+
+    def _open_in_editor(self, path: str) -> bool:
+        if self.editor_hub is None:
+            return False
+        win = self.editor_hub.open_path(path, parent=self)
+        if win is not None:
+            self._status(
+                f"内蔵エディタで開きました: {os.path.basename(path)}")
+            return True
+        return False
+
     def _double_clicked(self, item, _col) -> None:
         e = item.data(0, Qt.UserRole + 2)
         if not e:
             return
         if e["is_dir"]:
             self.cd(e["path"])
+            return
+        if self._should_use_editor(e) and self._open_in_editor(e["path"]):
             return
         if not QDesktopServices.openUrl(QUrl.fromLocalFile(e["path"])):
             self._status(f"開けませんでした: {e['name']}")
@@ -636,6 +660,7 @@ class LocalBrowser(QWidget):
         a_up = menu.addAction("リモートへアップロード")
         a_dl = menu.addAction("リモートからここへダウンロード")
         menu.addSeparator()
+        a_edit = menu.addAction("内蔵エディタで開く")
         a_open = menu.addAction("関連付けアプリで開く")
         a_ren = menu.addAction("名前の変更 (F2)")
         a_del = menu.addAction("削除 (Del)")
@@ -646,6 +671,7 @@ class LocalBrowser(QWidget):
         a_ref = menu.addAction("更新 (F5)")
         one_file = len(sel) == 1 and not sel[0]["is_dir"]
         a_up.setEnabled(bool(sel))
+        a_edit.setEnabled(one_file)
         a_open.setEnabled(one_file)
         a_ren.setEnabled(len(sel) == 1)
         a_del.setEnabled(bool(sel))
@@ -655,6 +681,8 @@ class LocalBrowser(QWidget):
             self._request_upload()
         elif chosen is a_dl:
             self._request_download()
+        elif chosen is a_edit and one_file:
+            self._open_in_editor(sel[0]["path"])
         elif chosen is a_open and one_file:
             QDesktopServices.openUrl(QUrl.fromLocalFile(sel[0]["path"]))
         elif chosen is a_ren:

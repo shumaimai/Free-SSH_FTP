@@ -61,7 +61,13 @@ from PySide6.QtWidgets import (
 
 from . import fileactions, style
 from .dialogs import DoubleCheckDialog, SnippetVariablesDialog
-from .editor import EditorWindow
+from .editlang import (
+    AMBIGUOUS_EXTENSIONS,
+    TEXT_EXTENSIONS,
+    looks_text_filename,
+    should_edit_internally,
+)
+from .editor import EDITOR_MAX_BYTES, EditorWindow
 from .permjournal import PermJournal
 from .privilege import OverrideError, PermManager
 from .snippets import expand_snippet
@@ -70,7 +76,6 @@ from .transferqueue import TransferQueue, TransferQueuePanel
 logger = logging.getLogger(__name__)
 
 OPEN_SIZE_WARN = 50 * 1024 * 1024  # ダブルクリックで開く際の警告サイズ
-EDIT_SIZE_LIMIT = 8 * 1024 * 1024  # 内蔵エディタで開く上限
 SEARCH_MAX_RESULTS = 5000  # リモート検索の結果上限（DoS/メモリ対策）
 SEARCH_MAX_DEPTH = 30  # SFTP walk の再帰上限
 
@@ -79,38 +84,9 @@ SEARCH_MAX_DEPTH = 30  # SFTP walk の再帰上限
 # 何かを選択したままドラッグしている」ことだけを伝え、実際に何を落とすかは
 # 受け側がブラウザの選択状態から取る(リモート由来のデータを解釈しない)。
 REMOTE_DRAG_MIME = "application/x-hashi-remote-selection"
-TEXT_EXTS = {
-    "txt", "md", "markdown", "log", "conf", "cfg", "ini", "toml", "yaml", "yml",
-    "json", "xml", "html", "htm", "css", "js", "jsx", "ts", "tsx", "py", "pyw",
-    "sh", "bash", "zsh", "c", "h", "cpp", "cc", "hpp", "cxx", "java", "cs",
-    "go", "rs", "rb", "php", "pl", "sql", "csv", "tsv", "env", "service",
-    "rules", "list", "gitignore", "dockerfile", "makefile", "properties",
-    # Issue #64: 対応拡張子の拡充
-    "kt", "kts", "scala", "swift", "dart", "lua", "r", "jl", "ex", "exs",
-    "erl", "hs", "vue", "svelte", "ps1", "psm1", "bat", "cmd", "vbs",
-    "tex", "bib", "rst", "adoc", "org", "gradle", "cmake", "mk", "am", "in",
-    "spec", "desktop", "socket", "timer", "target", "mount", "network",
-    "editorconfig", "gitattributes", "gitmodules", "npmrc", "lock", "pem",
-    "pub", "crt", "csr", "license", "readme", "changelog", "authors",
-    # Issue #122: ゲームサーバーで実際に触る設定 / データ / スクリプト
-    # Minecraft 系
-    "mcmeta", "mcfunction", "snbt", "mcfunc",
-    # Source / Steam 系(VDF テキスト)
-    "vdf", "acf", "vmt", "res", "gi",
-    # サーバー用スクリプト言語
-    "sp", "sma", "inc", "nut", "sqf", "sqm", "pwn", "gd", "as", "gsc", "cs2",
-    # 設定 / データのバリエーション
-    "jsonc", "json5", "jsonl", "ndjson", "geojson", "props", "plist",
-    "inf", "manifest", "reg", "cnf", "config", "settings", "params", "opts",
-    "ruleset", "banlist", "whitelist", "motd", "srv",
-}
-
-# 「テキストのこともバイナリのこともある」拡張子(Issue #122)。
-# ここに載るものは拡張子で決めず、必ず中身を見てから判定する。
-AMBIGUOUS_EXTS = {
-    "dat", "db", "sav", "save", "bin", "data", "cache", "idx", "index",
-    "pak", "bak", "dump", "store", "state", "meta", "nbt", "mca", "mcr",
-}
+# 後方互換: テスト等が参照する名前
+TEXT_EXTS = TEXT_EXTENSIONS
+AMBIGUOUS_EXTS = AMBIGUOUS_EXTENSIONS
 
 
 def _safe_local_child(root: str, parent: str, name: str) -> str:
@@ -1696,7 +1672,7 @@ class SftpBrowser(QWidget):
         use_editor = (
             self.settings and self.settings.get("open_text_in_editor")
             and self._should_edit_internally(e["name"])
-            and size <= EDIT_SIZE_LIMIT
+            and size <= EDITOR_MAX_BYTES
         )
         if use_editor:
             self.xfer.enqueue({"kind": "open_edit", "remote": full, "size": size})
@@ -1713,30 +1689,20 @@ class SftpBrowser(QWidget):
 
     @staticmethod
     def _looks_text(name: str) -> bool:
-        base = name.lower()
-        if base in TEXT_EXTS:  # 拡張子なしの既知名 (Makefile 等)
-            return True
-        ext = base.rsplit(".", 1)[-1] if "." in base else ""
-        return ext in TEXT_EXTS or "." not in base
+        return looks_text_filename(name)
 
     @classmethod
     def _should_edit_internally(cls, name: str) -> bool:
-        """内蔵エディタで開くべきか(Issue #122)。
-
-        テキスト拡張子に加えて、**中身次第でテキストにもバイナリにもなる拡張子**
-        (`.dat` 等)と拡張子なしも内蔵エディタへ回す。テキストかバイナリかの
-        最終判断は、ダウンロード後に中身を見る `EditorWindow` 側で行い、
-        バイナリなら 16 進エディタで開く(壊さずに覗ける)。
-        """
-        if cls._looks_text(name):
-            return True
-        ext = name.lower().rsplit(".", 1)[-1] if "." in name else ""
-        return ext in AMBIGUOUS_EXTS
+        return should_edit_internally(name)
 
     def _on_opened_for_edit(self, remote: str, local: str):
         try:
-            win = EditorWindow(remote, local, self._save_from_editor,
-                               self.settings, parent=self)
+            win = EditorWindow(
+                local, self.settings,
+                remote_path=remote,
+                save_callback=self._save_from_editor,
+                parent=self,
+            )
         except Exception as e:  # noqa: BLE001
             QMessageBox.warning(self, "エディタ", f"開けませんでした:\n{e}")
             return

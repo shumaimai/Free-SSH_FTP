@@ -4,6 +4,29 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-02
+内蔵エディタを汎用テキストエディタとして強化し、**ローカルファイルもメモ帳のように
+開いて編集できる**ようにした(PRs #142)。
+
+### 追加
+- **内蔵エディタの拡張子対応を大幅拡充** (`hashi/editlang.py` を新設)。
+  150 以上のテキスト系拡張子を単一ソースで管理し、filebrowser と editor が共有。
+- **シンタックスハイライト言語の追加**: ruby / php / lua / sql / css / markup / json。
+- **エディタ機能の強化**: 検索/置換 (Ctrl+F / Ctrl+H)、行へ移動 (Ctrl+G)、
+  折返しトグル、ステータスバー (エンコード / 改行スタイル / 言語)。
+- **ローカルファイルのメモ帳化**:
+  - メニュー「ファイル」に **新規テキスト** (Ctrl+N) / **テキストを開く…** (Ctrl+O)。
+  - ローカルペインでテキストファイルをダブルクリック → 内蔵エディタで開く
+    (設定「テキストファイルは内蔵エディタで開く」ON 時)。
+  - コンテキストメニューに「内蔵エディタで開く」。
+  - Ctrl+S でローカルに直接保存。リモート編集は従来どおり SFTP へ書き戻し。
+- **`LocalEditorHub`**: 開いているエディタ窓の管理(同じファイルは前面表示、無題ファイル対応)。
+
+### 変更
+- `EditorWindow` をローカル/リモート両対応にリファクタ
+  (`local_path` 直接保存 or `remote_path` + コールバック)。
+- 内蔵エディタのファイルサイズ上限を `EDITOR_MAX_BYTES` (8 MB) に統一。
+
 ## [1.0.1] - 2026-08-01
 v1.0.0 直後のメンテナンスリリース。文字化けやフォント依存を避けるため、
 UI・ドキュメント・CLI 出力から絵文字と装飾記号を除去し、日本語テキストまたは
@@ -468,7 +491,8 @@ ASCII に統一した(PRs #140)。
 - 削除・上書きの 2 段階確認。
 - CLI 接続診断ツール `tools/doctor.py`。
 
-[Unreleased]: https://github.com/shumaimai/Free-SSH_FTP/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/shumaimai/Free-SSH_FTP/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/shumaimai/Free-SSH_FTP/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/shumaimai/Free-SSH_FTP/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/shumaimai/Free-SSH_FTP/compare/v0.8.0...v1.0.0
 [0.8.0]: https://github.com/shumaimai/Free-SSH_FTP/compare/v0.7.0...v0.8.0

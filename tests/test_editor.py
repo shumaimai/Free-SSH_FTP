@@ -10,12 +10,14 @@ from PySide6.QtGui import QTextDocument
     ("/x/lib.rs", "c"),
     ("/x/Main.java", "c"),
     ("/x/app.tsx", "js"),
-    ("/x/package.json", "js"),
+    ("/x/package.json", "json"),
     ("/home/tester/.bashrc", "shell"),
     ("/x/deploy.sh", "shell"),
     ("/etc/nginx/nginx.conf", "conf"),
     ("/x/pyproject.toml", "conf"),
-    ("/x/README.md", "plain"),
+    ("/x/README.md", "markup"),
+    ("/x/style.css", "css"),
+    ("/x/query.sql", "sql"),
     ("/x/noext", "plain"),
 ])
 def test_lang_for(path, expected):
@@ -29,6 +31,13 @@ _SAMPLES = {
     "js": 'const f = (x) => { return `t`; } // c\n/* b */\n',
     "shell": 'if [ -f x ]; then\n  echo "hi" # c\nfi\n',
     "conf": '[section]\nkey = value  # c\n',
+    "ruby": 'def f\n  # c\nend\n',
+    "php": '<?php\n// c\necho "hi";\n',
+    "lua": 'function f()\n  -- not hash\nend\n',
+    "sql": 'SELECT * FROM t; -- c\n',
+    "css": '.foo { color: red; /* c */ }\n',
+    "markup": '<div class="x">text</div>\n',
+    "json": '{"a": 1, "b": "c"}\n',
     "plain": 'ただのテキスト\n',
 }
 
@@ -53,10 +62,11 @@ def test_code_edit_line_number_width_grows(qapp):
 
 
 class _FakeSettings:
-    _d = {"editor_font_size": 12, "editor_tab_width": 4}
+    _d = {"editor_font_size": 12, "editor_tab_width": 4,
+          "open_text_in_editor": True}
 
-    def get(self, key):
-        return self._d[key]
+    def get(self, key, default=None):
+        return self._d.get(key, default)
 
 
 @pytest.fixture()
@@ -69,7 +79,11 @@ def editor_window(qapp, tmp_path):
     def save_cb(remote, local, done):
         calls.append((remote, local, done))
 
-    w = EditorWindow("/srv/sample.py", str(p), save_cb, _FakeSettings())
+    w = EditorWindow(
+        str(p), _FakeSettings(),
+        remote_path="/srv/sample.py",
+        save_callback=save_cb,
+    )
     w._calls = calls
     yield w
     w.editor.document().setModified(False)  # closeEvent の確認ダイアログ回避
@@ -167,7 +181,7 @@ def test_cursor_status_is_one_based(editor_window):
 
 
 def test_lang_for_expanded_extensions():
-    """Issue #64: 追加拡張子の言語判定。"""
+    """追加拡張子の言語判定。"""
     from hashi.editor import _lang_for
 
     assert _lang_for("Main.kt") == "c"
@@ -177,7 +191,39 @@ def test_lang_for_expanded_extensions():
     assert _lang_for("analysis.R") == "shell"
     assert _lang_for(".editorconfig") == "conf"
     assert _lang_for("app.properties") == "conf"
+    assert _lang_for("Gemfile") == "shell"
+    assert _lang_for("schema.graphql") == "js"
     assert _lang_for("readme.unknownext") == "plain"
+
+
+def test_replace_all(editor_window):
+    w = editor_window
+    w.find_edit.setText("alpha")
+    w.replace_edit.setText("omega")
+    w._replace_all()
+    assert "omega" in w.editor.toPlainText()
+    assert "alpha" not in w.editor.toPlainText()
+
+
+def test_goto_line(editor_window):
+    w = editor_window
+    from PySide6.QtGui import QTextCursor
+    cur = w.editor.textCursor()
+    cur.movePosition(QTextCursor.End)
+    w.editor.setTextCursor(cur)
+    block = w.editor.document().findBlockByNumber(1)
+    cur.setPosition(block.position())
+    w.editor.setTextCursor(cur)
+    w._update_cursor_status()
+    assert "行 2" in w.statusBar().currentMessage()
+
+
+def test_status_shows_encoding_and_language(editor_window):
+    w = editor_window
+    w._update_cursor_status()
+    msg = w.statusBar().currentMessage()
+    assert "utf-8" in msg
+    assert "python" in msg
 
 
 # ---- バイナリ / 改行 / BOM を壊さない(Issue #122) --------------------------
@@ -187,9 +233,12 @@ def _open_editor(tmp_path, name: str, raw: bytes):
     p = tmp_path / name
     p.write_bytes(raw)
     calls = []
-    w = EditorWindow("/srv/" + name, str(p),
-                     lambda remote, local, done: calls.append(
-                         (remote, local, done)), _FakeSettings())
+    w = EditorWindow(
+        str(p), _FakeSettings(),
+        remote_path="/srv/" + name,
+        save_callback=lambda remote, local, done: calls.append(
+            (remote, local, done)),
+    )
     w._calls = calls
     return w, p
 
@@ -276,4 +325,44 @@ def test_hex_mode_has_no_find_widgets(qapp, tmp_path):
     assert w.is_hex and w.find_edit is None
     w._update_title()
     assert "[HEX]" in w.windowTitle()
+    w.close()
+
+
+def test_local_save_without_remote_callback(qapp, tmp_path):
+    """ローカル専用の開き方では Ctrl+S がその場に保存し、コールバックを呼ばない。"""
+    from hashi.editor import EditorWindow
+    p = tmp_path / "memo.txt"
+    p.write_text("hello\n", encoding="utf-8")
+    w = EditorWindow(str(p), _FakeSettings())
+    w.editor.selectAll()
+    w.editor.insertPlainText("world\n")
+    w.save()
+    assert p.read_text(encoding="utf-8") == "world\n"
+    assert not w.editor.document().isModified()
+    assert w.remote_path is None
+    w.close()
+
+
+def test_local_editor_hub_opens_and_tracks(qapp, tmp_path):
+    from hashi.editor import LocalEditorHub
+    p = tmp_path / "notes.md"
+    p.write_text("# title\n", encoding="utf-8")
+    hub = LocalEditorHub(_FakeSettings())
+    w1 = hub.open_path(str(p))
+    assert w1 is not None
+    assert str(p) in hub._open
+    w2 = hub.open_path(str(p))
+    assert w2 is w1
+    w1.editor.document().setModified(False)
+    w1.close()
+    assert str(p) not in hub._open
+
+
+def test_local_editor_hub_new_file(qapp):
+    from hashi.editor import LocalEditorHub
+    hub = LocalEditorHub(_FakeSettings())
+    w = hub.new_file()
+    assert w._untitled
+    assert w.editor.toPlainText() == ""
+    w.editor.document().setModified(False)
     w.close()
