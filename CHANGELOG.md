@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-08-02
+関連付け起動で内蔵エディタのみを起動できるようにした(PRs #143)。
+
+### 追加
+- **関連付け起動**: `Hashi.exe ファイル名` や Windows の「プログラムから選択」で
+  渡されたとき、SSH/SFTP のメイン画面を出さず**内蔵エディタだけ**を起動する。
+  最後のエディタ窓を閉じるとアプリも終了する。
+
 ## [1.1.0] - 2026-08-02
 内蔵エディタを汎用テキストエディタとして強化し、**ローカルファイルもメモ帳のように
 開いて編集できる**ようにした(PRs #142)。
@@ -494,7 +502,8 @@ ASCII に統一した(PRs #140)。
 - 削除・上書きの 2 段階確認。
 - CLI 接続診断ツール `tools/doctor.py`。
 
-[Unreleased]: https://github.com/shumaimai/Free-SSH_FTP/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/shumaimai/Free-SSH_FTP/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/shumaimai/Free-SSH_FTP/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/shumaimai/Free-SSH_FTP/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/shumaimai/Free-SSH_FTP/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/shumaimai/Free-SSH_FTP/compare/v0.8.0...v1.0.0
