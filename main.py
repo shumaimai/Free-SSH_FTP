@@ -1,6 +1,9 @@
 """Hashi — SSH / SFTP クライアント  エントリポイント
 
-起動: python main.py
+起動:
+  python main.py              … 通常(接続 UI)
+  python main.py memo.txt     … 内蔵エディタのみ(関連付け起動と同じ)
+  python main.py --editor     … 内蔵エディタのみ(無題)
 
 ログ: 既定は WARNING 以上を標準エラーへ。環境変数 HASHI_LOG_LEVEL で
       レベルを変えられる (例: HASHI_LOG_LEVEL=DEBUG)。詳細は setup_logging を参照。
@@ -12,7 +15,7 @@ import sys
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
-from hashi.mainwindow import AppWindow
+from hashi.launch import dispatch, normalize_paths, run_editor_only
 
 
 def setup_logging() -> None:
@@ -59,11 +62,21 @@ def apply_dark_theme(app: QApplication) -> None:
     app.setStyleSheet(style.app_stylesheet())
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     setup_logging()
-    app = QApplication(sys.argv)
+    # QApplication は sys.argv を消費するので、先に解析する
+    cli_argv = argv if argv is not None else sys.argv
+    mode, ns = dispatch(cli_argv)
+    app = QApplication(cli_argv)
     app.setApplicationName("Hashi")
     apply_dark_theme(app)
+
+    if mode == "editor":
+        paths = normalize_paths(ns.files)
+        return run_editor_only(
+            app, paths, new_if_empty=bool(ns.editor or not paths))
+
+    from hashi.mainwindow import AppWindow
     win = AppWindow()
     win.show()
     return app.exec()
