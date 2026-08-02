@@ -20,7 +20,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QKeySequence
 from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
@@ -63,6 +63,7 @@ from .dialogs import (
     TunnelDialog,
     ask_secret,
 )
+from .editor import LocalEditorHub
 from .filebrowser import SftpBrowser
 from .forward import DynamicForward, Forward, LocalForward, RemoteForward
 from .keygen import generate_key, location_warning, register_public_key
@@ -630,7 +631,8 @@ class SessionTab(QWidget):
     request_session_log = Signal()
 
     def __init__(self, session: SshSession, settings: Settings,
-                 secret_ctx: SecretContext, parent=None, mode: str = "both"):
+                 secret_ctx: SecretContext, parent=None, mode: str = "both",
+                 editor_hub=None):
         super().__init__(parent)
         self.session = session
         self.settings = settings
@@ -756,6 +758,7 @@ class SessionTab(QWidget):
             self.local = LocalBrowser(
                 settings=settings,
                 start_dir=settings.get("local_start_dir") or "",
+                editor_hub=editor_hub,
             )
             self._local_pane = self._make_pane("ローカル (この PC)", self.local)
             self._browser_pane = self._make_pane("リモート (SFTP)", self.browser)
@@ -1923,7 +1926,8 @@ class SessionPage(QWidget):
                             self.settings, self)
         if worker.used_password:
             ctx.note_login_password(worker.used_password)
-        tab = SessionTab(session, self.settings, ctx, mode=self._mode)
+        tab = SessionTab(session, self.settings, ctx, mode=self._mode,
+                         editor_hub=self._app.editor_hub)
         self.session_tab = tab
         # ツールバーからの依頼は既存のメニュー処理へ委譲する(ロジックを重複させない)
         tab.request_tunnel.connect(self._add_tunnel)
@@ -2323,6 +2327,7 @@ class AppWindow(_SharedOps, QMainWindow):
         self.settings = services["settings"]
         self.credentials = services["credentials"]
         self.snippets = services["snippets"]
+        self.editor_hub = LocalEditorHub(self.settings)
         self._keygen_workers: list[KeygenWorker] = []
         self._p2p_workers: list[_P2PWorkerBase] = []
         self._cloud_workers: list[CloudSyncWorker] = []
@@ -2479,9 +2484,26 @@ class AppWindow(_SharedOps, QMainWindow):
         if SettingsDialog(self.settings, self).exec():
             self._apply_ui_settings_live()
 
+    def _editor_new_file(self) -> None:
+        start = ""
+        page = self.current_page()
+        if page is not None and getattr(page, "local", None):
+            start = page.local.cwd or ""
+        self.editor_hub.new_file(parent=self, start_dir=start)
+
+    def _editor_open_file(self) -> None:
+        self.editor_hub.open_file_dialog(parent=self)
+
     # ---- メニュー -----------------------------------------------------------
     def _build_menu(self):
         m_file = self.menuBar().addMenu("ファイル")
+        act_new = m_file.addAction("新規テキスト")
+        act_new.setShortcut(QKeySequence.New)
+        act_new.triggered.connect(self._editor_new_file)
+        act_open = m_file.addAction("テキストを開く…")
+        act_open.setShortcut(QKeySequence.Open)
+        act_open.triggered.connect(self._editor_open_file)
+        m_file.addSeparator()
         m_file.addAction("サーバー一覧タブへ", self.open_launcher)
         m_file.addAction("新しい接続…", self._new_profile)
         m_file.addSeparator()

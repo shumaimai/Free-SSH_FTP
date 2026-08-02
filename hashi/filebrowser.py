@@ -67,7 +67,7 @@ from .editlang import (
     looks_text_filename,
     should_edit_internally,
 )
-from .editor import EditorWindow
+from .editor import EDITOR_MAX_BYTES, EditorWindow
 from .permjournal import PermJournal
 from .privilege import OverrideError, PermManager
 from .snippets import expand_snippet
@@ -76,7 +76,6 @@ from .transferqueue import TransferQueue, TransferQueuePanel
 logger = logging.getLogger(__name__)
 
 OPEN_SIZE_WARN = 50 * 1024 * 1024  # ダブルクリックで開く際の警告サイズ
-EDIT_SIZE_LIMIT = 8 * 1024 * 1024  # 内蔵エディタで開く上限
 SEARCH_MAX_RESULTS = 5000  # リモート検索の結果上限（DoS/メモリ対策）
 SEARCH_MAX_DEPTH = 30  # SFTP walk の再帰上限
 
@@ -1673,7 +1672,7 @@ class SftpBrowser(QWidget):
         use_editor = (
             self.settings and self.settings.get("open_text_in_editor")
             and self._should_edit_internally(e["name"])
-            and size <= EDIT_SIZE_LIMIT
+            and size <= EDITOR_MAX_BYTES
         )
         if use_editor:
             self.xfer.enqueue({"kind": "open_edit", "remote": full, "size": size})
@@ -1698,8 +1697,12 @@ class SftpBrowser(QWidget):
 
     def _on_opened_for_edit(self, remote: str, local: str):
         try:
-            win = EditorWindow(remote, local, self._save_from_editor,
-                               self.settings, parent=self)
+            win = EditorWindow(
+                local, self.settings,
+                remote_path=remote,
+                save_callback=self._save_from_editor,
+                parent=self,
+            )
         except Exception as e:  # noqa: BLE001
             QMessageBox.warning(self, "エディタ", f"開けませんでした:\n{e}")
             return
