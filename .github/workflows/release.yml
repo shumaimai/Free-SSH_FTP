@@ -44,11 +44,19 @@ jobs:
         run: |
           Compress-Archive -Path dist/Hashi.exe -DestinationPath "dist/Hashi-${{ github.ref_name }}-windows-x64.zip"
 
+      - name: リリースノート生成
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          python tools/release_notes.py CHANGELOG.md "$TAG" > release-notes.md
+          echo "---- release notes ----"
+          cat release-notes.md
+
       - name: リリース作成 + 添付
         uses: softprops/action-gh-release@v2
         with:
           name: Hashi ${{ github.ref_name }}
-          body_path: CHANGELOG.md
+          body_path: release-notes.md
           draft: false
           prerelease: false
           files: |
