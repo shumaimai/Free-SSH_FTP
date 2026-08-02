@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 import re
 
-from PySide6.QtCore import QRect, QSize, Qt, Signal
+from PySide6.QtCore import QObject, QRect, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -668,28 +668,34 @@ class EditorWindow(QMainWindow):
         ev.accept()
 
 
-class LocalEditorHub:
+class LocalEditorHub(QObject):
     """ローカルファイル用の内蔵エディタ窓をまとめて開く(メモ帳のように使う)。"""
 
-    def __init__(self, settings):
+    all_closed = Signal()   # 開いている窓が 0 になったとき
+
+    def __init__(self, settings, parent=None):
+        super().__init__(parent)
         self.settings = settings
         self._open: dict[str, EditorWindow] = {}   # local_path -> window
         self._untitled: set[int] = set()          # id(win) for 無題
 
-    def _track(self, win: EditorWindow) -> None:
-        key = win.local_path or f"__untitled_{id(win)}"
-        self._open[key] = win
-        if win._untitled:
-            self._untitled.add(id(win))
-        win.closed.connect(self._on_closed)
+    def has_windows(self) -> bool:
+        return bool(self._open)
 
     def _on_closed(self, win: EditorWindow) -> None:
         key = win.local_path or f"__untitled_{id(win)}"
         self._open.pop(key, None)
         self._untitled.discard(id(win))
+        if not self._open:
+            self.all_closed.emit()
 
-    def open_path(self, path: str, parent=None) -> EditorWindow | None:
-        """ローカルファイルを内蔵エディタで開く。既に開いていれば前面へ。"""
+    def open_path(self, path: str, parent=None, *,
+                  force: bool = False) -> EditorWindow | None:
+        """ローカルファイルを内蔵エディタで開く。既に開いていれば前面へ。
+
+        ``force=True`` のときは設定や拡張子判定をスキップする
+        (関連付け起動でユーザーが明示的に Hashi を選んだ場合向け)。
+        """
         path = os.path.abspath(path)
         if path in self._open:
             w = self._open[path]
@@ -698,10 +704,11 @@ class LocalEditorHub:
             return w
         if not os.path.isfile(path):
             return None
-        if not self.settings.get("open_text_in_editor", True):
-            return None
-        if not should_edit_internally(os.path.basename(path)):
-            return None
+        if not force:
+            if not self.settings.get("open_text_in_editor", True):
+                return None
+            if not should_edit_internally(os.path.basename(path)):
+                return None
         try:
             size = os.path.getsize(path)
         except OSError:
@@ -738,3 +745,10 @@ class LocalEditorHub:
         if not path:
             return None
         return self.open_path(path, parent=parent)
+
+    def _track(self, win: EditorWindow) -> None:
+        key = win.local_path or f"__untitled_{id(win)}"
+        self._open[key] = win
+        if win._untitled:
+            self._untitled.add(id(win))
+        win.closed.connect(self._on_closed)
