@@ -139,3 +139,9 @@ hashi/dialogs.py       接続 / ホスト鍵 / 秘密入力 / 設定 / トンネ
 hashi/mainwindow.py    サイドバー + セッションタブ + 接続ワーカー + 自動入力配線
 tools/doctor.py        CLI 接続診断
 ```
+
+## 開発支援への謝辞
+
+- **ChatGPT (OpenAI)** — ターミナルUI・スクロールバック選択の修正、回帰テスト、リリース準備について開発支援を行いました（例: [#146](https://github.com/shumaimai/Free-SSH_FTP/pull/146), [#147](https://github.com/shumaimai/Free-SSH_FTP/pull/147), [#148](https://github.com/shumaimai/Free-SSH_FTP/pull/148), [#149](https://github.com/shumaimai/Free-SSH_FTP/pull/149)）。
+
+AIによる支援の記録であり、Gitコミットの著者・責任者やOpenAIによる公式な承認を意味しません。
