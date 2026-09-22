@@ -152,6 +152,10 @@ class _TerminalScreen(pyte.HistoryScreen):
         self.mouse_sgr = False
         self._main_buffer = None
         self._main_history = None
+        self._main_wrapped: set[int] = set()
+        self._main_size: tuple[int, int] | None = None
+        self._main_margins = None
+        self._main_cursor: tuple[int, int] | None = None
         self._saved_cursor = None
         # 自動折返し(DECAWM)で生まれた「前行の継続」行の集合(Issue #100)。
         # リサイズ時にカーソルの論理行を再折返しするために追跡する。
@@ -166,6 +170,10 @@ class _TerminalScreen(pyte.HistoryScreen):
         self.mouse_sgr = False
         self._main_buffer = None
         self._main_history = None
+        self._main_wrapped = set()
+        self._main_size = None
+        self._main_margins = None
+        self._main_cursor = None
         self._saved_cursor = None
         self.wrapped = set()
         super().reset()
@@ -206,10 +214,41 @@ class _TerminalScreen(pyte.HistoryScreen):
         if scrolls and self.wrapped:
             self.wrapped = {y + 1 for y in self.wrapped if y + 1 < self.lines}
 
+    def erase_in_line(self, how=0, *args, **kwargs):
+        """行内容を書き換える操作で無効になったソフト折返し情報を捨てる。
+
+        pi-tui/OpenClaw の差分描画は CSI 2K で行を消してから同じ行を
+        描き直す。以前の自動折返しフラグを残すと、その後のリサイズ時に
+        無関係な UI 行を 1 本の論理行として結合し、入力位置がずれる。
+        """
+        y = self.cursor.y
+        super().erase_in_line(how, *args, **kwargs)
+        if how == 2:
+            self.wrapped.discard(y)
+            self.wrapped.discard(y + 1)
+        elif how == 0:
+            # 行末を消すと、次行はこの行からの継続ではなくなる。
+            self.wrapped.discard(y + 1)
+            if self.cursor.x == 0:
+                self.wrapped.discard(y)
+        elif how == 1:
+            # 行頭を消すと、この行は前行からの継続ではなくなる。
+            self.wrapped.discard(y)
+            if self.cursor.x >= self.columns - 1:
+                self.wrapped.discard(y + 1)
+
     def erase_in_display(self, how=0, *args, **kwargs):
         super().erase_in_display(how, *args, **kwargs)
         if how in (2, 3):
             self.wrapped.clear()
+        elif how == 0:
+            self.wrapped.difference_update(
+                y for y in self.wrapped if y > self.cursor.y
+            )
+        elif how == 1:
+            self.wrapped.difference_update(
+                y for y in self.wrapped if y <= self.cursor.y
+            )
 
     # ---- リフロー第 1 段 (Issue #100): カーソルの論理行のみ ----------------
     def resize(self, lines=None, columns=None):
@@ -394,8 +433,11 @@ class _TerminalScreen(pyte.HistoryScreen):
         if self.in_alt_screen:
             return
         self.in_alt_screen = True
+        self._main_cursor = (self.cursor.x, self.cursor.y)
+        self._main_size = (self.lines, self.columns)
+        self._main_margins = self.margins
         if save_cursor:
-            self._saved_cursor = (self.cursor.x, self.cursor.y)
+            self._saved_cursor = self._main_cursor
         self._main_buffer = self.buffer
         self._main_history = self.history
         self._main_wrapped = set(self.wrapped)
@@ -409,24 +451,64 @@ class _TerminalScreen(pyte.HistoryScreen):
         self.dirty.update(range(self.lines))
         self.cursor_position()
 
+    def _restore_margins(self, margins):
+        if margins is None:
+            self.margins = None
+            return
+        top = max(0, min(margins.top, self.lines - 1))
+        bottom = max(0, min(margins.bottom, self.lines - 1))
+        self.margins = type(margins)(top, bottom) if bottom - top >= 1 else None
+
     def _exit_alt_screen(self, restore_cursor):
         if not self.in_alt_screen:
             return
+
+        # 代替画面のカーソルと現在サイズは、メイン画面を復元する前に退避する。
+        alt_cursor = (self.cursor.x, self.cursor.y)
+        target_size = (self.lines, self.columns)
+        main_size = self._main_size or target_size
+        main_cursor = self._main_cursor or alt_cursor
+        main_margins = self._main_margins
+
         self.in_alt_screen = False
         if self._main_buffer is not None:
             self.buffer = self._main_buffer
         if self._main_history is not None:
             self.history = self._main_history
-        self.wrapped = getattr(self, "_main_wrapped", set())
+        self.wrapped = set(self._main_wrapped)
+
+        if main_size != target_size:
+            # 代替画面だけを新サイズへ resize している間、退避中のメイン画面は
+            # 旧サイズのまま。旧 geometry を一度戻してから通常の resize/reflow
+            # 経路へ通し、復帰時の切り詰めとカーソルずれを防ぐ。
+            self.lines, self.columns = main_size
+            self._restore_margins(main_margins)
+            self.cursor.x, self.cursor.y = main_cursor
+            self.ensure_hbounds()
+            self.ensure_vbounds()
+            self.resize(*target_size)
+            self._restore_margins(main_margins)
+            if not restore_cursor:
+                self.cursor.x, self.cursor.y = alt_cursor
+                self.ensure_hbounds()
+                self.ensure_vbounds()
+        else:
+            self._restore_margins(main_margins)
+            if restore_cursor and self._saved_cursor is not None:
+                self.cursor.x, self.cursor.y = self._saved_cursor
+            else:
+                self.cursor.x, self.cursor.y = alt_cursor
+            self.ensure_hbounds()
+            self.ensure_vbounds()
+
         self._main_wrapped = set()
         self._main_buffer = None
         self._main_history = None
-        self.dirty.update(range(self.lines))
-        if restore_cursor and self._saved_cursor is not None:
-            self.cursor.x, self.cursor.y = self._saved_cursor
-            self.ensure_hbounds()
-            self.ensure_vbounds()
+        self._main_size = None
+        self._main_margins = None
+        self._main_cursor = None
         self._saved_cursor = None
+        self.dirty.update(range(self.lines))
 
 
 class TerminalWidget(QWidget):
@@ -463,6 +545,9 @@ class TerminalWidget(QWidget):
 
         self._cols, self._rows = 80, 24
         self.screen = _TerminalScreen(self._cols, self._rows, history=5000, ratio=0.5)
+        # DA/DSR など、端末からプロセスへ返す応答を SSH チャネルへ流す。
+        # modern TUI は能力判定やカーソル位置同期にこれらを使う。
+        self.screen.write_process_input = self._write_process_input
         self.stream = pyte.ByteStream(self.screen)
 
         self._font_size = font_size
@@ -707,6 +792,9 @@ class TerminalWidget(QWidget):
         self.send_bytes((secret + "\n").encode("utf-8"))
 
     # ---- 送信 ---------------------------------------------------------------
+    def _write_process_input(self, data: str):
+        self.send_bytes(data.encode("utf-8"))
+
     def send_bytes(self, data: bytes):
         if self._channel is None or self._closed:
             return
