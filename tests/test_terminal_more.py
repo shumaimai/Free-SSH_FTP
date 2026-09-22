@@ -115,6 +115,19 @@ def test_send_bytes_without_channel_is_noop(term):
     term.send_password("x")
 
 
+def test_terminal_replies_to_device_and_cursor_queries(term):
+    """DA/DSR 応答を SSH 側へ返し、modern TUI の端末同期を成立させる。"""
+    ch = FakeChannel()
+    term._channel = ch
+
+    term._on_data(b"\x1b[c")
+    assert ch.sent == b"\x1b[?6c"
+
+    ch.sent = b""
+    term._on_data(b"\x1b[4;7H\x1b[6n")
+    assert ch.sent == b"\x1b[4;7R"
+
+
 def test_bracketed_paste_mode_set_and_reset(term):
     """CSI ?2004 h/l でブラケットペーストモードが切り替わる。"""
     assert term.screen.bracketed_paste is False
@@ -172,6 +185,47 @@ def test_alt_screen_1049_restores_cursor(term):
     term._on_data(b"\x1b[?1049h\x1b[10;20H")
     term._on_data(b"\x1b[?1049l")
     assert (term.screen.cursor.x, term.screen.cursor.y) == (7, 4)
+
+
+def test_alt_screen_resize_reflows_saved_main_content(term):
+    """代替画面中の resize 後も、戻ったメイン画面を新しい幅へ再配置する。"""
+    term._on_data(b"0123456789abcdefghi")  # 19 cells on the original 80-col main screen
+    term._on_data(b"\x1b[?1049h")
+    term.screen.resize(24, 10)
+    term._on_data(b"model picker")
+    term._on_data(b"\x1b[?1049l")
+
+    assert term.screen.columns == 10
+    assert term.screen.display[0] == "0123456789"
+    assert term.screen.display[1].startswith("abcdefghi")
+    assert (term.screen.cursor.x, term.screen.cursor.y) == (9, 1)
+
+
+def test_alt_screen_restores_main_scroll_region(term):
+    """TUI が設定した DECSTBM をメイン画面へ漏らさない。"""
+    assert term.screen.margins is None
+    term._on_data(b"\x1b[?1049h\x1b[3;8r")
+    assert term.screen.margins is not None
+    term._on_data(b"\x1b[?1049l")
+    assert term.screen.margins is None
+
+
+def test_openclaw_style_line_redraw_drops_stale_soft_wrap(term):
+    """pi-tui の CSI 2K 差分描画で、以前の折返し行を継続扱いしない。"""
+    term.screen.resize(6, 10)
+    term._on_data(b"abcdefghijk")
+    assert 1 in term.screen.wrapped
+
+    # TuiMainScreen が overlay/model picker 更新時に使う代表的な差分描画:
+    # synchronized output + relative cursor move + CR + erase line + redraw.
+    term._on_data(
+        b"\x1b[?2026h"
+        b"\x1b[1A\r\x1b[2Kopenclaw\r\n"
+        b"\x1b[2K> model"
+        b"\x1b[?2026l"
+        b"\x1b[4G\x1b[?25l"
+    )
+    assert term.screen.wrapped == set()
 
 
 @pytest.mark.parametrize("mode", [47, 1047])
