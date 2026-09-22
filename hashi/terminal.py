@@ -571,7 +571,10 @@ class TerminalWidget(QWidget):
         self._resize_timer.setInterval(80)
         self._resize_timer.timeout.connect(self._apply_pending_grid)
 
-        self._sel_anchor: tuple[int, int] | None = None  # (row, col)
+        # 選択位置は「現在の画面内 row」ではなく、スクロールバック全体の
+        # 文書行番号で保持する。選択中に viewport をスクロールしても、
+        # 開始点が別の行へずれないようにする。
+        self._sel_anchor: tuple[int, int] | None = None  # (document_row, col)
         self._sel_end: tuple[int, int] | None = None
         self._mouse_pressed_code: int | None = None   # レポート送信済みの押下ボタン
         self._last_mouse_cell: tuple[int, int] | None = None
@@ -894,13 +897,18 @@ class TerminalWidget(QWidget):
         cols = self.screen.columns
         return "".join(line[c].data or "" for c in range(cols)).rstrip()
 
+    def _document_rows(self):
+        """履歴上部 + 可視バッファ + 履歴下部を文書順の行として返す。"""
+        scr = self.screen
+        return (
+            list(scr.history.top)
+            + [scr.buffer[y] for y in range(scr.lines)]
+            + list(scr.history.bottom)
+        )
+
     def _all_lines(self) -> list[str]:
         """履歴上部 + 可視バッファ + 履歴下部を文書順で返す。"""
-        scr = self.screen
-        out = [self._row_text(r) for r in scr.history.top]
-        out += [self._row_text(scr.buffer[y]) for y in range(scr.lines)]
-        out += [self._row_text(r) for r in scr.history.bottom]
-        return out
+        return [self._row_text(r) for r in self._document_rows()]
 
     def _search_norm(self, text: str) -> str:
         return text if self._search_case else text.casefold()
@@ -1176,6 +1184,11 @@ class TerminalWidget(QWidget):
         row = max(0, min(self._rows - 1, int(pos.y() / self._chh)))
         return row, col
 
+    def _document_cell(self, cell: tuple[int, int]) -> tuple[int, int]:
+        """可視セル(row, col)をスクロールバック全体の座標へ変換する。"""
+        row, col = cell
+        return len(self.screen.history.top) + row, col
+
     # ---- マウスレポート (xterm 互換。Issue #6) --------------------------------
     # アプリ (vim / htop 等) が ?1000/?1002/?1003 を有効にしている間は
     # マウスイベントをエスケープシーケンスでリモートへ送る。
@@ -1231,7 +1244,9 @@ class TerminalWidget(QWidget):
                              ev.position().toPoint(), pressed=True)
             return
         if ev.button() == Qt.LeftButton:
-            self._sel_anchor = self._cell_at(ev.position().toPoint())
+            self._sel_anchor = self._document_cell(
+                self._cell_at(ev.position().toPoint())
+            )
             self._sel_end = self._sel_anchor
             self._dirty = True
         elif ev.button() == Qt.MiddleButton:
@@ -1264,7 +1279,9 @@ class TerminalWidget(QWidget):
                              pressed=True, motion=True)
             return
         if ev.buttons() & Qt.LeftButton and self._sel_anchor is not None:
-            self._sel_end = self._cell_at(ev.position().toPoint())
+            self._sel_end = self._document_cell(
+                self._cell_at(ev.position().toPoint())
+            )
             self._dirty = True
 
     def mouseReleaseEvent(self, ev):
@@ -1346,12 +1363,19 @@ class TerminalWidget(QWidget):
         if rng is None:
             return
         start, end = rng
+        rows = self._document_rows()
+        if not rows:
+            return
         lines = []
         r0, r1 = start // self._cols, end // self._cols
+        r0 = max(0, min(r0, len(rows) - 1))
+        r1 = max(0, min(r1, len(rows) - 1))
+        if r0 > r1:
+            return
         for row in range(r0, r1 + 1):
             c0 = start % self._cols if row == r0 else 0
             c1 = end % self._cols if row == r1 else self._cols - 1
-            buf_row = self.screen.buffer[row]
+            buf_row = rows[row]
             chars = []
             col = c0
             while col <= c1:
@@ -1374,6 +1398,7 @@ class TerminalWidget(QWidget):
         p.setFont(self._font)
 
         sel = self._sel_range() if self._has_selection() else None
+        viewport_top = len(self.screen.history.top)
         cw, chh = self._cw, self._chh
         buffer = self.screen.buffer
 
@@ -1406,7 +1431,8 @@ class TerminalWidget(QWidget):
                 in_hit = col in hit_cells
                 if in_hit:
                     fg, bg = self._c_hit_fg, self._c_hit_bg
-                in_sel = sel is not None and sel[0] <= row * self._cols + col <= sel[1]
+                doc_index = (viewport_top + row) * self._cols + col
+                in_sel = sel is not None and sel[0] <= doc_index <= sel[1]
                 if in_sel:
                     bg = self._c_sel
                 cell = QRectF(col * cw, y, cw * w, chh)

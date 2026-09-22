@@ -61,6 +61,72 @@ def test_sel_range_normalizes_reverse_drag(term):
     assert hi == 2 * term._cols + 5
 
 
+def _fill_scrollback_for_selection(term):
+    term.screen.resize(4, 20)
+    term._cols, term._rows = 20, 4
+    term._on_data(
+        b"line00\r\nline01\r\nline02\r\nline03\r\n"
+        b"line04\r\nline05\r\nline06\r\nline07\r\n"
+    )
+
+
+def test_selection_document_cell_tracks_scrollback(term):
+    """viewport を動かしても、選択セルを同じ文書座標へ写せる。"""
+    _fill_scrollback_for_selection(term)
+    before = term._all_lines()
+    row7 = next(i for i, text in enumerate(term.screen.display)
+                if text.startswith("line07"))
+    anchor = term._document_cell((row7, 5))
+    assert before[anchor[0]].startswith("line07")
+
+    term.screen.prev_page()
+    after = term._all_lines()
+    assert after == before
+
+    top = term._document_cell((0, 0))
+    assert after[top[0]] == term.screen.display[0].rstrip()
+    assert top[0] < anchor[0]
+
+
+def test_copy_selection_across_scrollback(term):
+    """最新側から過去へスクロールしながら選択しても正しい行列をコピーする。"""
+    _fill_scrollback_for_selection(term)
+    row7 = next(i for i, text in enumerate(term.screen.display)
+                if text.startswith("line07"))
+    anchor = term._document_cell((row7, 5))
+
+    term.screen.prev_page()
+    row3 = next(i for i, text in enumerate(term.screen.display)
+                if text.startswith("line03"))
+    end = term._document_cell((row3, 0))
+
+    _select(term, anchor, end)
+    term.copy_selection()
+    assert QGuiApplication.clipboard().text() == (
+        "line03\nline04\nline05\nline06\nline07"
+    )
+
+
+def test_scrollback_selection_range_survives_viewport_changes(term):
+    """選択後に viewport を上下しても start/end の文書範囲を変えない。"""
+    _fill_scrollback_for_selection(term)
+    row7 = next(i for i, text in enumerate(term.screen.display)
+                if text.startswith("line07"))
+    anchor = term._document_cell((row7, 5))
+
+    term.screen.prev_page()
+    row3 = next(i for i, text in enumerate(term.screen.display)
+                if text.startswith("line03"))
+    end = term._document_cell((row3, 0))
+    _select(term, end, anchor)
+    expected = term._sel_range()
+
+    term.screen.next_page()
+    assert term._sel_range() == expected
+    term.screen.prev_page()
+    assert term._sel_range() == expected
+
+
 def test_send_text_converts_newline_to_cr(term):
     """貼り付け経路では LF が CR に変換される(端末の改行は CR)。"""
     ch = FakeChannel()
