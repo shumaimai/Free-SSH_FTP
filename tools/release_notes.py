@@ -32,7 +32,11 @@ def main(argv: list[str] | None = None) -> None:
     path, version = args
     with open(path, encoding="utf-8") as f:
         text = f.read()
-    print(extract(text, version))
+    # Windows runner では stdout が cp1252 になることがあり、日本語の
+    # リリースノートを print() すると UnicodeEncodeError になる。
+    # リダイレクト先へ UTF-8 バイトを直接書き込み、OS の既定コードページに依存しない。
+    output = extract(text, version) + "\n"
+    sys.stdout.buffer.write(output.encode("utf-8"))
 
 
 if __name__ == "__main__":
