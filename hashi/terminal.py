@@ -135,8 +135,8 @@ class _TerminalScreen(pyte.HistoryScreen):
     ブラケットペースト (?2004) 有効時は、貼り付けテキストを
     ESC[200~ ... ESC[201~ で挟んで送信できるようになる。
 
-    代替画面中に PTY がリサイズされた場合、保存中のメイン画面は
-    リサイズされないため、復帰時に内容が一部切り詰められることがある。
+    代替画面・ソフト折返し・端末問い合わせも補完し、modern TUI の
+    差分描画や画面切替後もメイン画面の入力位置を維持する。
     """
 
     _BRACKETED_PASTE_MODE = 2004
@@ -243,11 +243,11 @@ class _TerminalScreen(pyte.HistoryScreen):
             self.wrapped.clear()
         elif how == 0:
             self.wrapped.difference_update(
-                y for y in self.wrapped if y > self.cursor.y
+                {y for y in self.wrapped if y > self.cursor.y}
             )
         elif how == 1:
             self.wrapped.difference_update(
-                y for y in self.wrapped if y <= self.cursor.y
+                {y for y in self.wrapped if y <= self.cursor.y}
             )
 
     # ---- リフロー第 1 段 (Issue #100): カーソルの論理行のみ ----------------
