@@ -500,3 +500,5 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - 公式CLI端末はSessionRegistry/TerminalBindingへ登録せず、HashiのAI観測とSessionLogから除外する。
 - 起動だけのMCP設定を私有一時フォルダへ置く。内蔵ツール・ユーザーフックは初期OFF、管理者ポリシーは維持。
 - Hashi経由の操作停止とCLIのCtrl+Cを区別する。公開前に公式Commercial Terms/提供条件を再確認する。
+- 独立CMDの出力は単一スレッドでPeekNamedPipeの利用可能分だけ読む。子プロセスのEOF待ちで停止を塞がない。
+- /S /Cのコマンド本文の引用符をCRT用に再エスケープしない。出力EOFを確認できなければcompletionはunknown。

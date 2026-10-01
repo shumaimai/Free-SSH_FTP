@@ -12,6 +12,27 @@ from collections import deque
 from dataclasses import dataclass, field
 
 
+def _pipe_available(pipe):
+    """同じ読取ハンドルを他スレッドに渡さず、読み取れる分だけ取得する。"""
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    peek = kernel.PeekNamedPipe
+    peek.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD,
+                     ctypes.POINTER(wintypes.DWORD), ctypes.POINTER(wintypes.DWORD),
+                     ctypes.POINTER(wintypes.DWORD)]
+    peek.restype = wintypes.BOOL
+    available = wintypes.DWORD()
+    if not peek(msvcrt.get_osfhandle(pipe.fileno()), None, 0, None, ctypes.byref(available), None):
+        error = ctypes.get_last_error()
+        if error in (109, 232):  # ERROR_BROKEN_PIPE / ERROR_NO_DATA
+            return None
+        raise ctypes.WinError(error)
+    return available.value
+
+
 class _Cancellation(threading.Event):
     def __init__(self, parent=None):
         super().__init__()
@@ -212,38 +233,45 @@ class CommandBroker:
         if not operation.cwd or not os.path.isdir(operation.cwd):
             raise ValueError("独立実行には明示した開始フォルダが必要です。対話CMDのcwdは引き継ぎません")
         # 独立プロセスなので対話CMDの環境変更やTUI状態に影響しない。
+        executable = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "cmd.exe")
+        # /Sは最外の引用符を除く。コマンド中の引用符をCRTの\"へ変換しない。
+        command_line = subprocess.list2cmdline([executable]) + ' /D /S /C "chcp 65001>nul & ' + operation.text + '"'
         process = subprocess.Popen(
-            [os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "cmd.exe"),
-             "/D", "/S", "/C", "chcp 65001>nul & " + operation.text],
+            command_line,
             cwd=operation.cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             creationflags=subprocess.CREATE_NO_WINDOW)
         chunks = {"output": bytearray(), "error": bytearray()}
-        def drain(pipe, name):
-            while True:
-                data = pipe.read(4096)
-                if not data:
-                    break
-                chunks[name].extend(data)
-                chunks[name][:] = chunks[name][-65536:]
-        readers = [threading.Thread(target=drain, args=(pipe, name), daemon=True)
-                   for pipe, name in ((process.stdout, "output"), (process.stderr, "error"))]
-        for reader in readers:
-            reader.start()
+        pipes = ((process.stdout, "output"), (process.stderr, "error"))
         status = "completed"
+        complete_output = False
         try:
-            while process.poll() is None:
+            while True:
+                got_data, ended = False, 0
+                for pipe, name in pipes:
+                    count = _pipe_available(pipe)
+                    if count is None:
+                        ended += 1
+                    elif count:
+                        data = os.read(pipe.fileno(), min(count, 4096))
+                        chunks[name].extend(data)
+                        chunks[name][:] = chunks[name][-65536:]
+                        got_data = got_data or bool(data)
+                if process.poll() is not None and not got_data:
+                    complete_output = ended == len(pipes)
+                    break
                 if operation.cancel.is_set() or time.monotonic() >= deadline:
                     status = "cancelled" if operation.cancel.is_set() else "timeout"
-                    subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                                   capture_output=True, timeout=3, check=False,
-                                   creationflags=subprocess.CREATE_NO_WINDOW)
-                    process.wait(timeout=3)
+                    if process.poll() is None:
+                        subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                                       capture_output=True, timeout=3, check=False,
+                                       creationflags=subprocess.CREATE_NO_WINDOW)
+                        process.wait(timeout=3)
                     break
-                operation.cancel.wait(.02)
-            for reader in readers:
-                reader.join(1)
-            return {"status": status, "completion": "known" if status == "completed" else "unknown",
+                if not got_data:
+                    operation.cancel.wait(.02)
+            return {"status": status, "completion": "known" if status == "completed" and complete_output else "unknown",
                     "exit_code": process.returncode if status == "completed" else None,
+                    "output_complete": complete_output,
                     **{name: bytes(data).decode("utf-8", errors="replace") for name, data in chunks.items()}}
         finally:
             for pipe in (process.stdout, process.stderr):

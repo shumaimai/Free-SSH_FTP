@@ -20,6 +20,6 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install -r requirements-dev.txt
-      - run: python -m pytest tests/test_local_terminal.py tests/test_terminal_backend.py tests/test_terminal_keys.py tests/test_terminal_resize.py tests/test_mcp_bridge.py tests/test_claude_cli.py
+      - run: python -m pytest tests/test_local_terminal.py tests/test_terminal_backend.py tests/test_terminal_keys.py tests/test_terminal_resize.py tests/test_mcp_bridge.py tests/test_claude_cli.py tests/test_command_broker.py
       - run: python -m PyInstaller --noconfirm Hashi.spec
       - run: python -m pytest tests/test_mcp_bridge.py -k packaged
