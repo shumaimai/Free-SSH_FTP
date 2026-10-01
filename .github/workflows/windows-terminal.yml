@@ -1,0 +1,23 @@
+name: Windows terminal
+on:
+  pull_request:
+    paths:
+      - 'hashi/**'
+      - 'tests/**'
+      - 'requirements*.txt'
+      - 'Hashi.spec'
+      - '.github/workflows/windows-terminal.yml'
+jobs:
+  conpty:
+    runs-on: windows-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHON_KEYRING_BACKEND: keyring.backends.fail.Keyring
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pytest tests/test_local_terminal.py tests/test_terminal_backend.py tests/test_terminal_keys.py tests/test_terminal_reflow.py
+      - run: python -m PyInstaller --noconfirm Hashi.spec
