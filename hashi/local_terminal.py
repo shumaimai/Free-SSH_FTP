@@ -49,6 +49,10 @@ class ConPtyBackend:
             return self.process.read(size).encode("utf-8")
         except EOFError:
             return b""
+        except OSError:
+            if self._closed:
+                return b""
+            raise
 
     def send(self, data):
         with self._lock:

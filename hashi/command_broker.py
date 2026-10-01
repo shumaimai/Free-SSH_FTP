@@ -234,11 +234,17 @@ class CommandBroker:
             raise ValueError("独立実行には明示した開始フォルダが必要です。対話CMDのcwdは引き継ぎません")
         # 独立プロセスなので対話CMDの環境変更やTUI状態に影響しない。
         executable = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "cmd.exe")
-        # /Sは最外の引用符を除く。コマンド中の引用符をCRTの\"へ変換しない。
-        command_line = subprocess.list2cmdline([executable]) + ' /D /S /C "chcp 65001>nul & ' + operation.text + '"'
+        # 外側はASCIIだけで起動し、chcp後の遅延展開で内側へUnicodeを渡す。
+        # 入力中の%/!を外側で再展開しない。内側の/Sは最外の引用符だけを除く。
+        variable = "HASHI_COMMAND_" + uuid.uuid4().hex.upper()
+        environment = os.environ.copy()
+        environment[variable] = operation.text
+        quoted_exe = subprocess.list2cmdline([executable])
+        command_line = (quoted_exe + ' /D /V:ON /S /C "chcp 65001>nul & ' + quoted_exe +
+                        ' /D /V:OFF /S /C "!' + variable + '!""')
         process = subprocess.Popen(
             command_line,
-            cwd=operation.cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            cwd=operation.cwd, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             creationflags=subprocess.CREATE_NO_WINDOW)
         chunks = {"output": bytearray(), "error": bytearray()}
         pipes = ((process.stdout, "output"), (process.stderr, "error"))

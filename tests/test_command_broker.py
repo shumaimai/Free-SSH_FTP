@@ -137,10 +137,11 @@ def test_real_local_cmd_cwd_unicode_stderr_exit_and_timeout(setup, tmp_path):
     registry, backend, entry, broker = setup
     broker.configure("auto", [(entry.id, entry.generation)])
     result = broker.perform("test", "run_command", entry.id, entry.generation,
-                            text="echo 日本語 & echo stderr-test 1>&2 & cd & exit /b 7", cwd=str(tmp_path))
+                            text="echo 日本語 & echo !literal! & for %i in (OK) do @echo %i & echo stderr-test 1>&2 & cd & exit /b 7", cwd=str(tmp_path))
     assert result["completion"] == "known" and result["exit_code"] == 7
     assert "日本語" in result["output"] and str(tmp_path).lower() in result["output"].lower()
     assert "stderr-test" in result["error"] and result["output_complete"]
+    assert "!literal!" in result["output"] and "OK" in result["output"]
     assert backend.sent == []  # 対話端末へ送らない
     start = time.monotonic()
     result = broker.perform("test", "run_command", entry.id, entry.generation,
