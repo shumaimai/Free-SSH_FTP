@@ -100,10 +100,10 @@ def test_apply_ui_settings_live(qapp):
                     "terminal_font_family": "DejaVu Sans Mono",
                     "terminal_font_size": 13}.get(key)
 
-    fake_page = SimpleNamespace(session_tab=SimpleNamespace(terminal=term))
+    fake_page = SimpleNamespace(session_tab=SimpleNamespace(terminal=term, local_terminal=None))
     SessionPage._pages.append(fake_page)
     try:
-        fake_self = SimpleNamespace(settings=FakeSettings())
+        fake_self = SimpleNamespace(settings=FakeSettings(), tabs=SimpleNamespace(count=lambda: 0))
         AppWindow._apply_ui_settings_live(fake_self)
     finally:
         SessionPage._pages.remove(fake_page)
