@@ -46,7 +46,7 @@ def test_panel_scope_mode_and_stop(qapp):
     item = panel.sessions.item(0)
     assert item.checkState() == Qt.Unchecked
     item.setCheckState(Qt.Checked)
-    broker.configure("auto", panel.selected_targets())
+    panel.apply_sharing()
     assert len(broker.list_sessions()) == 1
     panel.mode.setCurrentIndex(1)
     assert broker.list_sessions() == []

@@ -488,3 +488,8 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - client_idごとの記録をAI秘密ストアへ保存。アカウント切替は検証完了後。更新はプロセス間ロック付き。
 - サインアウトは遠隔失効を試み、ローカルトークンを削除する。未確認の遠隔失効は画面へ通知する。
 - OAuth推論はstore:false/stream:true、履歴配列、namespaceツール、アカウント別モデル一覧を使用。
+
+### ローカルMCP (#159)
+- console-modeのHashiMCP.exeから認証付き127.0.0.1 IPCへ接続する。stdoutはJSON-RPCだけ。
+- 接続情報はユーザー限定の一時フォルダに置き、終了時に削除する。インスタンスID/tokenを照合する。
+- 操作はCommandBrokerを通す。notificationからの操作は禁止。切断で承認待ちを取り消す。
