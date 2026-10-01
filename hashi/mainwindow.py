@@ -2380,6 +2380,8 @@ class AppWindow(_SharedOps, QMainWindow):
         self._services = services
         from .session_registry import SessionRegistry
         self.session_registry = services.setdefault("session_registry", SessionRegistry())
+        from .command_broker import CommandBroker
+        self.command_broker = services.setdefault("command_broker", CommandBroker(self.session_registry))
         self.store = services["store"]
         self.known_hosts = services["known_hosts"]
         self.settings = services["settings"]
@@ -2690,6 +2692,7 @@ class AppWindow(_SharedOps, QMainWindow):
             w = self.tabs.widget(i)
             if isinstance(w, (SessionPage, LocalTerminalPage)):
                 w.shutdown()
+        self.command_broker.stop()
         AppWindow._instance = None
         ev.accept()
 
