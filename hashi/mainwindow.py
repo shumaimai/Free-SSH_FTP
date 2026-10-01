@@ -2507,6 +2507,28 @@ class AppWindow(_SharedOps, QMainWindow):
         self.tabs.setCurrentIndex(self.tabs.addTab(page, "ローカルCMD"))
         return page
 
+    def open_official_cli(self):
+        import sys
+
+        from .claude_cli import CliLaunchDialog, OfficialCliPage
+        from .mcp_bridge import McpBridge
+        if sys.platform != "win32":
+            QMessageBox.information(self, "公式CLI", "Hashi内での起動はWindowsネイティブ版に対応しています")
+            return
+        dialog = CliLaunchDialog(self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        try:
+            if self.mcp_bridge is None:
+                self.mcp_bridge = McpBridge(self.command_broker)
+            page = OfficialCliPage(self.settings, self.session_registry, self.mcp_bridge, dialog.launch, self)
+            self.tabs.setCurrentIndex(self.tabs.addTab(page, "公式CLI"))
+            self.ai_dock.show()
+            self.statusBar().showMessage("AI相談で対象端末を選び、AI/MCP共有を適用してください", 10000)
+        except Exception:
+            logger.warning("公式CLIを開始できません")
+            QMessageBox.warning(self, "公式CLI", "起動できません。CLIとHashiMCP.exeの配置、フォルダの権限を確認してください")
+
     def _configure_ai(self):
         from .ai_secrets import AiSecretStore
         from .ai_settings import AiSettingsDialog
@@ -2644,6 +2666,7 @@ class AppWindow(_SharedOps, QMainWindow):
         m_file.addAction("サーバー一覧タブへ", self.open_launcher)
         m_file.addAction("新しい接続…", self._new_profile)
         m_file.addAction("ローカルCMDを開く", self.open_local_terminal)
+        m_file.addAction("公式CLIを開く（Claude Code）…", self.open_official_cli)
         m_file.addSeparator()
         m_file.addAction("接続情報を書き出す…", self._export_profiles)
         m_file.addAction("接続情報を読み込む…", self._import_profiles)

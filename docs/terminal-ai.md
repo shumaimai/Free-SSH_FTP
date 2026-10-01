@@ -41,3 +41,34 @@ HTTPは公開せず、接続情報をユーザー限定の一時フォルダに�
 `hashi-mcp <接続情報ファイル>`も利用できます。
 
 参照: [MCP stdio仕様](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
+
+## 公式CLIをHashi内で起動
+
+「ファイル → 公式CLIを開く（Claude Code）」で、利用者が導入した公式Windowsネイティブ版の
+`claude.exe`を選びます。PATHと既定の導入先を検出します。「バージョン・対応機能を確認」の後、
+起動フォルダを選んで開きます。CLIがない場合は公式導入案内を参照してください。
+HashiはCLIをインストール・改変せず、npm/WSL版の埋込み起動には対応していません。
+
+本人のログインは公式CLIで行います。認証情報の管理と請求は公式CLIと本人の契約に任せます。
+Hashi独自のAI相談でClaudeのサブスクOAuthは使いません。独自AI相談のAnthropic接続はAPIキー方式です。
+公式CLIの画面・入力はHashiのAIコンテキストとログ保存の対象外です。
+公式CLI自身の履歴保存は公式CLIの設定に従います。
+
+起動ごとのMCP設定を渡し、既存のCLI設定ファイルを上書きしません。
+初期プロファイルでは内蔵ツールを無効にし、Hashi MCPへ接続します。ユーザーフックも初期で無効です。
+管理者設定・管理者フックは引き続き適用されるため、HashiがCLI全体の操作を制御するわけではありません。
+内蔵ツールやユーザーフックを有効にする場合、それらの操作はHashiの実行管理を通りません。
+CLI側で必要な承認はCLIで行い、MCP操作にはHashi側の対象範囲・実行モードも適用します。
+AI相談の操作履歴で実行先ID・世代・状態・終了コードを確認できます。本文と出力は履歴へ保存しません。
+
+「Hashi経由の操作を停止」はMCP操作を取り消し、共有許可を解除します。
+「CLIへCtrl+Cを送る」は公式CLIへの対話入力です。タブを閉じるとCLIプロセスを終了します。
+再開は起動ダイアログの「前回のCLI会話を再開」または公式CLIの再開機能を使います。
+MCP接続を停止・再生成した場合、公式CLIタブを開き直してください。
+
+製品内での実行にはAnthropicのCommercial Termsおよび公式の提供条件が適用されます。
+本人の認証と本人への直接請求を維持し、認証方式の制限、利用枠の代理提供・再販を行いません。
+公開前には最新条件を再確認してください。
+
+公式資料: [提供条件](https://code.claude.com/docs/en/legal-and-compliance) /
+[CLIオプション](https://code.claude.com/docs/en/cli-reference) / [導入](https://code.claude.com/docs/en/setup)

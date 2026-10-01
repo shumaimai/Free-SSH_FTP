@@ -383,3 +383,8 @@ ruff check .
 - MCPはconsole-modeのHashiMCP.exeを使い、stdoutへJSON-RPC以外を出さない。
 - 認証付きloopback IPCでインスタンスを照合し、接続情報のユーザー限定ACLを維持する。
 - MCPもCommandBrokerを通す。notificationで操作しない。切断でそのクライアントの操作を取り消す。
+
+- 公式Claude Codeは利用者の導入済みネイティブ版を改変せず起動し、本人の認証に任せる。
+- shareable=Falseの公式CLI端末はRegistry/Bindingへ登録せず、HashiのAI観測とログから除外する。
+- ClaudeのOAuthを取得/保存しない。`--bare`や承認迂回フラグを使わず、管理者ポリシーを維持する。
+- 内蔵ツール/フックはHashiの実行管理外。MCPの停止とCLIの中断を区別する。公開前に公式提供条件を確認する。

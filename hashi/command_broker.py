@@ -85,6 +85,14 @@ class CommandBroker:
                 if operation.actor == actor:
                     operation.cancel.set()
 
+    def audit_snapshot(self):
+        with self._lock:
+            return {"active": [{"id": o.id, "actor": o.actor, "action": o.action,
+                                "session_id": o.session_id, "generation": o.generation,
+                                "status": "cancel_requested" if o.cancel.is_set() else "pending"}
+                               for o in self._active.values()],
+                    "finished": [item.copy() for item in self.audit]}
+
     def _check(self, sid, generation):
         entry = self.registry.resolve(sid, generation)
         if not entry.shareable:
@@ -128,6 +136,7 @@ class CommandBroker:
                 raise ValueError("同じ要求は実行中です")
             self._active[key] = operation
             epoch, mode = self._epoch, self._mode
+        result = None
         try:
             if mode == "confirm":
                 if self.approval is None or not self.approval(operation):
@@ -162,7 +171,10 @@ class CommandBroker:
                 # コマンド本文・出力・認証情報を監査ログへ保存しない。
                 self.audit.append({"id": operation.id, "actor": actor, "action": action,
                                    "session_id": sid, "generation": generation,
-                                   "cancelled": operation.cancel.is_set()})
+                                   "cancelled": operation.cancel.is_set(),
+                                   "status": result["status"] if result is not None else "not_completed",
+                                   "completion": result.get("completion", "unknown") if result is not None else "unknown",
+                                   "exit_code": result.get("exit_code") if result is not None else None})
 
     def _run(self, entry, operation, timeout):
         deadline = time.monotonic() + timeout

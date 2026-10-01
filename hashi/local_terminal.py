@@ -149,9 +149,10 @@ class LocalTerminalPane(QWidget):
             backend.close()
             return
         self.terminal.attach(backend)
-        self.binding = TerminalBinding(self.registry, self.terminal, label=self.label,
-                                       kind=self.kind, shell="cmd", cwd=None,
-                                       shareable=self.shareable)
+        if self.shareable:
+            self.binding = TerminalBinding(self.registry, self.terminal, label=self.label,
+                                           kind=self.kind, shell="cmd", cwd=None,
+                                           shareable=True)
         self.status.setText(f"{self.label} · 開始フォルダ: {self.cwd}")
         self.terminal.setFocus()
         self.ready.emit()

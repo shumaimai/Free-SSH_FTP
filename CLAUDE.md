@@ -493,3 +493,10 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - console-modeのHashiMCP.exeから認証付き127.0.0.1 IPCへ接続する。stdoutはJSON-RPCだけ。
 - 接続情報はユーザー限定の一時フォルダに置き、終了時に削除する。インスタンスID/tokenを照合する。
 - 操作はCommandBrokerを通す。notificationからの操作は禁止。切断で承認待ちを取り消す。
+
+### 未改変の公式CLI (#160)
+- `claude_cli.py`は導入済みのWindowsネイティブ版をConPTYで起動。本人の認証・請求を公式CLIへ任せる。
+- CLIバイナリ・認証方式を変更しない。Claude OAuthを取得/複製/保存しない。`--bare`や承認迂回フラグを使わない。
+- 公式CLI端末はSessionRegistry/TerminalBindingへ登録せず、HashiのAI観測とSessionLogから除外する。
+- 起動だけのMCP設定を私有一時フォルダへ置く。内蔵ツール・ユーザーフックは初期OFF、管理者ポリシーは維持。
+- Hashi経由の操作停止とCLIのCtrl+Cを区別する。公開前に公式Commercial Terms/提供条件を再確認する。

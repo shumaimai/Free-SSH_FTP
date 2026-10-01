@@ -87,6 +87,16 @@ class AiPanel(QWidget):
         apply.clicked.connect(self.apply_sharing)
         controls.addWidget(apply)
         layout.addLayout(controls)
+        layout.addWidget(style.plain_label("AI/MCP操作履歴（本文・出力は保存しません）"))
+        self.audit_view = QPlainTextEdit()
+        self.audit_view.setReadOnly(True)
+        self.audit_view.setMaximumHeight(100)
+        layout.addWidget(self.audit_view)
+        self._last_audit = None
+        self.audit_timer = QTimer(self)
+        self.audit_timer.setInterval(1000)
+        self.audit_timer.timeout.connect(self._refresh_audit)
+        self.audit_timer.start()
         self.transcript = QPlainTextEdit()
         self.transcript.setReadOnly(True)
         layout.addWidget(self.transcript, 1)
@@ -130,6 +140,18 @@ class AiPanel(QWidget):
             self.transcript.appendPlainText("選択した端末をAI/MCPへ15分間共有しました。停止で取り消せます。")
         except (ValueError, PermissionError) as exc:
             self.transcript.appendPlainText(str(exc))
+
+    def _refresh_audit(self):
+        snapshot = self.broker.audit_snapshot()
+        if snapshot == self._last_audit:
+            return
+        self._last_audit = snapshot
+        entries = snapshot["finished"][-30:] + snapshot["active"]
+        self.audit_view.setPlainText("\n".join(
+            f"{entry['actor'].split(':', 1)[0]} · {entry['action']} · "
+            f"{entry['session_id']} / {entry['generation']} · {entry['status']} · "
+            f"完了 {entry.get('completion', 'unknown')} · 終了コード {entry.get('exit_code')}"
+            for entry in entries))
 
     def set_provider(self, provider):
         if self.worker is not None:
