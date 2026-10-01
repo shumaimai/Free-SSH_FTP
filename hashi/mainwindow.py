@@ -2427,6 +2427,7 @@ class AppWindow(_SharedOps, QMainWindow):
         self._build_menu()
         from .ai_panel import AiPanel
         self.ai_panel = AiPanel(self.command_broker, self)
+        self.ai_panel.configure_requested.connect(self._configure_ai)
         self.ai_dock = QDockWidget("AI相談", self)
         self.ai_dock.setWidget(self.ai_panel)
         self.addDockWidget(Qt.RightDockWidgetArea, self.ai_dock)
@@ -2500,6 +2501,21 @@ class AppWindow(_SharedOps, QMainWindow):
                                  cwd=self.settings.get("local_terminal_start_dir") or None)
         self.tabs.setCurrentIndex(self.tabs.addTab(page, "ローカルCMD"))
         return page
+
+    def _configure_ai(self):
+        from .ai_secrets import AiSecretStore
+        from .ai_settings import AiSettingsDialog
+        try:
+            secrets = self._services.get("ai_secrets")
+            if secrets is None:
+                secrets = AiSecretStore(self.credentials)
+                self._services["ai_secrets"] = secrets
+            dialog = AiSettingsDialog(self.settings, secrets, self)
+            if dialog.exec() == dialog.Accepted:
+                self.ai_panel.set_provider(dialog.provider)
+        except Exception:
+            logger.warning("AI設定または認証情報を読み込めません")
+            QMessageBox.warning(self, "AI接続設定", "設定または認証情報を読み込めませんでした")
 
     def _on_page_title(self, page, title: str):
         idx = self.tabs.indexOf(page)

@@ -474,3 +474,9 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - コンテキストは上限付き、観測データとして扱う。秘密パターンの除去は完全保証ではなく、ユーザーが編集して送信する。
 - プロバイダー変更時は会話を消去。会話と操作許可は保存しない。ツールはCommandBrokerだけに接続。
 - AIワーカーはGUIへsignalで通知。終了待ちはQtイベントループを止めず、終了してからアプリを閉じる。
+
+### API方式 (#157)
+- `ai_api.py` はOpenAI Responses / Anthropic Messages / 互換Chat Completionsを変換する。
+- 完了イベントのない応答のツールは実行しない。Responsesのreasoning出力を含む履歴を保持。
+- `ai_http.py` はHTTPS (loopbackのみHTTP可)、認証付きリダイレクト禁止、サイズ制限、自動POST再送禁止。
+- AI秘密はHashi.AIまたは専用暗号化ファイルに保存し、SSH資格情報と設定JSONへ混ぜない。

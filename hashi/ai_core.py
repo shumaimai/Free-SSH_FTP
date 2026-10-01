@@ -103,6 +103,8 @@ class AiConversation:
             calls = reply.get("tool_calls", [])
             self.messages.append({"role": "assistant", "content": reply.get("text", ""),
                                   "tool_calls": calls})
+            if "raw_output" in reply:
+                self.messages[-1]["raw_output"] = reply["raw_output"]
             if not calls:
                 return reply.get("text", "")
             for call in calls:
