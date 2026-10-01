@@ -480,3 +480,11 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - 完了イベントのない応答のツールは実行しない。Responsesのreasoning出力を含む履歴を保持。
 - `ai_http.py` はHTTPS (loopbackのみHTTP可)、認証付きリダイレクト禁止、サイズ制限、自動POST再送禁止。
 - AI秘密はHashi.AIまたは専用暗号化ファイルに保存し、SSH資格情報と設定JSONへ混ぜない。
+
+### ChatGPT OAuth (#158)
+- `chatgpt_oauth.py` は公式OSS Sign in with ChatGPTを利用。auth.openai.comと公開Responses APIのみ。
+- 初回はdynamic_agent_client、戻りの発行IDで交換。再認証は保存済みclient_id/host_idを再利用。
+- loopbackは127.0.0.1/auth/callback。state/nonce/PKCE、ID署名/issuer/aud/exp/subと許可scopeを検証する。
+- client_idごとの記録をAI秘密ストアへ保存。アカウント切替は検証完了後。更新はプロセス間ロック付き。
+- サインアウトは遠隔失効を試み、ローカルトークンを削除する。未確認の遠隔失効は画面へ通知する。
+- OAuth推論はstore:false/stream:true、履歴配列、namespaceツール、アカウント別モデル一覧を使用。

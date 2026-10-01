@@ -376,3 +376,6 @@ ruff check .
 
 - APIキーはAiSecretStoreだけに保存する。互換API接続先を変えたら入力中のキーを消す。
 - AIストリーム完了前にツールを実行しない。Responsesのreasoning履歴も保持する。
+
+- ChatGPT認証は公式OSS OAuthを使用。トークン/認証URLをログへ出さず、APIキー方式と分離する。
+- OAuthコールバック・署名・アカウント・scopeを検証してから保存。更新をプロセス間で直列化する。
