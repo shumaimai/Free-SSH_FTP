@@ -367,3 +367,5 @@ ruff check .
 - ローカル端末の終了は所有PIDだけを対象にする。開始フォルダを現在のcwdとして扱わない。
 
 - W端末の操作先は `SessionTab.active_terminal()`。SSH固有操作は `terminal` を使い、CMDへ保存パスワードを渡さない。
+
+- socket shutdown/native cancel_io/joinでpywinpty内部readerも回収する。
