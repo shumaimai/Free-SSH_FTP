@@ -22,7 +22,7 @@ def responses_input(messages):
 
 
 class ApiProvider:
-    def __init__(self, kind, model, key, *, base_url=None, http=None):
+    def __init__(self, kind, model, key, *, base_url=None, http=None, use_tools=True):
         defaults = {"openai": "https://api.openai.com/v1", "anthropic": "https://api.anthropic.com/v1"}
         if kind not in {*defaults, "compatible"} or not model.strip():
             raise ValueError("プロバイダーとモデルを指定してください")
@@ -31,6 +31,7 @@ class ApiProvider:
         if kind in defaults and self.base != defaults[kind]:
             raise ValueError("公式API方式は公式接続先を使います。独自URLは互換方式を選択してください")
         self.http = http or JsonHttp()
+        self.use_tools = bool(use_tools) if kind == "compatible" else True
 
     def respond(self, messages, instructions, tools, cancel, on_text):
         if self.kind == "openai":
@@ -118,8 +119,9 @@ class ApiProvider:
                 item["tool_calls"] = [{"id": c["id"], "type": "function", "function":
                     {"name": c["name"], "arguments": json.dumps(c["arguments"])}} for c in m["tool_calls"]]
             history.append(item)
-        payload = {"model": self.model, "messages": history, "stream": True,
-                   "tools": [{"type": "function", "function": t} for t in tools]}
+        payload = {"model": self.model, "messages": history, "stream": True}
+        if self.use_tools:
+            payload["tools"] = [{"type": "function", "function": t} for t in tools]
         text, calls, ended = [], {}, False
         for e in self.http.events(self.base + "/chat/completions", payload,
                                   {"Authorization": "Bearer " + self._key}, cancel):
@@ -133,6 +135,8 @@ class ApiProvider:
                     text.append(delta["content"])
                     on_text(delta["content"])
                 for call in delta.get("tool_calls", []):
+                    if not self.use_tools:
+                        raise RuntimeError("相談専用の互換APIがツールを要求しました。実行していません")
                     c = calls.setdefault(call["index"], {"id": "", "name": "", "json": ""})
                     c["id"] += call.get("id", "")
                     c["name"] += call.get("function", {}).get("name", "")
