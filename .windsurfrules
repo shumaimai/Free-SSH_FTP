@@ -365,3 +365,4 @@ ruff check .
 
 - ローカル端末は `local_terminal.py` のConPTYを使う。Windows以外でwinptyをimportしない。
 - ローカル端末の終了は所有PIDだけを対象にする。開始フォルダを現在のcwdとして扱わない。
+- socket shutdown/native cancel_io/joinでpywinpty内部readerも回収する。

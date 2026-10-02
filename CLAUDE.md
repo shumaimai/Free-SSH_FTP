@@ -455,4 +455,5 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 ### ローカル端末 (#153)
 - `local_terminal.py` はWindowsだけでpywinptyを読み込み、ConPTYを明示する。
 - 起動はQThread、終了対象は生成したPIDのツリーだけ。端末終了とタブ破棄は別イベント。
+- socket shutdown/native cancel_io/joinでpywinpty内部readerも回収する。
 - ローカルCMDはSSHを必要としない。開始フォルダと現在のcwdは区別し、cwdを推測しない。

@@ -4,6 +4,7 @@ from __future__ import annotations
 import codecs
 import logging
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -78,6 +79,25 @@ class ConPtyBackend:
                 subprocess.run(["taskkill", "/PID", str(self.process.pid), "/T", "/F"],
                                timeout=3, check=False, capture_output=True,
                                creationflags=subprocess.CREATE_NO_WINDOW)
+            # pywinptyの内部readerは、子の自然終了後にもreadで待ちうる。
+            # socketをshutdownしてHashiのrecvを解除し、native readも取消して回収する。
+            handle = getattr(self.process, "fileobj", None)
+            if handle is not None:
+                try:
+                    handle.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    logger.debug("ConPTY読取socketは終了済み", exc_info=True)
+            pty = getattr(self.process, "pty", None)
+            if pty is not None:
+                try:
+                    pty.cancel_io()
+                except (OSError, RuntimeError):
+                    logger.debug("ConPTY native readは終了済み", exc_info=True)
+            reader = getattr(self.process, "_thread", None)
+            if reader is not None:
+                reader.join(2)
+                if reader.is_alive():
+                    logger.warning("ConPTYの内部読取スレッドが終了待ちです")
             self.process.close(force=True)
         except (OSError, RuntimeError, subprocess.TimeoutExpired):
             logger.warning("ローカル端末の終了に失敗", exc_info=True)
