@@ -9,6 +9,62 @@ from hashi.command_broker import CommandBroker
 from hashi.session_registry import SessionRegistry
 
 
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_real_ssh_unacknowledged_exec_obeys_timeout_or_stop(cancelled):
+    """サーバーがexec要求をACKしなくても、専用チャネルだけを閉じて戻る。"""
+    import time
+
+    entered, release = threading.Event(), threading.Event()
+    client_socket, server_socket = socket.socketpair()
+    server_transport = paramiko.Transport(server_socket)
+    server_transport.add_server_key(paramiko.RSAKey.generate(2048))
+
+    class Server(paramiko.ServerInterface):
+        def check_auth_password(self, username, password):
+            return paramiko.AUTH_SUCCESSFUL
+
+        def check_channel_request(self, kind, chanid):
+            return paramiko.OPEN_SUCCEEDED
+
+        def check_channel_exec_request(self, channel, command):
+            entered.set()
+            release.wait(5)
+            return True
+
+    server = threading.Thread(target=lambda: server_transport.start_server(server=Server()), daemon=True)
+    server.start()
+    client = paramiko.Transport(client_socket)
+    stopper = None
+    try:
+        client.connect(username="test", password="test")
+        registry = SessionRegistry()
+        entry = registry.register(Backend(), label="ssh", kind="ssh", shell="unknown",
+                                  ssh_session=SimpleNamespace(transport=client))
+        broker = CommandBroker(registry)
+        broker.configure("auto", [(entry.id, entry.generation)])
+        if cancelled:
+            def stop():
+                if entered.wait(2):
+                    broker.stop()
+            stopper = threading.Thread(target=stop)
+            stopper.start()
+        started = time.monotonic()
+        result = broker.perform("test", "run_command", entry.id, entry.generation,
+                                text="test", timeout=2 if cancelled else .1)
+        assert entered.is_set()
+        assert time.monotonic() - started < (1 if cancelled else 2)
+        assert result["status"] == ("cancelled" if cancelled else "timeout")
+        assert result["completion"] == "unknown" and result["exit_code"] is None
+        assert client.is_active()
+    finally:
+        release.set()
+        client.close()
+        server_transport.close()
+        server.join(2)
+        if stopper is not None:
+            stopper.join(2)
+
+
 class Backend:
     def __init__(self):
         self.sent = []
@@ -112,7 +168,7 @@ def test_real_ssh_exec_stdout_stderr_and_exit_code():
     try:
         client.connect(username="user", password="test")
         registry = SessionRegistry()
-        entry = registry.register(Backend(), label="ssh", kind="ssh", shell="posix",
+        entry = registry.register(Backend(), label="ssh", kind="ssh", shell="unknown",
                                   ssh_session=SimpleNamespace(transport=client))
         broker = CommandBroker(registry)
         broker.configure("auto", [(entry.id, entry.generation)])

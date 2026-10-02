@@ -11,6 +11,8 @@ import uuid
 from collections import deque
 from dataclasses import dataclass, field
 
+from .ssh_core import command_channel
+
 
 @dataclass
 class Operation:
@@ -145,33 +147,37 @@ class CommandBroker:
         deadline = time.monotonic() + timeout
         output, error = bytearray(), bytearray()
         if entry.kind == "ssh":
-            if entry.ssh_session is None or entry.shell != "posix":
+            if entry.ssh_session is None:
                 raise ValueError("独立コマンド実行に対応しないSSH端末です")
-            channel = entry.ssh_session.transport.open_session(timeout=timeout)
             try:
-                channel.exec_command(operation.text)
-                while True:
-                    if operation.cancel.is_set() or time.monotonic() >= deadline:
-                        return {"status": "cancelled" if operation.cancel.is_set() else "timeout",
-                                "completion": "unknown", "exit_code": None,
-                                "output": output.decode(errors="replace"),
-                                "error": error.decode(errors="replace")}
-                    if channel.recv_ready():
-                        output.extend(channel.recv(4096))
-                        output[:] = output[-65536:]
-                    if channel.recv_stderr_ready():
-                        error.extend(channel.recv_stderr(4096))
-                        error[:] = error[-65536:]
-                    if channel.exit_status_ready() and not channel.recv_ready() and not channel.recv_stderr_ready():
-                        code = channel.recv_exit_status()
-                        return {"status": "completed" if code != -1 else "closed",
-                                "completion": "known" if code != -1 else "unknown",
-                                "exit_code": code if code != -1 else None,
-                                "output": output.decode(errors="replace"),
-                                "error": error.decode(errors="replace")}
-                    operation.cancel.wait(.02)
-            finally:
-                channel.close()
+                with command_channel(entry.ssh_session.transport, deadline=deadline,
+                                     cancel=operation.cancel) as channel:
+                    channel.exec_command(operation.text)
+                    while True:
+                        if operation.cancel.is_set() or time.monotonic() >= deadline:
+                            return {"status": "cancelled" if operation.cancel.is_set() else "timeout",
+                                    "completion": "unknown", "exit_code": None,
+                                    "output": output.decode(errors="replace"),
+                                    "error": error.decode(errors="replace")}
+                        if channel.recv_ready():
+                            output.extend(channel.recv(4096))
+                            output[:] = output[-65536:]
+                        if channel.recv_stderr_ready():
+                            error.extend(channel.recv_stderr(4096))
+                            error[:] = error[-65536:]
+                        if channel.exit_status_ready() and not channel.recv_ready() and not channel.recv_stderr_ready():
+                            code = channel.recv_exit_status()
+                            return {"status": "completed" if code != -1 else "closed",
+                                    "completion": "known" if code != -1 else "unknown",
+                                    "exit_code": code if code != -1 else None,
+                                    "output": output.decode(errors="replace"),
+                                    "error": error.decode(errors="replace")}
+                        operation.cancel.wait(.02)
+            except (TimeoutError, InterruptedError):
+                return {"status": "cancelled" if operation.cancel.is_set() else "timeout",
+                        "completion": "unknown", "exit_code": None,
+                        "output": output.decode(errors="replace"),
+                        "error": error.decode(errors="replace")}
         if sys.platform != "win32":
             raise RuntimeError("ローカルコマンド実行はWindows専用です")
         if not operation.cwd or not os.path.isdir(operation.cwd):

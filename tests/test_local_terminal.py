@@ -6,6 +6,17 @@ import pytest
 from hashi.local_terminal import ConPtyBackend
 
 
+def test_local_start_directory_survives_settings_reload(tmp_config):
+    from hashi.config import Settings
+
+    settings = Settings()
+    assert settings.get("local_terminal_start_dir") == ""
+    settings.set("local_terminal_start_dir", str(tmp_config / "日本語 フォルダ"))
+    reloaded = Settings()
+    assert reloaded.get("local_terminal_start_dir") == str(tmp_config / "日本語 フォルダ")
+    assert reloaded.get("local_start_dir") == ""
+
+
 class Process:
     def __init__(self):
         self.writes, self.sizes = [], []

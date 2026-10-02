@@ -8,7 +8,11 @@ from __future__ import annotations
 import base64
 import hashlib
 import logging
+import math
 import socket
+import threading
+import time
+from contextlib import contextmanager
 from dataclasses import replace
 
 import paramiko
@@ -20,6 +24,43 @@ logger = logging.getLogger(__name__)
 
 # ProxyJump の多段数上限(設定ミスによる無限チェーン/異常な深さを防ぐ)
 MAX_JUMP_HOPS = 8
+
+
+@contextmanager
+def command_channel(transport, *, deadline, cancel=None):
+    """専用execチャネル。応答待ちも締切/取消時にcloseして解除する。"""
+    remaining = deadline - time.monotonic()
+    if not math.isfinite(remaining) or remaining <= 0:
+        raise TimeoutError("SSHコマンドの待機期限を超えました。リモートの終了は不明です")
+    if cancel is not None and cancel.is_set():
+        raise InterruptedError("SSHコマンドを取り消しました。リモートの終了は不明です")
+    channel = transport.open_session(timeout=remaining)
+    done = threading.Event()
+
+    def watch():
+        while not done.is_set():
+            if time.monotonic() >= deadline or (cancel is not None and cancel.is_set()):
+                # Paramikoのexec要求ACK待ちはsettimeoutだけでは解除できない。
+                # 監視側はこの専用チャネルのcloseだけを行い、送受信しない。
+                channel.close()
+                return
+            done.wait(min(.02, max(0, deadline - time.monotonic())))
+
+    watcher = threading.Thread(target=watch, daemon=True)
+    watcher.start()
+    try:
+        channel.settimeout(max(.001, deadline - time.monotonic()))
+        yield channel
+    except Exception:
+        if cancel is not None and cancel.is_set():
+            raise InterruptedError("SSHコマンドを取り消しました。リモートの終了は不明です") from None
+        if time.monotonic() >= deadline:
+            raise TimeoutError("SSHコマンドの待機期限を超えました。リモートの終了は不明です") from None
+        raise
+    finally:
+        done.set()
+        channel.close()
+        watcher.join()
 
 
 class ConnectCancelled(Exception):
@@ -376,66 +417,33 @@ class SshSession:
         return sftp
 
     # ---- コマンド実行 (権限無視スイッチ等が利用) --------------------------------
-    def exec_command(self, command: str, timeout: float = 15.0):
-        """1 コマンド実行。returns (exit_status, stdout, stderr)。"""
+    def _execute_command(self, command, timeout, password=None):
         assert self.transport is not None
-        ch = self.transport.open_session()
-        ch.settimeout(timeout)
-        ch.exec_command(command)
-        out, err = b"", b""
-        try:
+        deadline = time.monotonic() + timeout
+        with command_channel(self.transport, deadline=deadline) as ch:
+            ch.exec_command(command)
+            if password is not None:
+                ch.sendall((password + "\n").encode("utf-8"))
+            out, err = bytearray(), bytearray()
             while True:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("SSHコマンドの待機期限を超えました。リモートの終了は不明です")
                 if ch.recv_ready():
-                    out += ch.recv(65536)
+                    out.extend(ch.recv(65536))
                 if ch.recv_stderr_ready():
-                    err += ch.recv_stderr(65536)
-                if ch.exit_status_ready() and not ch.recv_ready() \
-                        and not ch.recv_stderr_ready():
-                    break
-        except Exception:
-            logger.debug("exec_command 出力読み取り中に例外 (継続)", exc_info=True)
-        rc = ch.recv_exit_status()
-        # 残りを吸い出す
-        while ch.recv_ready():
-            out += ch.recv(65536)
-        while ch.recv_stderr_ready():
-            err += ch.recv_stderr(65536)
-        ch.close()
-        return rc, out.decode("utf-8", "replace"), err.decode("utf-8", "replace")
+                    err.extend(ch.recv_stderr(65536))
+                if ch.exit_status_ready() and not ch.recv_ready() and not ch.recv_stderr_ready():
+                    rc = ch.recv_exit_status()
+                    return rc, out.decode("utf-8", "replace"), err.decode("utf-8", "replace")
+                time.sleep(min(.01, max(0, deadline - time.monotonic())))
+
+    def exec_command(self, command: str, timeout: float = 15.0):
+        """1コマンド実行。締切超過/送受信失敗は例外、完了時は(rc, out, err)。"""
+        return self._execute_command(command, timeout)
 
     def run_sudo(self, command: str, password: str | None, timeout: float = 20.0):
-        """sudo -S でコマンド実行 (パスワードを stdin から与える)。
-
-        パスワード不要 (NOPASSWD 等) でも害はない。returns (rc, out, err)。
-        """
-        assert self.transport is not None
-        ch = self.transport.open_session()
-        ch.settimeout(timeout)
-        # -k で過去の認証をリセットし、必ずプロンプトを stdin から処理させる
-        ch.exec_command(f"sudo -S -p '' {command}")
-        if password is not None:
-            try:
-                ch.sendall((password + "\n").encode("utf-8"))
-            except Exception:
-                # 送信失敗すると sudo はプロンプトで止まる/失敗する。rc/err で
-                # 下流に伝わるが、原因追跡のため記録は残す。
-                logger.warning("sudo パスワードの送信に失敗しました", exc_info=True)
-        out, err = b"", b""
-        try:
-            while not ch.exit_status_ready():
-                if ch.recv_ready():
-                    out += ch.recv(65536)
-                if ch.recv_stderr_ready():
-                    err += ch.recv_stderr(65536)
-        except Exception:
-            logger.debug("run_sudo 出力読み取り中に例外 (継続)", exc_info=True)
-        rc = ch.recv_exit_status()
-        while ch.recv_ready():
-            out += ch.recv(65536)
-        while ch.recv_stderr_ready():
-            err += ch.recv_stderr(65536)
-        ch.close()
-        return rc, out.decode("utf-8", "replace"), err.decode("utf-8", "replace")
+        """sudo -S。認証入力・ACK・出力・終了待ちに共通の締切を適用する。"""
+        return self._execute_command(f"sudo -S -p '' {command}", timeout, password)
 
     def is_alive(self) -> bool:
         return bool(self.transport and self.transport.is_active())
