@@ -11,6 +11,8 @@ PuTTY + WinSCP を別々に開かなくていいのがコンセプト。起動�
 
 ## 起動
 
+ローカルCMD、AI相談、MCPの開発機能は[使い方](docs/terminal-ai.md)を参照してください。
+
 ```
 pip install -r requirements.txt
 python main.py

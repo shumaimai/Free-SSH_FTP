@@ -380,6 +380,10 @@ ruff check .
 - ChatGPT認証は公式OSS OAuthを使用。トークン/認証URLをログへ出さず、APIキー方式と分離する。
 - OAuthコールバック・署名・アカウント・scopeを検証してから保存。更新をプロセス間で直列化する。
 
+- MCPはconsole-modeのHashiMCP.exeを使い、stdoutへJSON-RPC以外を出さない。
+- 認証付きloopback IPCでインスタンスを照合し、接続情報のユーザー限定ACLを維持する。
+- MCPもCommandBrokerを通す。notificationで操作しない。切断でそのクライアントの操作を取り消す。
+
 - 互換APIのツール可否を明示設定する。相談専用ではtoolsを送らず、返されたツール要求も実行しない。POSTを自動再送しない。
 
 ### SSH独立コマンドの締切と観測 (#152/#155 監査対応)

@@ -53,6 +53,7 @@ def tool_definitions():
         ("send_input", "対話端末へ入力。改行でEnter。コマンド完了は不明", {**_TARGET, "text": {"type": "string"}}),
         ("run_command", "独立コマンドを実行。対話端末のcwd/環境は継承しない。ローカルにはcwd必須", {**_TARGET, "text": {"type": "string"}, "cwd": {"type": ["string", "null"]}}),
         ("interrupt", "指定端末へCtrl+Cを送る", _TARGET),
+        ("cancel_command", "このクライアントが要求した独立コマンドの取消を要求する", {"operation_id": {"type": "string"}}),
     ):
         definitions.append({"name": name, "description": description,
                             "parameters": {"type": "object", "properties": extra,
@@ -61,8 +62,9 @@ def tool_definitions():
 
 
 class TerminalTools:
-    def __init__(self, broker, actor):
+    def __init__(self, broker, actor, cancel=None):
         self.broker, self.actor = broker, actor
+        self.cancel = cancel
 
     def call(self, name, arguments, request_id=None):
         definition = next((d for d in tool_definitions() if d["name"] == name), None)
@@ -73,6 +75,11 @@ class TerminalTools:
             raise ValueError("ツール引数が不正です")
         if name == "list_sessions":
             return self.broker.list_sessions()
+        if name == "cancel_command":
+            if not isinstance(arguments["operation_id"], str):
+                raise ValueError("操作IDが不正です")
+            return {**self.broker.cancel_operation(self.actor, arguments["operation_id"]),
+                    "operation_id": arguments["operation_id"]}
         sid, generation = arguments["session_id"], arguments["generation"]
         if not isinstance(sid, str) or type(generation) is not int:
             raise ValueError("端末IDまたは接続世代が不正です")
@@ -80,9 +87,10 @@ class TerminalTools:
             source = self.broker.read_output(sid, generation)
             return {**source, "label": redact(source["label"]),
                     "output": redact(source["output"]), "screen": redact(source["screen"])}
-        return self.broker.perform(self.actor, name, sid, generation,
+        result = self.broker.perform(self.actor, name, sid, generation,
                                    text=arguments.get("text", ""), cwd=arguments.get("cwd"),
-                                   request_id=request_id)
+                                   request_id=request_id, cancel=self.cancel)
+        return {**result, "session_id": sid, "generation": generation, "operation_id": request_id}
 
 
 class AiConversation:
