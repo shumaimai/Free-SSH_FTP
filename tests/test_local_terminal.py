@@ -56,6 +56,19 @@ def test_conpty_utf8_resize_and_close():
         backend.send(b"x")
 
 
+def test_close_cancels_and_joins_internal_reader_before_process_close():
+    from types import SimpleNamespace
+
+    cancelled = threading.Event()
+    process = Process()
+    process.pty = SimpleNamespace(cancel_io=cancelled.set)
+    process._thread = threading.Thread(target=lambda: cancelled.wait(5))
+    process._thread.start()
+    process.close = lambda force=False: None if not process._thread.is_alive() else pytest.fail("readerは未回収")
+    ConPtyBackend(process).close()
+    assert cancelled.is_set() and not process._thread.is_alive()
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows ConPTY実機テスト")
 def test_real_conpty_cmd(tmp_path):
     backend = ConPtyBackend.spawn(cwd=tmp_path)
@@ -81,3 +94,4 @@ def test_real_conpty_cmd(tmp_path):
         backend.close()
         reader.join(2)
     assert not reader.is_alive()
+    assert not backend.process._thread.is_alive()
