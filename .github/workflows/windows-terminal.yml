@@ -20,6 +20,10 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install -r requirements-dev.txt
-      - run: python -m pytest tests/test_local_terminal.py tests/test_terminal_backend.py tests/test_terminal_keys.py tests/test_terminal_resize.py tests/test_mcp_bridge.py tests/test_claude_cli.py tests/test_command_broker.py
+      - name: Record environment
+        run: python -c "import sys, platform, importlib.metadata as m; print(sys.version, platform.platform()); print({p:m.version(p) for p in ['PySide6','paramiko','pyte','pywinpty','PyJWT']})"
+      - run: python -m pytest tests/test_local_terminal.py tests/test_terminal_backend.py tests/test_terminal_keys.py tests/test_terminal_resize.py tests/test_mcp_bridge.py tests/test_claude_cli.py tests/test_command_broker.py tests/test_ssh_core.py tests/test_ai_api.py tests/test_ai_core.py tests/test_chatgpt_oauth.py tests/test_config.py
       - run: python -m PyInstaller --noconfirm Hashi.spec
+      - name: Record executable sizes
+        run: Get-Item dist/Hashi.exe, dist/HashiMCP.exe | Select-Object Name, Length
       - run: python -m pytest tests/test_mcp_bridge.py -k packaged

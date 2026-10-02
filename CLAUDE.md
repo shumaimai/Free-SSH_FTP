@@ -10,7 +10,8 @@
 - **最新リリース: v1.0.1**(2026-08-01)。バージョンの単一ソースは
   `hashi/__init__.py`。**タグ `vX.Y.Z` はオーナーが手元で push する**(エージェントは
   タグ push が 403。手順は §8 参照)。
-- テストは **438 passed, 2 skipped**(`QT_QPA_PLATFORM=offscreen pytest`)。
+- 端末/AI開発ブランチのローカルLinuxテストは **549 passed, 8 skipped**(2026-10-02)。
+  Windows専用/凍結ヘルパーのskipはWindows CIと区別する。
   `ruff check .` / `compileall` も緑。この状態を壊さないこと。
 -  **headless / CI で keyring の Secret Service が応答しないと `pytest` がハングする。**
   `PYTHON_KEYRING_BACKEND=keyring.backends.fail.Keyring` を付けて実行する(本番コードは
@@ -45,6 +46,9 @@
 (keyring プローブのタイムアウト)+ バージョン確定 + ドキュメント整備に留めた。
 **#65(クラウド同期のバックエンド再検討)は 1.0 スコープ外で先送り**(オーナー合意待ち。
 「ログイン等の後回し issue は触らない」方針)。#129 / #82 は実機検証が残るためオープン維持。
+
+端末/AI拡張の監査対象・仕様・検証手順は `docs/terminal-ai-audit.md` を参照する。
+監査時は未マージの機能PRのheadを指定し、実装前のmainと取り違えない。
 
 ### 未検証で残っていること(正直に伝えるべき点)
 
@@ -479,6 +483,7 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - `ai_api.py` はOpenAI Responses / Anthropic Messages / 互換Chat Completionsを変換する。
 - 完了イベントのない応答のツールは実行しない。Responsesのreasoning出力を含む履歴を保持。
 - `ai_http.py` はHTTPS (loopbackのみHTTP可)、認証付きリダイレクト禁止、サイズ制限、自動POST再送禁止。
+- 互換APIのツール可否を明示設定する。相談専用ではtoolsを送らず、返されたツール要求も実行しない。POSTを自動再送しない。
 - AI秘密はHashi.AIまたは専用暗号化ファイルに保存し、SSH資格情報と設定JSONへ混ぜない。
 
 ### ChatGPT OAuth (#158)
@@ -502,3 +507,9 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - Hashi経由の操作停止とCLIのCtrl+Cを区別する。公開前に公式Commercial Terms/提供条件を再確認する。
 - 独立CMDの出力は単一スレッドでPeekNamedPipeの利用可能分だけ読む。子プロセスのEOF待ちで停止を塞がない。
 - /S /Cのコマンド本文の引用符をCRT用に再エスケープしない。出力EOFを確認できなければcompletionはunknown。
+
+### SSH独立コマンドの締切と観測 (#152/#155 監査対応)
+- exec_command/run_sudoとCommandBrokerの専用SSHチャネルは、開始・要求ACK・認証入力・出力・終了待ちに共通の締切を適用する。
+- 締切/取消監視は所有する専用チャネルのcloseだけを行い、送受信は実行側のみ。監視スレッドは終了時に回収する。対話PTY・SFTP・Transportを閉じない。
+- 受信失敗を握り潰してrecv_exit_statusへ進まない。締切超過はリモートプロセスの終了を保証しない。
+- SSHのPTY種別xterm-256colorからシェルを推測せず、shellはunknownを公開する。独立execの本文はサーバー側の解釈に任せる。

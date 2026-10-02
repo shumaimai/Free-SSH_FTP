@@ -3,8 +3,64 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from hashi.config import Profile
 from hashi.ssh_core import SshSession
+
+
+@pytest.mark.parametrize("sudo", [False, True])
+def test_command_without_exit_status_has_total_deadline_and_closes(sudo):
+    import time
+
+    session = SshSession(Profile())
+    channel = MagicMock()
+    channel.recv_ready.return_value = False
+    channel.recv_stderr_ready.return_value = False
+    channel.exit_status_ready.return_value = False
+    session.transport = MagicMock()
+    session.transport.open_session.return_value = channel
+    started = time.monotonic()
+    with pytest.raises(TimeoutError, match="終了は不明"):
+        if sudo:
+            session.run_sudo("sleep 60", "test-password", timeout=.05)
+        else:
+            session.exec_command("sleep 60", timeout=.05)
+    assert time.monotonic() - started < 1
+    channel.close.assert_called()
+    channel.recv_exit_status.assert_not_called()
+    assert 0 < session.transport.open_session.call_args.kwargs["timeout"] <= .05
+    if sudo:
+        channel.sendall.assert_called_once_with(b"test-password\n")
+
+
+def test_receive_failure_does_not_enter_blocking_exit_status_wait():
+    session = SshSession(Profile())
+    channel = MagicMock()
+    session.transport = MagicMock()
+    session.transport.open_session.return_value = channel
+    channel.recv_ready.return_value = True
+    channel.recv.side_effect = OSError("receive failed")
+    with pytest.raises(OSError, match="receive failed"):
+        session.exec_command("test")
+    channel.recv_exit_status.assert_not_called()
+    channel.close.assert_called()
+
+
+def test_sudo_keeps_both_output_streams_and_exit_status():
+    session = SshSession(Profile())
+    channel = MagicMock()
+    session.transport = MagicMock()
+    session.transport.open_session.return_value = channel
+    channel.recv_ready.side_effect = [True, False]
+    channel.recv_stderr_ready.side_effect = [True, False]
+    channel.recv.return_value = "日本語".encode()
+    channel.recv_stderr.return_value = b"error"
+    channel.exit_status_ready.return_value = True
+    channel.recv_exit_status.return_value = 7
+    assert session.run_sudo("test", None) == (7, "日本語", "error")
+    channel.sendall.assert_not_called()
+    channel.close.assert_called()
 
 
 def test_security_summary_reports_negotiated_cipher():

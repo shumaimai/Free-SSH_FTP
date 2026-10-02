@@ -132,7 +132,9 @@ def test_cli_page_auth_output_never_enters_registry_or_hashi_log(qapp, tmp_confi
         wait_gui(qapp, lambda: page.terminal._channel is not None)
         assert page.binding is None
         page.terminal.output_received.emit(b"OAUTH_CODE=private-code")
+        page.terminal._on_data(b"\r\n[sudo] password for fake:\r")
         assert registry.list() == [] and page.terminal._session_log is None
+        assert not backend.sent
         assert starts[0]["cwd"] == str(tmp_config)
         assert starts[0]["argv"][0] == "claude.exe"
         config = page.config_path
