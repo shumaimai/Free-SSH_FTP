@@ -1,5 +1,8 @@
 import socket
+import subprocess
+import sys
 import threading
+import time
 from types import SimpleNamespace
 
 import paramiko
@@ -183,3 +186,51 @@ def test_real_ssh_exec_stdout_stderr_and_exit_code():
             transport.close()
         server.join(2)
     assert not errors
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows独立CMDの実検証")
+def test_real_local_cmd_cwd_unicode_stderr_exit_and_timeout(setup, tmp_path):
+    registry, backend, entry, broker = setup
+    broker.configure("auto", [(entry.id, entry.generation)])
+    result = broker.perform("test", "run_command", entry.id, entry.generation,
+                            text="echo 日本語 & echo !literal! & for %i in (OK) do @echo %i & echo stderr-test 1>&2 & cd & exit /b 7", cwd=str(tmp_path))
+    assert result["completion"] == "known" and result["exit_code"] == 7
+    assert "日本語" in result["output"] and str(tmp_path).lower() in result["output"].lower()
+    assert "stderr-test" in result["error"] and result["output_complete"]
+    assert "!literal!" in result["output"] and "OK" in result["output"]
+    assert backend.sent == []  # 対話端末へ送らない
+    start = time.monotonic()
+    result = broker.perform("test", "run_command", entry.id, entry.generation,
+                            text="ping -n 30 127.0.0.1 >nul", cwd=str(tmp_path), timeout=1)
+    assert time.monotonic() - start < 8
+    assert result["status"] == "timeout" and result["completion"] == "unknown"
+    assert result["exit_code"] is None
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows子プロセスのパイプ実検証")
+def test_local_detached_child_does_not_block_pipe_close(setup, tmp_path):
+    registry, backend, entry, broker = setup
+    parent = tmp_path / "空白 フォルダ" / "parent.py"
+    parent.parent.mkdir()
+    pid_file = tmp_path / "child.pid"
+    parent.write_text(
+        "import subprocess,sys,pathlib\n"
+        "p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)'],stdout=sys.stdout,stderr=sys.stderr)\n"
+        f"pathlib.Path({str(pid_file)!r}).write_text(str(p.pid))\n"
+        "print('parent exited')\n", encoding="utf-8")
+    broker.configure("auto", [(entry.id, entry.generation)])
+    start = time.monotonic()
+    try:
+        result = broker.perform("test", "run_command", entry.id, entry.generation,
+                                text=subprocess.list2cmdline([sys.executable, str(parent)]),
+                                cwd=str(tmp_path), timeout=2)
+        assert time.monotonic() - start < 5
+        assert "parent exited" in result["output"]
+        assert result["exit_code"] == 0 and result["completion"] == "unknown"
+        assert result["output_complete"] is False
+    finally:
+        if pid_file.exists():
+            child_pid = int(pid_file.read_text())
+            subprocess.run(["taskkill", "/PID", str(child_pid), "/T", "/F"],
+                           capture_output=True, timeout=5, check=False,
+                           creationflags=subprocess.CREATE_NO_WINDOW)
