@@ -479,6 +479,7 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - `ai_api.py` はOpenAI Responses / Anthropic Messages / 互換Chat Completionsを変換する。
 - 完了イベントのない応答のツールは実行しない。Responsesのreasoning出力を含む履歴を保持。
 - `ai_http.py` はHTTPS (loopbackのみHTTP可)、認証付きリダイレクト禁止、サイズ制限、自動POST再送禁止。
+- 互換APIのツール可否を明示設定する。相談専用ではtoolsを送らず、返されたツール要求も実行しない。POSTを自動再送しない。
 - AI秘密はHashi.AIまたは専用暗号化ファイルに保存し、SSH資格情報と設定JSONへ混ぜない。
 
 ### ChatGPT OAuth (#158)
@@ -493,3 +494,9 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - console-modeのHashiMCP.exeから認証付き127.0.0.1 IPCへ接続する。stdoutはJSON-RPCだけ。
 - 接続情報はユーザー限定の一時フォルダに置き、終了時に削除する。インスタンスID/tokenを照合する。
 - 操作はCommandBrokerを通す。notificationからの操作は禁止。切断で承認待ちを取り消す。
+
+### SSH独立コマンドの締切と観測 (#152/#155 監査対応)
+- exec_command/run_sudoとCommandBrokerの専用SSHチャネルは、開始・要求ACK・認証入力・出力・終了待ちに共通の締切を適用する。
+- 締切/取消監視は所有する専用チャネルのcloseだけを行い、送受信は実行側のみ。監視スレッドは終了時に回収する。対話PTY・SFTP・Transportを閉じない。
+- 受信失敗を握り潰してrecv_exit_statusへ進まない。締切超過はリモートプロセスの終了を保証しない。
+- SSHのPTY種別xterm-256colorからシェルを推測せず、shellはunknownを公開する。独立execの本文はサーバー側の解釈に任せる。
