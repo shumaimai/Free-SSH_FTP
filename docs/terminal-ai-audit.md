@@ -69,6 +69,7 @@ ConPTYはWindows 10 1809以降、pywinpty 3.0.5以上をWindows限定で導入�
 pywinptyの[MITライセンス](https://github.com/andfoy/pywinpty/blob/main/LICENSE.txt)を適用する。
 ConPTYのUnicode出力をUTF-8 bytesにして既存TerminalWidgetへ渡す。通常のローカルCMDも
 現在はSessionLogを接続しない。終了は生成したPIDのツリーに限定する。
+終了時はpywinpty内部readerもsocket shutdown/native cancel_io/joinで回収する。
 インタラクティブCMDはHashi起動時の環境を引き継ぐ。環境変数の編集UIとシェルcwd検出は未実装。
 他の端末の変更済み環境を引き継いだとは表示しない。
 

@@ -10,7 +10,7 @@
 - **最新リリース: v1.0.1**(2026-08-01)。バージョンの単一ソースは
   `hashi/__init__.py`。**タグ `vX.Y.Z` はオーナーが手元で push する**(エージェントは
   タグ push が 403。手順は §8 参照)。
-- 端末/AI開発ブランチのローカルLinuxテストは **549 passed, 8 skipped**(2026-10-02)。
+- 端末/AI開発ブランチのローカルLinuxテストは **550 passed, 8 skipped**(2026-10-02)。
   Windows専用/凍結ヘルパーのskipはWindows CIと区別する。
   `ruff check .` / `compileall` も緑。この状態を壊さないこと。
 -  **headless / CI で keyring の Secret Service が応答しないと `pytest` がハングする。**
@@ -513,3 +513,5 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - 締切/取消監視は所有する専用チャネルのcloseだけを行い、送受信は実行側のみ。監視スレッドは終了時に回収する。対話PTY・SFTP・Transportを閉じない。
 - 受信失敗を握り潰してrecv_exit_statusへ進まない。締切超過はリモートプロセスの終了を保証しない。
 - SSHのPTY種別xterm-256colorからシェルを推測せず、shellはunknownを公開する。独立execの本文はサーバー側の解釈に任せる。
+
+- ConPTY終了時はpywinpty内部readerのsocket shutdown/native cancel_io/joinを行い、Hashi側のreaderだけでなく内部readerも回収する。
