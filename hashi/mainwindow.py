@@ -859,7 +859,7 @@ class SessionTab(QWidget):
                 from .terminal_binding import TerminalBinding
                 self.terminal_binding = TerminalBinding(
                     self.registry, self.terminal, label=session.profile.label(),
-                    kind="ssh", shell="posix", ssh_session=session)
+                    kind="ssh", shell="unknown", ssh_session=session)
             self.terminal.setFocus()
         if self._use_terminal and settings.get("terminal_dual_pane"):
             self.bt_wterm.setChecked(True)
