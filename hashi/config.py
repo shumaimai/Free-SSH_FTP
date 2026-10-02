@@ -134,6 +134,7 @@ class Settings:
         "bookmarks": {},                # リモートのブックマーク {profile_id: [path, ...]}(#80)
         "dual_pane": False,             # ファイル側をローカル⇔リモートの 2 ペインにする(#82)
         "local_start_dir": "",          # ローカルペインの初期フォルダ(空 = ホーム)
+        "local_terminal_start_dir": "", # CMDの開始フォルダ(空 = ホーム、対話後のcwdではない)
         "sync_browse": False,           # 同期ブラウズ: 片方の移動を相手にも写す(#82 第 2 段)
     }
 
