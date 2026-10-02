@@ -6,7 +6,9 @@
 keyring はバックエンドをエントリポイントで動的解決するため、凍結時に取りこぼす。
 明示的に収集する。Windows の資格情報マネージャ backend は win32ctypes に依存。
 """
-from PyInstaller.utils.hooks import collect_submodules
+import sys
+
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 hidden = []
 hidden += collect_submodules("keyring")
@@ -18,12 +20,16 @@ hidden += [
     "keyring.backends.chainer",
     "keyring.backends.fail",
 ]
+conpty_datas, conpty_binaries = [], []
+if sys.platform == "win32":
+    conpty_datas, conpty_binaries, conpty_hidden = collect_all("winpty")
+    hidden += conpty_hidden
 
 a = Analysis(
     ["main.py"],
     pathex=[],
-    binaries=[],
-    datas=[],
+    binaries=conpty_binaries,
+    datas=conpty_datas,
     hiddenimports=hidden,
     hookspath=[],
     hooksconfig={},
