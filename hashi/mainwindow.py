@@ -859,7 +859,7 @@ class SessionTab(QWidget):
                 from .terminal_binding import TerminalBinding
                 self.terminal_binding = TerminalBinding(
                     self.registry, self.terminal, label=session.profile.label(),
-                    kind="ssh", shell="posix", ssh_session=session)
+                    kind="ssh", shell="unknown", ssh_session=session)
             self.terminal.setFocus()
         if self._use_terminal and settings.get("terminal_dual_pane"):
             self.bt_wterm.setChecked(True)
@@ -2380,6 +2380,8 @@ class AppWindow(_SharedOps, QMainWindow):
         self._services = services
         from .session_registry import SessionRegistry
         self.session_registry = services.setdefault("session_registry", SessionRegistry())
+        from .command_broker import CommandBroker
+        self.command_broker = services.setdefault("command_broker", CommandBroker(self.session_registry))
         self.store = services["store"]
         self.known_hosts = services["known_hosts"]
         self.settings = services["settings"]
@@ -2690,6 +2692,7 @@ class AppWindow(_SharedOps, QMainWindow):
             w = self.tabs.widget(i)
             if isinstance(w, (SessionPage, LocalTerminalPage)):
                 w.shutdown()
+        self.command_broker.stop()
         AppWindow._instance = None
         ev.accept()
 
