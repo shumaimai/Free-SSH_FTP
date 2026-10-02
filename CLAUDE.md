@@ -457,3 +457,8 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - 起動はQThread、終了対象は生成したPIDのツリーだけ。端末終了とタブ破棄は別イベント。
 - socket shutdown/native cancel_io/joinでpywinpty内部readerも回収する。
 - ローカルCMDはSSHを必要としない。開始フォルダと現在のcwdは区別し、cwdを推測しない。
+
+### W端末 (#154)
+- ファイルの2ペインと端末のWペインは独立したsplitterと設定。
+- `SessionTab.terminal` は常にSSH。入力先は `active_terminal()`。保存パスワードとSSHログはSSH専用。
+- W端末を隠してもCMDは存続し、SSH再接続でも再生成しない。タブ終了時に両方を終了。
