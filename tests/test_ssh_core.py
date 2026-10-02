@@ -29,7 +29,8 @@ def test_command_without_exit_status_has_total_deadline_and_closes(sudo):
     assert time.monotonic() - started < 1
     channel.close.assert_called()
     channel.recv_exit_status.assert_not_called()
-    assert 0 < session.transport.open_session.call_args.kwargs["timeout"] <= .05
+    # Windowsのmonotonicは同じtickを返し、減算結果に丸め誤差が残ることがある。
+    assert 0 < session.transport.open_session.call_args.kwargs["timeout"] <= .05 + 1e-9
     if sudo:
         channel.sendall.assert_called_once_with(b"test-password\n")
 
