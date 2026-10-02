@@ -48,6 +48,18 @@ def test_compatible_fragmented_call():
     assert reply["tool_calls"][0]["arguments"] == {}
 
 
+def test_compatible_advice_mode_omits_tools_and_rejects_unsolicited_calls():
+    http = Http([{"choices": [{"delta": {"content": "助言"}, "finish_reason": "stop"}]}])
+    provider = ApiProvider("compatible", "test", "", base_url="http://127.0.0.1:1234/v1",
+                           http=http, use_tools=False)
+    reply = provider.respond([], "", tool_definitions(), threading.Event(), lambda _: None)
+    assert reply["text"] == "助言" and reply["tool_calls"] == []
+    assert "tools" not in http.requests[0][1]
+    http.data = [{"choices": [{"delta": {"tool_calls": [{"index": 0}]}, "finish_reason": "tool_calls"}]}]
+    with pytest.raises(RuntimeError, match="実行していません"):
+        provider.respond([], "", tool_definitions(), threading.Event(), lambda _: None)
+
+
 @pytest.mark.parametrize("url", ["http://remote.example", "https://user:pw@example.com", "https://example.com?key=x", "file:///tmp/key"])
 def test_unsafe_endpoint(url):
     with pytest.raises(ValueError):
@@ -74,3 +86,52 @@ def test_settings_key_reset(qapp, tmp_config):
     assert not dialog.key.text()
     dialog.deleteLater()
     qapp.processEvents()
+
+
+def test_api_connection_settings_reload_without_secret(qapp, tmp_config):
+    from hashi.ai_settings import AiSettingsDialog
+    from hashi.config import Settings
+
+    settings = Settings()
+    secrets = AiSecretStore(SimpleNamespace(_keyring=None))
+    dialog = AiSettingsDialog(settings, secrets)
+    dialog.kind.setCurrentIndex(dialog.kind.findData("compatible"))
+    dialog.base.setText("http://127.0.0.1:4321/v1")
+    dialog.model.setText("test-model")
+    dialog.key.setText("test-sensitive-key")
+    dialog.persist.setChecked(True)
+    dialog.use_tools.setChecked(False)
+    dialog._accept()
+    restored = AiSettingsDialog(Settings(), secrets)
+    assert restored.kind.currentData() == "compatible"
+    assert restored.base.text() == "http://127.0.0.1:4321/v1"
+    assert restored.model.text() == "test-model"
+    assert restored.key.text() == "test-sensitive-key"
+    assert not restored.use_tools.isChecked()
+    assert "test-sensitive-key" not in settings.path.read_text()
+    dialog.deleteLater()
+    restored.deleteLater()
+    qapp.processEvents()
+
+
+def test_ai_secrets_do_not_enter_ssh_export_or_sync_bundle(tmp_config):
+    import json
+
+    from hashi.config import KnownHosts, Profile, Settings
+    from hashi.credentials import CredentialStore
+    from hashi.portability import build_bundle_dict
+
+    credentials = CredentialStore()
+    store = AiSecretStore(credentials)
+    store.set("api:test", "test-api-key")
+    store.set("oauth:account", "test-access-refresh-id-tokens")
+    profile = Profile(host="host", username="user")
+    credentials.set(profile, "password", "ssh-password")
+    bundle, count = build_bundle_dict([profile], KnownHosts(), credentials,
+                                     passphrase="test-export-passphrase")
+    # 同期も同じbuild_bundle_dictを使用。秘密の対象はSSH資格情報だけ。
+    assert count == 1
+    serialized = json.dumps(bundle) + json.dumps(Settings()._data)
+    assert "test-api-key" not in serialized
+    assert "test-access-refresh-id-tokens" not in serialized
+    assert store.get("api:test") == "test-api-key"

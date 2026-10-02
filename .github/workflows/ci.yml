@@ -22,8 +22,9 @@ jobs:
       - name: Byte-compile
         run: python -m compileall main.py hashi tools
       - name: Lint (ruff)
-        run: ruff check . || true   # 参考。落とさない
+        run: ruff check .
       - name: Tests (offscreen)
         env:
           QT_QPA_PLATFORM: offscreen
+          PYTHON_KEYRING_BACKEND: keyring.backends.fail.Keyring
         run: pytest

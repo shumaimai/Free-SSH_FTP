@@ -34,6 +34,8 @@ class AiSettingsDialog(QDialog):
         for label, widget in (("方式", self.kind), ("モデル", self.model), ("ベースURL", self.base), ("APIキー", self.key)):
             form.addRow(label, widget)
         layout.addLayout(form)
+        self.use_tools = QCheckBox("互換APIで端末ツールを使う（未対応なら外して相談）")
+        layout.addWidget(self.use_tools)
         self.persist = QCheckBox("APIキーをこのPCに保存する")
         layout.addWidget(self.persist)
         forget = QPushButton("保存キーを削除")
@@ -71,6 +73,8 @@ class AiSettingsDialog(QDialog):
                          "anthropic": "https://api.anthropic.com/v1", "compatible": "http://127.0.0.1:1234/v1"}[kind])
         self.base.setReadOnly(kind != "compatible")
         self.model.setText(profile.get("model", ""))
+        self.use_tools.setVisible(kind == "compatible")
+        self.use_tools.setChecked(profile.get("use_tools", True))
         try:
             self.key.setText(self.secrets.get(self.key_id()) or "")
         except Exception:
@@ -90,12 +94,14 @@ class AiSettingsDialog(QDialog):
             kind, base = self.kind.currentData(), validate_base_url(self.base.text().strip())
             if not self.key.text() and kind != "compatible":
                 raise ValueError("APIキーを指定してください")
-            self.provider = ApiProvider(kind, self.model.text(), self.key.text(), base_url=base)
+            self.provider = ApiProvider(kind, self.model.text(), self.key.text(), base_url=base,
+                                        use_tools=self.use_tools.isChecked())
             if self.persist.isChecked():
                 self.secrets.set(self.key_id(), self.key.text())
             else:
                 self.secrets.delete(self.key_id())
-            self.profiles[kind] = {"base": base, "model": self.model.text().strip()}
+            self.profiles[kind] = {"base": base, "model": self.model.text().strip(),
+                                   "use_tools": self.use_tools.isChecked()}
             self.settings.set("ai_api_profiles", self.profiles)
             self.settings.set("ai_api_kind", kind)
             self.accept()
