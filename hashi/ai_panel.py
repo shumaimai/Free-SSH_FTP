@@ -147,7 +147,7 @@ class AiPanel(QWidget):
             return
         dialog = QDialog(self)
         dialog.setWindowTitle("AIへ送信する内容")
-        dialog.resize(*style.DIALOG_L)
+        dialog.resize(style.DIALOG_L, 480)
         v = QVBoxLayout(dialog)
         v.addWidget(style.plain_label("内容は編集できます。秘密情報が残っていないか確認してください。"))
         preview = QPlainTextEdit(snapshot)
