@@ -266,7 +266,7 @@ class _TerminalScreen(pyte.HistoryScreen):
         old_lines, old_cols = self.lines, self.columns
         plan = None
         above = None
-        if not self.in_alt_screen and columns != old_cols:
+        if not self.in_alt_screen and (columns != old_cols or lines != old_lines):
             plan = self._extract_cursor_logical_line(old_cols)
             above = self._extract_above_logical_lines(plan[2], old_cols)
         super().resize(lines, columns)
@@ -274,14 +274,22 @@ class _TerminalScreen(pyte.HistoryScreen):
             self.wrapped.clear()
             return
         cells, cursor_off, start, span = plan
+        if start == 0 and 0 in self.wrapped and above:
+            # 入力の前半が履歴へ流れている場合、同じ論理行へ戻してから
+            # 折返す。画面内の後半だけで座標を計算しない。
+            prefix = above.pop()
+            cells = prefix + cells
+            cursor_off += len(prefix)
         # 行数が減った場合は上から切り詰められる(pyte 仕様)ので追従
-        start -= max(0, old_lines - lines)
+        start = max(0, start - max(0, old_lines - lines))
+        chunks, cursor = self._wrap_reflow_cells(cells, columns, cursor_off)
+        # 最下段の入力も新しい行数へ収める。幅縮小時に途中で戻ると
+        # 入力の後半を切り捨て、カーソルだけ旧幅へ残してしまう。
+        start = min(start, max(0, lines - len(chunks)))
         self.wrapped.clear()
-        if start < 0:
-            return
         if above is not None:
             self._reflow_above(above, start)
-        self._relayout_cursor_line(cells, cursor_off, start, span)
+        self._relayout_cursor_line(chunks, cursor, start, span)
 
     def _extract_cursor_logical_line(self, old_cols):
         """カーソルの論理行を (セル列, カーソルオフセット, 開始行, 行数) で返す。"""
@@ -296,13 +304,13 @@ class _TerminalScreen(pyte.HistoryScreen):
         for y in range(start, end + 1):
             row = self.buffer[y]
             if y < end:
-                used = old_cols            # 継続がある行は幅いっぱい使っている
+                used = self._row_reflow_width(row, old_cols)
             else:
                 used = 0
                 for x in range(old_cols - 1, -1, -1):
                     ch = row[x]
                     if ch.data and ch.data != " ":
-                        used = x + 1
+                        used = min(old_cols, x + max(1, wcwidth(ch.data[0])))
                         break
                 if y == self.cursor.y:
                     used = max(used, min(self.cursor.x, old_cols))
@@ -319,9 +327,17 @@ class _TerminalScreen(pyte.HistoryScreen):
         for x in range(limit - 1, -1, -1):
             ch = row[x]
             if ch.data and ch.data != " ":
-                used = x + 1
+                used = min(limit, x + max(1, wcwidth(ch.data[0])))
                 break
         return used
+
+    @staticmethod
+    def _row_reflow_width(row, cols):
+        padding = getattr(row, "hashi_reflow_padding", 0)
+        # 全角文字のために空けた末尾へ後から描画されたら、実セルを保持する。
+        if padding and all(row[x].data == " " for x in range(cols - padding, cols)):
+            return cols - padding
+        return cols
 
     def _extract_above_logical_lines(self, start, old_cols):
         """履歴 + カーソル論理行より上の画面行を論理行の列へ結合する。
@@ -341,7 +357,7 @@ class _TerminalScreen(pyte.HistoryScreen):
         for i, (row, cont, cols) in enumerate(rows):
             # 次の行が継続ならこの行は幅いっぱい使っている
             if i + 1 < len(rows) and rows[i + 1][1]:
-                used = cols
+                used = self._row_reflow_width(row, cols)
             else:
                 used = self._row_used_width(row, cols)
             cells = [row[x] for x in range(used)]
@@ -362,46 +378,85 @@ class _TerminalScreen(pyte.HistoryScreen):
         chunks = []   # (セル列, 継続フラグ)
         for cells in logical:
             if not cells:
-                chunks.append(([], False))
+                chunks.append(([], False, 0))
                 continue
-            for off in range(0, len(cells), new_cols):
-                chunks.append((cells[off:off + new_cols], off > 0))
+            wrapped, _ = self._wrap_reflow_cells(cells, new_cols)
+            for i, (part, padding) in enumerate(wrapped):
+                chunks.append((part, i > 0, padding))
         n_screen = min(start, len(chunks))
         screen_chunks = chunks[len(chunks) - n_screen:]
         history_chunks = chunks[:len(chunks) - n_screen]
         self.history.top.clear()
-        for cells, cont in history_chunks:
+        for chunk in history_chunks:
+            cells, cont, *padding = chunk
             row = self.buffer.default_factory()
             for x, cell in enumerate(cells):
                 row[x] = cell
             row.hashi_wrapped = cont
             row.hashi_cols = new_cols
+            row.hashi_reflow_padding = padding[0] if padding else 0
             self.history.top.append(row)
         for y in range(start):
             self.buffer.pop(y, None)
         base = start - n_screen
-        for i, (cells, cont) in enumerate(screen_chunks):
+        for i, chunk in enumerate(screen_chunks):
+            cells, cont, *padding = chunk
             y = base + i
             for x, cell in enumerate(cells):
                 self.buffer[y][x] = cell
+            self.buffer[y].hashi_reflow_padding = padding[0] if padding else 0
             if cont:
                 self.wrapped.add(y)
         self.dirty.update(range(self.lines))
 
-    def _relayout_cursor_line(self, cells, cursor_off, start, old_span):
-        new_cols = self.columns
-        need = max(len(cells), cursor_off + 1)
-        rows_needed = max(1, -(-need // new_cols))
-        if start + rows_needed > self.lines:
-            return  # 収まらない稀ケースは何もしない(従来挙動 + clamp に任せる)
-        for y in range(start, min(start + max(old_span, rows_needed), self.lines)):
+    def _wrap_reflow_cells(self, cells, columns, cursor_off=None):
+        """全角セルを分断せず折返し、元のカーソルを新しい座標へ写す。"""
+        chunks, row, padding, cursor = [], [], 0, None
+        i = 0
+        while i < len(cells):
+            cell = cells[i]
+            width = 2 if (cell.data and wcwidth(cell.data[0]) == 2
+                          and i + 1 < len(cells) and cells[i + 1].data == "") else 1
+            if len(row) + width > columns:
+                padding = columns - len(row)
+                row.extend([self.default_char] * padding)
+                chunks.append((row, padding))
+                row, padding = [], 0
+            if cursor_off is not None and i <= cursor_off < i + width:
+                cursor = (len(chunks), len(row) + cursor_off - i)
+            row.extend(cells[i:i + width])
+            i += width
+            if len(row) == columns:
+                chunks.append((row, padding))
+                row, padding = [], 0
+        if cursor_off is not None and cursor is None:
+            cursor = (len(chunks), len(row))
+        if row or not chunks or (cursor is not None and cursor[0] == len(chunks)):
+            chunks.append((row, padding))
+        return chunks, cursor
+
+    def _relayout_cursor_line(self, chunks, cursor, start, old_span):
+        # 入力全体が画面より長い場合も、カーソルまでの先頭を履歴へ保ち、
+        # 入力の続きが画面の最下段へ収まるようにする。
+        drop = max(0, cursor[0] - self.lines + 1)
+        for i, (cells, padding) in enumerate(chunks[:drop]):
+            row = self.buffer.default_factory()
+            row.update(enumerate(cells))
+            row.hashi_wrapped = i > 0
+            row.hashi_cols = self.columns
+            row.hashi_reflow_padding = padding
+            self.history.top.append(row)
+        visible = chunks[drop:drop + self.lines - start]
+        for y in range(start, min(start + max(old_span, len(visible)), self.lines)):
             self.buffer.pop(y, None)
-        for i, cell in enumerate(cells):
-            self.buffer[start + i // new_cols][i % new_cols] = cell
-        for y in range(start + 1, start + rows_needed):
-            self.wrapped.add(y)
-        self.cursor.y = start + cursor_off // new_cols
-        self.cursor.x = cursor_off % new_cols
+        for i, (cells, padding) in enumerate(visible):
+            y = start + i
+            self.buffer[y].update(enumerate(cells))
+            self.buffer[y].hashi_reflow_padding = padding
+            if i > 0 or drop:
+                self.wrapped.add(y)
+        self.cursor.y = start + cursor[0] - drop
+        self.cursor.x = cursor[1]
         self.dirty.update(range(start, self.lines))
 
     def set_mode(self, *modes, private=False):
@@ -540,6 +595,7 @@ class TerminalWidget(QWidget):
         self.setCursor(Qt.IBeamCursor)
 
         self._channel = None
+        self._pty_resize_pending = None
         self._connection_epoch = 0
         self._bridge = _ChannelBridge()
         self._bridge.data_received.connect(self._receive_data)
@@ -737,6 +793,7 @@ class TerminalWidget(QWidget):
         self._reader = threading.Thread(
             target=self._read_loop, args=(self._channel, self._connection_epoch), daemon=True)
         self._reader.start()
+        self._pty_resize_pending = (self._cols, self._rows)
         self._recalc_grid()
 
     def _read_loop(self, ch, epoch):
@@ -818,6 +875,12 @@ class TerminalWidget(QWidget):
     def send_bytes(self, data: bytes):
         if self._channel is None or self._closed:
             return
+        # 入力を旧幅のPTYへ送ってから80ms後にリサイズする競合を避ける。
+        # Qtが確定した最新のgeometryを入力直前に同期する。
+        if self._pending_grid is not None and self.isVisible():
+            self._recalc_grid()
+            self._resize_timer.stop()
+            self._apply_pending_grid()
         try:
             self._channel.send(data)
         except Exception:
@@ -873,11 +936,27 @@ class TerminalWidget(QWidget):
             self.screen.ensure_vbounds()
             self._cols, self._rows = cols, rows
             self._url_cache.clear()
+            self._sel_anchor = self._sel_end = None
+            self._search_pos = None
             if self._channel is not None and not self._closed:
                 try:
                     self._channel.resize_pty(width=cols, height=rows)
                 except Exception:
-                    logger.debug("resize_pty に失敗 (無視)", exc_info=True)
+                    logger.warning("PTYのリサイズを再試行します", exc_info=True)
+                    self._pty_resize_pending = (cols, rows)
+                    self._pending_grid = (cols, rows)
+                    self._resize_timer.start(250)
+                else:
+                    self._pty_resize_pending = None
+        elif (self._channel is not None and not self._closed
+              and getattr(self, "_pty_resize_pending", None) == (cols, rows)):
+            try:
+                self._channel.resize_pty(width=cols, height=rows)
+            except Exception:
+                self._pending_grid = (cols, rows)
+                self._resize_timer.start(250)
+            else:
+                self._pty_resize_pending = None
         self._dirty = True
 
     def resizeEvent(self, ev):
@@ -1508,6 +1587,9 @@ class TerminalWidget(QWidget):
     # ---- 後始末 --------------------------------------------------------------
     def detach(self):
         self._closed = True
+        self._pty_resize_pending = None
+        self._pending_grid = None
+        self._resize_timer.stop()
         self._connection_epoch += 1
         if self._session_log is not None:
             try:

@@ -50,12 +50,15 @@ def test_probe_requires_version_and_actual_options(tmp_path, monkeypatch):
 
 def test_profiles_keep_auth_and_permissions_native():
     args = launch_arguments("C:/Program Files/claude.exe", "C:/private/mcp.json")
-    assert args[args.index("--tools") + 1] == ""
-    assert json.loads(args[args.index("--settings") + 1]) == {"disableAllHooks": True}
+    assert "--tools" not in args and "--settings" not in args and "--strict-mcp-config" not in args
     assert not any(a in args for a in ("--bare", "--dangerously-skip-permissions", "--allowedTools", "--permission-mode", "--setting-sources"))
     normal = launch_arguments("claude.exe", "config.json", builtins=True, disable_hooks=False, resume=True)
-    assert normal[normal.index("--tools") + 1] == "default"
+    assert "--tools" not in normal
     assert "--settings" not in normal and "--continue" in normal
+    limited = launch_arguments("claude.exe", "config.json", builtins=False, disable_hooks=True)
+    assert limited[limited.index("--tools") + 1] == ""
+    assert "--strict-mcp-config" in limited
+    assert json.loads(limited[limited.index("--settings") + 1]) == {"disableAllHooks": True}
 
 
 def test_mcp_result_visible_in_hashi_without_command_or_output(qapp):
@@ -153,7 +156,7 @@ def test_cli_page_auth_output_never_enters_registry_or_hashi_log(qapp, tmp_confi
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows ConPTY引数の実検証")
 def test_native_conpty_preserves_empty_argument_and_unicode(tmp_path):
     config_path = tmp_path / "空白 フォルダ" / "mcp.json"
-    args = launch_arguments(sys.executable, config_path)
+    args = launch_arguments(sys.executable, config_path, builtins=False)
     script = "import sys,json;open('args.json','w',encoding='utf-8').write(json.dumps(sys.argv[1:]));print('HASHI_ARGS_OK');input()"
     backend = ConPtyBackend.spawn(argv=[sys.executable, "-c", script, *args[1:]], cwd=tmp_path)
     data, received = bytearray(), threading.Event()

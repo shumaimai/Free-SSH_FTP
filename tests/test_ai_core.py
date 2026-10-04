@@ -1,5 +1,7 @@
 import threading
 
+import pytest
+
 from hashi.ai_core import AiConversation, TerminalTools, context_snapshot, redact
 from hashi.command_broker import CommandBroker
 from hashi.session_registry import SessionRegistry
@@ -51,5 +53,53 @@ def test_panel_scope_mode_and_stop(qapp):
     panel.mode.setCurrentIndex(1)
     assert broker.list_sessions() == []
     panel.stop()
+    panel.deleteLater()
+    qapp.processEvents()
+
+
+def test_panel_separates_chat_targets_and_history_and_preserves_selection(qapp):
+    from PySide6.QtCore import Qt
+
+    from hashi.ai_panel import AiPanel
+    registry = SessionRegistry()
+    registry.register(object(), label="server", kind="ssh", shell="unknown")
+    panel = AiPanel(CommandBroker(registry))
+    assert [panel.pages.tabText(i) for i in range(3)] == ["会話", "対象端末", "実行履歴"]
+    assert not panel.send.isEnabled()
+    panel.sessions.item(0).setCheckState(Qt.Checked)
+    panel.refresh_sessions()
+    assert panel.sessions.item(0).checkState() == Qt.Checked
+    assert "server" in panel.sessions.item(0).text()
+    assert "端末ID" in panel.sessions.item(0).toolTip()
+    panel.apply_sharing()
+    assert "共有中" in panel.sharing_status.text()
+    panel.stop()
+    assert "未適用" in panel.sharing_status.text()
+    panel.deleteLater()
+    qapp.processEvents()
+
+
+def test_general_question_sends_without_empty_context_dialog(qapp, monkeypatch):
+    import time
+
+    from hashi.ai_panel import AiPanel
+    panel = AiPanel(CommandBroker(SessionRegistry()))
+    class Provider:
+        model = "test-model"
+        kind = "commandcode"
+        def respond(self, messages, instructions, tools, cancel, on_text):
+            on_text("OK")
+            return {"text": "OK"}
+    panel.set_provider(Provider())
+    monkeypatch.setattr(panel, "_preview_context", lambda _: pytest.fail("empty preview opened"))
+    panel.question.setPlainText("質問")
+    panel._send()
+    deadline = time.monotonic() + 5
+    while panel.worker is not None and time.monotonic() < deadline:
+        qapp.processEvents()
+        time.sleep(.005)
+    assert panel.worker is None
+    assert "Command Code" in panel.connection_status.text()
+    assert panel.transcript.toPlainText().count("OK") == 1
     panel.deleteLater()
     qapp.processEvents()

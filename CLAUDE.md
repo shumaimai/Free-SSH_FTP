@@ -481,7 +481,8 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - AIワーカーはGUIへsignalで通知。終了待ちはQtイベントループを止めず、終了してからアプリを閉じる。
 
 ### API方式 (#157)
-- `ai_api.py` はOpenAI Responses / Anthropic Messages / 互換Chat Completionsを変換する。
+- `ai_api.py`はResponses / Messages / Chat Completionsを変換。Command Codeの公式URLとモデル対応形式を使う。
+- AI画面は会話/対象端末/実行履歴。APIモデル取得・接続確認・キー保存/削除はQtワーカーで実行し、終了後にダイアログを閉じる。
 - 完了イベントのない応答のツールは実行しない。Responsesのreasoning出力を含む履歴を保持。
 - `ai_http.py` はHTTPS (loopbackのみHTTP可)、認証付きリダイレクト禁止、サイズ制限、自動POST再送禁止。
 - 互換APIのツール可否を明示設定する。相談専用ではtoolsを送らず、返されたツール要求も実行しない。POSTを自動再送しない。
@@ -501,10 +502,11 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - 操作はCommandBrokerを通す。notificationからの操作は禁止。切断で承認待ちを取り消す。
 
 ### 未改変の公式CLI (#160)
-- `claude_cli.py`は導入済みのWindowsネイティブ版をConPTYで起動。本人の認証・請求を公式CLIへ任せる。
+- `claude_cli.py`はWindowsネイティブ版をConPTYで起動。未導入なら`claude_install.py`で未改変の公式install.ps1を実行する。
+- 導入はワーカーで行い、キャンセル/締切で開始したプロセスツリーを終了。認証・請求は本人の公式CLIへ任せる。
 - CLIバイナリ・認証方式を変更しない。Claude OAuthを取得/複製/保存しない。`--bare`や承認迂回フラグを使わない。
 - 公式CLI端末はSessionRegistry/TerminalBindingへ登録せず、HashiのAI観測とSessionLogから除外する。
-- 起動だけのMCP設定を私有一時フォルダへ置く。内蔵ツール・ユーザーフックは初期OFF、管理者ポリシーは維持。
+- 起動だけのMCP設定を私有一時フォルダへ置く。標準は公式CLIの内蔵ツール・既存MCP・ユーザーフックを維持。限定プロファイル/フック無効は明示選択。
 - Hashi経由の操作停止とCLIのCtrl+Cを区別する。公開前に公式Commercial Terms/提供条件を再確認する。
 - 独立CMDの出力は単一スレッドでPeekNamedPipeの利用可能分だけ読む。子プロセスのEOF待ちで停止を塞がない。
 - /S /Cのコマンド本文の引用符をCRT用に再エスケープしない。出力EOFを確認できなければcompletionはunknown。

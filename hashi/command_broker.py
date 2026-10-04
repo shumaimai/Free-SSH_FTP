@@ -131,6 +131,10 @@ class CommandBroker:
             return [s for s in self.registry.list(shareable_only=True)
                     if (s["session_id"], s["generation"]) in self._targets]
 
+    def permission_snapshot(self):
+        with self._lock:
+            return {"mode": self._mode, "seconds": max(0, int(self._expires - time.monotonic()))}
+
     def read_output(self, sid, generation, limit=16000):
         with self._lock:
             self._check(sid, generation)

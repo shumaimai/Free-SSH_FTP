@@ -1,4 +1,5 @@
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -60,6 +61,74 @@ def test_compatible_advice_mode_omits_tools_and_rejects_unsolicited_calls():
         provider.respond([], "", tool_definitions(), threading.Event(), lambda _: None)
 
 
+@pytest.mark.parametrize("url", [
+    "https://api.commandcode.ai", "https://api.commandcode.ai/v1/",
+    "https://api.commandcode.ai/provider/v1/chat/completions",
+])
+def test_commandcode_normalizes_url(url):
+    provider = ApiProvider("commandcode", "test", "fake", base_url=url)
+    assert provider.base == "https://api.commandcode.ai/provider/v1"
+
+
+def test_commandcode_routes_claude_to_messages_with_bearer():
+    http = Http([{"type": "content_block_delta", "index": 0,
+                  "delta": {"type": "text_delta", "text": "OK"}},
+                 {"type": "message_delta", "delta": {"stop_reason": "end_turn"}},
+                 {"type": "message_stop"}])
+    provider = ApiProvider("commandcode", "claude-sonnet-4-6", "fake", http=http)
+    assert provider.respond([], "", [], threading.Event(), lambda _: None)["text"] == "OK"
+    assert http.requests[0][0].endswith("/provider/v1/messages")
+    assert http.requests[0][2]["Authorization"] == "Bearer fake"
+
+
+def test_settings_save_failure_is_specific_and_does_not_close(qapp, tmp_config):
+    from hashi.ai_settings import AiSettingsDialog
+    from hashi.config import Settings
+
+    class Secrets:
+        def get(self, key):
+            return None
+        def set(self, key, value):
+            raise OSError("test-sensitive-key")
+    dialog = AiSettingsDialog(Settings(), Secrets())
+    dialog.kind.setCurrentIndex(dialog.kind.findData("commandcode"))
+    dialog.model.setText("test-model")
+    dialog.key.setText("test-sensitive-key")
+    dialog.persist.setChecked(True)
+    dialog.show()
+    dialog._accept()
+    deadline = time.monotonic() + 5
+    while dialog.worker is not None and time.monotonic() < deadline:
+        qapp.processEvents()
+        time.sleep(.005)
+    assert dialog.isVisible() and dialog.provider is None
+    assert "APIキーの保存" in dialog.status.text()
+    assert "test-sensitive-key" not in dialog.status.text()
+    dialog.close()
+
+
+def test_commandcode_catalog_selects_supported_protocol(qapp, tmp_config):
+    from hashi.ai_settings import AiSettingsDialog
+    from hashi.config import Settings
+    dialog = AiSettingsDialog(Settings(), AiSecretStore(SimpleNamespace(_keyring=None)))
+    dialog.kind.setCurrentIndex(dialog.kind.findData("commandcode"))
+    dialog.key.setText("fake")
+    dialog._got_models([{"id": "future-model", "supported_endpoints": ["/v1/messages"]}])
+    assert dialog._provider().protocol == "messages"
+    dialog._accept()
+    deadline = time.monotonic() + 5
+    while dialog.worker is not None and time.monotonic() < deadline:
+        qapp.processEvents()
+        time.sleep(.005)
+    assert dialog.provider is not None
+    restored = AiSettingsDialog(Settings(), AiSecretStore(SimpleNamespace(_keyring=None)))
+    restored.key.setText("fake")
+    assert restored._provider().protocol == "messages"
+    dialog.deleteLater()
+    restored.deleteLater()
+    qapp.processEvents()
+
+
 @pytest.mark.parametrize("url", ["http://remote.example", "https://user:pw@example.com", "https://example.com?key=x", "file:///tmp/key"])
 def test_unsafe_endpoint(url):
     with pytest.raises(ValueError):
@@ -102,6 +171,11 @@ def test_api_connection_settings_reload_without_secret(qapp, tmp_config):
     dialog.persist.setChecked(True)
     dialog.use_tools.setChecked(False)
     dialog._accept()
+    deadline = time.monotonic() + 5
+    while dialog.worker is not None and time.monotonic() < deadline:
+        qapp.processEvents()
+        time.sleep(.005)
+    assert dialog.provider is not None
     restored = AiSettingsDialog(Settings(), secrets)
     assert restored.kind.currentData() == "compatible"
     assert restored.base.text() == "http://127.0.0.1:4321/v1"

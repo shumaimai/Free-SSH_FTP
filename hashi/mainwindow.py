@@ -2433,6 +2433,8 @@ class AppWindow(_SharedOps, QMainWindow):
         from .ai_panel import AiPanel
         self.ai_panel = AiPanel(self.command_broker, self)
         self.ai_panel.configure_requested.connect(self._configure_ai)
+        self.ai_panel.cli_requested.connect(self.open_official_cli)
+        self.ai_panel.mcp_requested.connect(self._mcp_settings)
         self.ai_dock = QDockWidget("AI相談", self)
         self.ai_dock.setWidget(self.ai_panel)
         self.addDockWidget(Qt.RightDockWidgetArea, self.ai_dock)
@@ -2515,7 +2517,7 @@ class AppWindow(_SharedOps, QMainWindow):
         if sys.platform != "win32":
             QMessageBox.information(self, "公式CLI", "Hashi内での起動はWindowsネイティブ版に対応しています")
             return
-        dialog = CliLaunchDialog(self)
+        dialog = CliLaunchDialog(self, auto_setup=True)
         if dialog.exec() != QDialog.Accepted:
             return
         try:
@@ -2524,7 +2526,7 @@ class AppWindow(_SharedOps, QMainWindow):
             page = OfficialCliPage(self.settings, self.session_registry, self.mcp_bridge, dialog.launch, self)
             self.tabs.setCurrentIndex(self.tabs.addTab(page, "公式CLI"))
             self.ai_dock.show()
-            self.statusBar().showMessage("AI相談で対象端末を選び、AI/MCP共有を適用してください", 10000)
+            self.statusBar().showMessage("AI相談の「対象端末」で端末を選び、「この端末を共有する」を押してください", 10000)
         except Exception:
             logger.warning("公式CLIを開始できません")
             QMessageBox.warning(self, "公式CLI", "起動できません。CLIとHashiMCP.exeの配置、フォルダの権限を確認してください")
