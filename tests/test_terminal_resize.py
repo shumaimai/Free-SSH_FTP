@@ -4,6 +4,7 @@ pyte スクリーン・描画グリッド・PTY の 3 者のサイズが常に�
 (ずれるとシェルの折返しと描画が食い違い、入力位置が乱れる)を固定する。
 """
 import pytest
+from PySide6.QtCore import QCoreApplication, QEvent
 
 
 class FakeChannel:
@@ -26,6 +27,8 @@ def term(qapp):
     t.show()   # offscreen でも isVisible() を立てるため
     yield t
     t.close()
+    t.deleteLater()
+    QCoreApplication.sendPostedEvents(t, QEvent.DeferredDelete)
 
 
 def test_resize_keeps_screen_grid_pty_in_sync(term):
@@ -127,6 +130,8 @@ def test_grid_follows_own_geometry_inside_header_pane(qapp):
     # ヘッダーの高さぶん、ホスト全体で計算した行数より必ず小さい
     assert term._rows < int(host.height() / term._chh)
     host.close()
+    host.deleteLater()
+    QCoreApplication.sendPostedEvents(host, QEvent.DeferredDelete)
 
 
 def test_grid_resyncs_after_pane_hidden_and_shown(qapp):
@@ -165,6 +170,8 @@ def test_grid_resyncs_after_pane_hidden_and_shown(qapp):
     assert term._cols == max(4, int(term.width() / term._cw))
     assert term._rows == max(2, int(term.height() / term._chh))
     host.close()
+    host.deleteLater()
+    QCoreApplication.sendPostedEvents(host, QEvent.DeferredDelete)
 
 
 def test_wrap_tracking_marks_continuation_rows(term):
