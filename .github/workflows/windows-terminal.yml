@@ -16,6 +16,8 @@ jobs:
       PYTHON_KEYRING_BACKEND: keyring.backends.fail.Keyring
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -27,3 +29,29 @@ jobs:
       - name: Record executable sizes
         run: Get-Item dist/Hashi.exe, dist/HashiMCP.exe | Select-Object Name, Length
       - run: python -m pytest tests/test_mcp_bridge.py -k packaged
+      - name: Record test build identity and checksums
+        shell: pwsh
+        run: |
+          $info = @{
+            source_commit = (git rev-parse HEAD)
+            application_version = (python -c "import hashi; print(hashi.__version__)")
+            platform = "windows-x64"
+            workflow_run = "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            build_kind = "development-test"
+          }
+          $info | ConvertTo-Json | Set-Content dist/build-info.json -Encoding utf8NoBOM
+          Get-FileHash dist/Hashi.exe, dist/HashiMCP.exe -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } |
+            Set-Content dist/SHA256SUMS.txt -Encoding utf8NoBOM
+      - name: Save Windows test executables
+        uses: actions/upload-artifact@v7
+        with:
+          name: Hashi-test-windows-x64
+          path: |
+            dist/Hashi.exe
+            dist/HashiMCP.exe
+            dist/build-info.json
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
