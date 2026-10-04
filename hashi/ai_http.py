@@ -54,6 +54,9 @@ class JsonHttp:
             raise RuntimeError(f"AI接続エラー HTTP {code}: {hint}") from None
         except (urllib.error.URLError, OSError):
             raise RuntimeError("AI接続に失敗しました。接続先とネットワークを確認してください") from None
+        except (ValueError, TypeError):
+            # urllibのヘッダー検証例外には、APIキーの値自体が含まれ得る。
+            raise RuntimeError("APIキーと接続先の入力形式を確認してください。改行を含むキーは使えません") from None
 
     def json(self, url, payload=None, headers=None, *, form=False):
         data, headers = None, dict(headers or {})

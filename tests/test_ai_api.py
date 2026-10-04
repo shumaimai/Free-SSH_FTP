@@ -6,7 +6,7 @@ import pytest
 
 from hashi.ai_api import ApiProvider, responses_input
 from hashi.ai_core import tool_definitions
-from hashi.ai_http import validate_base_url
+from hashi.ai_http import JsonHttp, validate_base_url
 from hashi.ai_secrets import AiSecretStore
 
 
@@ -17,6 +17,16 @@ class Http:
     def events(self, url, payload, headers, cancel):
         self.requests.append((url, payload, headers))
         yield from self.data
+
+
+def test_invalid_header_error_does_not_display_api_key():
+    http = JsonHttp()
+    def invalid(*args, **kwargs):
+        raise ValueError("Invalid header value b'Bearer test-sensitive-key\\n'")
+    http.opener.open = invalid
+    with pytest.raises(RuntimeError) as caught:
+        http.open("https://example.com/v1/models", headers={"Authorization": "Bearer test-sensitive-key"})
+    assert "入力形式" in str(caught.value) and "test-sensitive-key" not in str(caught.value)
 
 
 def test_responses_tool_and_reasoning_history():
