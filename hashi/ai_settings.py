@@ -116,12 +116,12 @@ class AiSettingsDialog(QDialog):
         profiles = settings.get("ai_api_profiles")
         self.profiles = dict(profiles) if isinstance(profiles, dict) else {}
         self.kind.setCurrentIndex(max(0, self.kind.findData(settings.get("ai_api_kind") or "openai")))
-        self._load()
-        self.kind.currentIndexChanged.connect(self._load)
-        self.base.textEdited.connect(self._base_changed)
         self.controls = [self.kind, self.model, self.base, self.key, self.protocol,
                          self.use_tools, self.persist, self.forget, self.fetch_models,
                          self.check_connection, chatgpt, self.buttons.button(QDialogButtonBox.Ok)]
+        self._load()
+        self.kind.currentIndexChanged.connect(self._load)
+        self.base.textEdited.connect(self._base_changed)
 
     def _base_changed(self, _text):
         self.key.clear()
@@ -140,6 +140,8 @@ class AiSettingsDialog(QDialog):
             self.accept()
 
     def _load(self):
+        if self.worker is not None:
+            return
         kind = self.kind.currentData()
         profile = self.profiles.get(kind, {})
         if not isinstance(profile, dict):
@@ -154,13 +156,27 @@ class AiSettingsDialog(QDialog):
         self.protocol.setEnabled(kind in {"commandcode", "compatible"})
         self.use_tools.setChecked(profile.get("use_tools", True))
         self._catalog = {}
+        self.key.clear()
+        self.persist.setChecked(False)
         try:
-            self.key.setText(self.secrets.get(self.key_id()) or "")
-            self.status.setText("モデル一覧を取得するか、利用可能なモデル名を入力してください。")
-        except Exception:
-            self.key.clear()
-            self.status.setText("保存キーを読み込めませんでした。キーを再入力してください。")
-        self.persist.setChecked(bool(self.key.text()))
+            key_id = self.key_id()
+        except ValueError as exc:
+            self.status.setText(str(exc))
+            return
+        def read_key(_cancel):
+            try:
+                value = self.secrets.get(key_id)
+                if value is not None and not isinstance(value, str):
+                    raise ValueError("保存キーの形式が不正")
+                return value or ""
+            except Exception:
+                raise RuntimeError("保存キーを読み込めませんでした。キーを再入力してください。") from None
+        def loaded(value):
+            if not self._reject_pending and self.key_id() == key_id and not self.key.text():
+                self.key.setText(value)
+                self.persist.setChecked(bool(value))
+                self.status.setText("モデル一覧を取得するか、利用可能なモデル名を入力してください。")
+        self._start(read_key, loaded, "このPCの保存キーを読み込んでいます…")
 
     def _provider(self, require_model=True):
         kind, base = self.kind.currentData(), normalize_api_base(self.base.text())
@@ -228,6 +244,7 @@ class AiSettingsDialog(QDialog):
             self.status.setText(str(exc))
             return
         def check(cancel):
+            provider.use_tools = False
             provider.respond([{"role": "user", "content": "OKとだけ答えてください。"}],
                              "接続確認です。端末操作をせず短く回答してください。", [], cancel, lambda _text: None)
         self._start(check, lambda _: self.status.setText("接続できました。「この接続を使う」で会話へ戻れます。"),

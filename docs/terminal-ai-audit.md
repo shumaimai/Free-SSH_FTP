@@ -7,6 +7,8 @@
 「機能が存在しない」という記述はその時点のmainについて正しい。
 実装は未マージのPR #161〜#169にある。再監査は該当PRのheadを対象とする。
 全機能をまとめて見る場合は`feature/claude-code`を使う。
+2026-10-04の再監査で指摘された、長いツール結果のJSON破損をこのブランチで修正した。
+初期の子PRだけでは後続のUI/API/自動導入の改修が見えないため、全体の再確認はPR #169を対象にする。
 mainwindow.pyをサイズ制限で省略する場合は、下表の連携箇所を個別に読む。
 
 | Issue / PR | 責務と実装の確認先 | 主な自動検証 |
@@ -19,7 +21,7 @@ mainwindow.pyをサイズ制限で省略する場合は、下表の連携箇所�
 | #157 / #166 | `ai_api.py`, `ai_http.py`, `ai_settings.py`, `ai_secrets.py` | `test_ai_api.py`。模擬ストリーム、設定再読込、SSH書き出し/同期バンドルへの秘密の非混入 |
 | #158 / #167 | `chatgpt_oauth.py`, `chatgpt_dialog.py` | `test_chatgpt_oauth.py`。実loopback、模擬issuer、RSA署名、state/nonce/aud/期限、更新直列化、失効失敗 |
 | #159 / #168 | `mcp_bridge.py`, `mcp_stdio.py`, `tools/hashi_mcp.py`, `Hashi.spec` | `test_mcp_bridge.py`。実stdio/IPC、認証・別インスタンス拒否、取消、凍結ヘルパー |
-| #160 / #169 | `claude_cli.py`; `OfficialCliPage`, `AppWindow.open_official_cli` | `test_claude_cli.py`。起動オプション、認証画面の非共有/非ログ/秘密の非自動送信 |
+| #160 / #169 | `claude_cli.py`, `claude_install.py`; `OfficialCliPage`, `AppWindow.open_official_cli` | `test_claude_cli.py`, `test_claude_install.py`。起動オプション、未改変の公式導入、取消、認証画面の非共有/非ログ/秘密の非自動送信 |
 
 #152は契約とSSHアダプターまで、ConPTY実装は#153、表示構成は#154で扱う。
 端末ID/世代の正はSessionRegistry、操作ID/承認/取消の正はCommandBrokerであり、
@@ -39,15 +41,24 @@ mainwindow.pyをサイズ制限で省略する場合は、下表の連携箇所�
 - SSHのシェルはPTY名から推測せず`unknown`を公開する。独立execは本文をサーバーへ送り、
   対話PTYのcwd/環境を引き継がない。cwdは検出していないため`null`。
 - 互換APIには相談専用の選択肢を設ける。toolsを送らず、応答にツール要求があっても実行しない。
-  対応はストリーミングChat Completions形式まで。HTTPエラー後の自動POST再送はしない。
+  Chat Completions / Responses / Messagesの形式を選択できる。HTTPエラー後の自動POST再送はしない。
 - Windows CIにAI/API/OAuth/設定/SSHの検証を追加し、実行環境とEXEサイズを記録する。
+- 全角文字が右端に収まらない場合は次行へ移し、半角で片側だけ上書きした全角セルを正規化する。
+  行消去時に古い折返し余白を解除し、再リサイズで実際の空白が消える問題を修正する。
+- 保存キーの読込みもQtワーカーへ移し、読込み中のGUI応答と終了待ちを検証する。
+  接続確認はツール利用の設定に関係なくtoolsを送らず、設定値は維持する。
+- Claude Codeの公式スクリプト取得中にキャンセルされた場合は、導入プロセスを開始しない。
 
 ## コンテキスト・認証・保存の確定仕様
 
 出力は台帳の直近出力と現在画面を別々に保持し、それぞれ64 Ki文字まで。
-初回の送信プレビューは各端末から各8,000文字、全体64,000文字まで。
+初回の送信プレビューは各端末から各8,000文字、JSON全体はUTF-8で64,000バイトまで。
 追加の`read_output`は各出力/画面16,000文字まで。既知の秘密パターンをマスクするが、
 完全検出は保証しないため、送信前に編集できる。cwdや対話入力の完了を推測しない。
+ツール結果はUTF-8で32,000バイトまで。`observation_json`で個々の文字列をマスク・短縮してから
+JSONを生成し、シリアライズ済みJSONの末尾を切らない。省略時は`truncated: true`を付ける。
+大きなトップレベル一覧は`items`と`truncated`を持つオブジェクトに変換する。
+端末ID・操作IDを短縮せず、通常の結果では接続世代・状態・終了コードも保持する。
 会話と操作履歴はメモリのみで、会話の上限はシリアライズ後256,000文字、1回答の操作巡回は8回まで。
 接続方式変更時は会話を消去し、アプリ終了で破棄する。共有/許可も保存せず15分で失効する。
 

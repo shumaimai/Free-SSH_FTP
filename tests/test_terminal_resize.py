@@ -370,3 +370,27 @@ def test_padding_overwritten_after_wide_reflow_is_not_discarded(term):
     term._pending_grid = (80, 4)
     term._apply_pending_grid()
     assert "abcdefghi!日本語" in term.screen.display[0]
+
+
+def test_wide_character_at_right_edge_wraps_without_losing_cells(term):
+    term._pending_grid = (10, 4)
+    term._apply_pending_grid()
+    term._on_data("123456789日本語".encode())
+    assert term.screen.cursor.y == 1 and term.screen.cursor.x == 6
+    assert term.screen.display[1].startswith("日本語")
+    term._pending_grid = (80, 4)
+    term._apply_pending_grid()
+    assert term.screen.display[0].rstrip() == "123456789日本語"
+
+
+def test_wide_overwrite_and_erase_do_not_leave_orphan_stub_or_padding(term):
+    term._pending_grid = (80, 4)
+    term._apply_pending_grid()
+    term._on_data("abcdefghi日本語".encode())
+    term._pending_grid = (10, 4)
+    term._apply_pending_grid()
+    term._on_data(b"\x1b[1;1H\x1b[2K123456789 X")
+    assert term.screen.display[1].startswith("X ")
+    term._pending_grid = (80, 4)
+    term._apply_pending_grid()
+    assert term.screen.display[0].startswith("123456789 X ")

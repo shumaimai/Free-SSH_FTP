@@ -59,6 +59,19 @@ def test_failed_installer_does_not_probe_or_leak_its_output(official_installer, 
         installer.install_cli(threading.Event())
 
 
+def test_cancellation_during_download_never_starts_installer(official_installer, monkeypatch):
+    cancel = threading.Event()
+    class Response(io.BytesIO):
+        def read(self, size):
+            cancel.set()
+            return super().read(size)
+    monkeypatch.setattr(installer.urllib.request, "build_opener", lambda _: SimpleNamespace(
+        open=lambda *args, **kwargs: Response(official_installer)))
+    monkeypatch.setattr(installer.subprocess, "Popen", lambda *args, **kwargs: pytest.fail("cancelled installer started"))
+    with pytest.raises(InterruptedError):
+        installer.install_cli(cancel)
+
+
 @pytest.mark.parametrize("url", ["http://claude.ai/install.ps1", "https://untrusted.example/install.ps1"])
 def test_installer_rejects_unofficial_redirects(url):
     with pytest.raises(RuntimeError, match="接続先"):

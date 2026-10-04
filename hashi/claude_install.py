@@ -28,6 +28,8 @@ def install_cli(cancel):
         raise InterruptedError("導入を停止しました")
     with opener.open(INSTALL_URL, timeout=20) as response:
         script = response.read(1048577)
+    if cancel.is_set():
+        raise InterruptedError("導入を停止しました")
     if not script or len(script) > 1048576:
         raise RuntimeError("公式インストーラーを取得できませんでした")
     powershell = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
@@ -35,6 +37,8 @@ def install_cli(cancel):
         script_path, log_path = Path(directory) / "install.ps1", Path(directory) / "install.log"
         script_path.write_bytes(script)
         with log_path.open("wb") as output:
+            if cancel.is_set():
+                raise InterruptedError("導入を停止しました")
             process = subprocess.Popen(
                 [str(powershell), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
                  "-File", str(script_path), "stable"],

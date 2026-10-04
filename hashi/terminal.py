@@ -184,11 +184,38 @@ class _TerminalScreen(pyte.HistoryScreen):
         # draw 中の linefeed だけが「自動折返し」。明示的な LF と区別する
         self._in_draw = True
         try:
-            super().draw(data)
+            start = 0
+            for offset, char in enumerate(data):
+                if wcwidth(char) != 2:
+                    continue
+                if offset > start:
+                    super().draw(data[start:offset])
+                if self.cursor.x == self.columns - 1 and pyte.modes.DECAWM in self.mode:
+                    super().draw(" ")
+                    self.buffer[self.cursor.y].hashi_reflow_padding = 1
+                super().draw(char)
+                start = offset + 1
+            if start < len(data):
+                super().draw(data[start:])
         finally:
+            self._normalize_wide_row(self.cursor.y)
             self._in_draw = False
 
+    def _normalize_wide_row(self, y):
+        """全角セルの片側だけの上書きで残ったスタブを空白へ戻す。"""
+        row = self.buffer[y]
+        for x in range(self.columns):
+            cell = row[x]
+            if cell.data == "":
+                previous = row[x - 1].data if x else ""
+                if not previous or wcwidth(previous[0]) != 2:
+                    row[x] = cell._replace(data=" ")
+            elif wcwidth(cell.data[0]) == 2 and (x + 1 == self.columns or row[x + 1].data != ""):
+                row[x] = cell._replace(data=" ")
+
     def linefeed(self):
+        if self._in_draw:
+            self._normalize_wide_row(self.cursor.y)
         super().linefeed()
         if self._in_draw:
             self.wrapped.add(self.cursor.y)
@@ -224,6 +251,9 @@ class _TerminalScreen(pyte.HistoryScreen):
         """
         y = self.cursor.y
         super().erase_in_line(how, *args, **kwargs)
+        if how in (0, 2) or (how == 1 and self.cursor.x >= self.columns - 1):
+            self.buffer[y].hashi_reflow_padding = 0
+        self._normalize_wide_row(y)
         if how == 2:
             self.wrapped.discard(y)
             self.wrapped.discard(y + 1)
@@ -240,6 +270,12 @@ class _TerminalScreen(pyte.HistoryScreen):
 
     def erase_in_display(self, how=0, *args, **kwargs):
         super().erase_in_display(how, *args, **kwargs)
+        affected = (range(self.lines) if how in (2, 3) else
+                    range(self.cursor.y, self.lines) if how == 0 else range(self.cursor.y + 1))
+        for y in affected:
+            if how != 1 or y != self.cursor.y or self.cursor.x >= self.columns - 1:
+                self.buffer[y].hashi_reflow_padding = 0
+            self._normalize_wide_row(y)
         if how in (2, 3):
             self.wrapped.clear()
         elif how == 0:
