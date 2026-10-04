@@ -50,6 +50,10 @@ class ConPtyBackend:
             return self.process.read(size).encode("utf-8")
         except EOFError:
             return b""
+        except OSError:
+            if self._closed:
+                return b""
+            raise
 
     def send(self, data):
         with self._lock:
@@ -169,9 +173,10 @@ class LocalTerminalPane(QWidget):
             backend.close()
             return
         self.terminal.attach(backend)
-        self.binding = TerminalBinding(self.registry, self.terminal, label=self.label,
-                                       kind=self.kind, shell="cmd", cwd=None,
-                                       shareable=self.shareable)
+        if self.shareable:
+            self.binding = TerminalBinding(self.registry, self.terminal, label=self.label,
+                                           kind=self.kind, shell="cmd", cwd=None,
+                                           shareable=True)
         self.status.setText(f"{self.label} · 開始フォルダ: {self.cwd}")
         self.terminal.setFocus()
         self.ready.emit()

@@ -2433,6 +2433,8 @@ class AppWindow(_SharedOps, QMainWindow):
         from .ai_panel import AiPanel
         self.ai_panel = AiPanel(self.command_broker, self)
         self.ai_panel.configure_requested.connect(self._configure_ai)
+        self.ai_panel.cli_requested.connect(self.open_official_cli)
+        self.ai_panel.mcp_requested.connect(self._mcp_settings)
         self.ai_dock = QDockWidget("AI相談", self)
         self.ai_dock.setWidget(self.ai_panel)
         self.addDockWidget(Qt.RightDockWidgetArea, self.ai_dock)
@@ -2506,6 +2508,28 @@ class AppWindow(_SharedOps, QMainWindow):
                                  cwd=self.settings.get("local_terminal_start_dir") or None)
         self.tabs.setCurrentIndex(self.tabs.addTab(page, "ローカルCMD"))
         return page
+
+    def open_official_cli(self):
+        import sys
+
+        from .claude_cli import CliLaunchDialog, OfficialCliPage
+        from .mcp_bridge import McpBridge
+        if sys.platform != "win32":
+            QMessageBox.information(self, "公式CLI", "Hashi内での起動はWindowsネイティブ版に対応しています")
+            return
+        dialog = CliLaunchDialog(self, auto_setup=True)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        try:
+            if self.mcp_bridge is None:
+                self.mcp_bridge = McpBridge(self.command_broker)
+            page = OfficialCliPage(self.settings, self.session_registry, self.mcp_bridge, dialog.launch, self)
+            self.tabs.setCurrentIndex(self.tabs.addTab(page, "公式CLI"))
+            self.ai_dock.show()
+            self.statusBar().showMessage("AI相談の「対象端末」で端末を選び、「この端末を共有する」を押してください", 10000)
+        except Exception:
+            logger.warning("公式CLIを開始できません")
+            QMessageBox.warning(self, "公式CLI", "起動できません。CLIとHashiMCP.exeの配置、フォルダの権限を確認してください")
 
     def _configure_ai(self):
         from .ai_secrets import AiSecretStore
@@ -2644,6 +2668,7 @@ class AppWindow(_SharedOps, QMainWindow):
         m_file.addAction("サーバー一覧タブへ", self.open_launcher)
         m_file.addAction("新しい接続…", self._new_profile)
         m_file.addAction("ローカルCMDを開く", self.open_local_terminal)
+        m_file.addAction("公式CLIを開く（Claude Code）…", self.open_official_cli)
         m_file.addSeparator()
         m_file.addAction("接続情報を書き出す…", self._export_profiles)
         m_file.addAction("接続情報を読み込む…", self._import_profiles)
