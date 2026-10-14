@@ -42,6 +42,9 @@ class AiSettingsDialog(QDialog):
         forget.clicked.connect(self._forget)
         layout.addWidget(forget)
         self.extra_layout = layout
+        chatgpt = QPushButton("ChatGPTプランで接続…")
+        chatgpt.clicked.connect(self._chatgpt)
+        layout.addWidget(chatgpt)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
@@ -54,6 +57,14 @@ class AiSettingsDialog(QDialog):
 
     def key_id(self):
         return "api:" + self.kind.currentData() + ":" + hashlib.sha256(self.base.text().strip().rstrip("/").encode()).hexdigest()
+
+    def _chatgpt(self):
+        from .chatgpt_dialog import ChatGptDialog
+        from .chatgpt_oauth import ChatGptAccounts
+        dialog = ChatGptDialog(ChatGptAccounts(self.secrets), self)
+        if dialog.exec() == QDialog.Accepted:
+            self.provider = dialog.provider
+            self.accept()
 
     def _load(self):
         kind = self.kind.currentData()
