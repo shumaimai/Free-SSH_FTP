@@ -5,3 +5,4 @@ wcwidth>=0.2.13
 keyring>=24.0
 # cryptography は paramiko の依存として入りますが、暗号化フォールバックでも使用します
 cryptography>=48.0.1
+pywinpty>=3.0.5; sys_platform == "win32"

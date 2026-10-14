@@ -67,6 +67,7 @@ from .editor import LocalEditorHub
 from .filebrowser import SftpBrowser
 from .forward import DynamicForward, Forward, LocalForward, RemoteForward
 from .keygen import generate_key, location_warning, register_public_key
+from .local_terminal import LocalTerminalPage
 from .localbrowser import LocalBrowser, SyncBrowse
 from .sessionlog import SessionLog
 from .snippets import Snippet, SnippetStore, expand_snippet
@@ -2442,6 +2443,12 @@ class AppWindow(_SharedOps, QMainWindow):
         page.start_connect()
         return page
 
+    def open_local_terminal(self):
+        page = LocalTerminalPage(self.settings, self.session_registry, self,
+                                 cwd=self.settings.get("local_terminal_start_dir") or None)
+        self.tabs.setCurrentIndex(self.tabs.addTab(page, "ローカルCMD"))
+        return page
+
     def _on_page_title(self, page, title: str):
         idx = self.tabs.indexOf(page)
         if idx >= 0:
@@ -2459,7 +2466,7 @@ class AppWindow(_SharedOps, QMainWindow):
 
     def _on_tab_close(self, index: int):
         w = self.tabs.widget(index)
-        if not isinstance(w, SessionPage):
+        if not isinstance(w, (SessionPage, LocalTerminalPage)):
             return   # ランチャータブは閉じない
         if w.has_active_transfers():
             r = QMessageBox.question(
@@ -2521,6 +2528,7 @@ class AppWindow(_SharedOps, QMainWindow):
         m_file.addSeparator()
         m_file.addAction("サーバー一覧タブへ", self.open_launcher)
         m_file.addAction("新しい接続…", self._new_profile)
+        m_file.addAction("ローカルCMDを開く", self.open_local_terminal)
         m_file.addSeparator()
         m_file.addAction("接続情報を書き出す…", self._export_profiles)
         m_file.addAction("接続情報を読み込む…", self._import_profiles)
@@ -2625,7 +2633,7 @@ class AppWindow(_SharedOps, QMainWindow):
                 break
         for i in range(self.tabs.count()):
             w = self.tabs.widget(i)
-            if isinstance(w, SessionPage):
+            if isinstance(w, (SessionPage, LocalTerminalPage)):
                 w.shutdown()
         AppWindow._instance = None
         ev.accept()

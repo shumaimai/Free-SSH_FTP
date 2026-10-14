@@ -17,6 +17,7 @@ dependencies = [
     "wcwidth>=0.2.13",
     "keyring>=24.0",
     "cryptography>=48.0.1",
+    "pywinpty>=3.0.5; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
