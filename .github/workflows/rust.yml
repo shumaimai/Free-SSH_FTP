@@ -6,6 +6,7 @@ on:
       - 'hashi/runtime_guard.py'
       - 'main.py'
       - 'tests/test_runtime_guard.py'
+      - 'tests/test_rust_storage_compat.py'
       - '.github/workflows/rust.yml'
   push:
     branches: [main]
@@ -14,6 +15,7 @@ on:
       - 'hashi/runtime_guard.py'
       - 'main.py'
       - 'tests/test_runtime_guard.py'
+      - 'tests/test_rust_storage_compat.py'
       - '.github/workflows/rust.yml'
 jobs:
   guards:
@@ -27,6 +29,7 @@ jobs:
       PYTHON_KEYRING_BACKEND: keyring.backends.fail.Keyring
       PYTHONUTF8: '1'
       HASHI_RUST_GUARD_BINARY: ${{ github.workspace }}/rust/target/debug/hashi-migration-check${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+      HASHI_RUST_STORAGE_BINARY: ${{ github.workspace }}/rust/target/debug/hashi-storage-contract${{ matrix.os == 'windows-latest' && '.exe' || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -53,4 +56,4 @@ jobs:
         working-directory: rust
         run: cargo build --locked --workspace --bins
       - name: Python and Rust process interoperability
-        run: python -m pytest -v -x tests/test_runtime_guard.py
+        run: python -m pytest -v -x tests/test_runtime_guard.py tests/test_rust_storage_compat.py

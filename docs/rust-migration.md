@@ -16,6 +16,19 @@
 旧Python版は通常起動とエディタ単独起動の両方で実行中マーカーを作成する。
 全Rust版のGUI、SSH/SFTP、追加機能は後続の実装対象。
 
+保存層にはPython版の全Profileフィールドと設定の取り込み、known_hostsの追加のみの
+マージ、公開鍵blobからの種別/指紋生成、版付きstate.jsonのatomic保存を追加する。
+旧プロファイル/設定/信頼情報は読み取りのみで、破損時は取り込みを中止する。
+SSH/AIの暗号化ファイルは別の鍵とロックを持ち、破損・鍵欠損を空データへ格下げしない。
+Windowsはサービス名TargetNameと複合TargetNameの両方を読み、UserNameを照合する。
+新規書き込みは新Rustサービスへ限定する。
+
+クラウド/エクスポートv1のscrypt（n=2^14, r=8, p=1, salt16バイト）とFernetは
+Python/Rust両方向の合成データで試験する。Unicodeの正規化は行わず、未来版は拒否する。
+OAuth登録の移管、Qtの旧ロック形式の共有、クラウドバックエンドの変更は行わない。
+Windows資格情報のテストはランダムな試験専用サービスだけを使い、実際のHashi保存情報へ
+触れない。[依存ライセンス](../rust/THIRD_PARTY.md)も配布検証の対象にする。
+
 ## 実行中マーカーの契約 v1
 
 - Windowsは `%LOCALAPPDATA%\Hashi-Migration\runtime`、Unixは
