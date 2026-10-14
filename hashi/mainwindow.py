@@ -22,6 +22,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import QColor, QKeySequence
 from PySide6.QtWidgets import (
+    QDockWidget,
     QFileDialog,
     QFrame,
     QGraphicsDropShadowEffect,
@@ -2424,6 +2425,13 @@ class AppWindow(_SharedOps, QMainWindow):
         self.tabs.tabBar().setTabButton(0, QTabBar.ButtonPosition.LeftSide, None)
 
         self._build_menu()
+        from .ai_panel import AiPanel
+        self.ai_panel = AiPanel(self.command_broker, self)
+        self.ai_dock = QDockWidget("AI相談", self)
+        self.ai_dock.setWidget(self.ai_panel)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.ai_dock)
+        self.ai_dock.hide()
+        self.ai_dock.visibilityChanged.connect(lambda visible: self.ai_panel.stop() if not visible else None)
         self.statusBar().showMessage("準備完了")
 
         if self.settings.get("update_check"):
@@ -2603,6 +2611,7 @@ class AppWindow(_SharedOps, QMainWindow):
         act_minus = m_view.addAction("ターミナル文字を小さく")
         act_minus.setShortcut("Ctrl+-")
         act_minus.triggered.connect(lambda: self._page_action("_font_delta", -1))
+        m_view.addAction("AI相談", lambda: self.ai_dock.show())
 
         self.m_sess = self.menuBar().addMenu("セッション")
         self.m_sess.addAction("ポートフォワードを追加…",
@@ -2677,6 +2686,11 @@ class AppWindow(_SharedOps, QMainWindow):
                 lambda checked, s=snippet: page._send_snippet(s))
 
     def closeEvent(self, ev):
+        if not self.ai_panel.shutdown():
+            self.statusBar().showMessage("AI処理を停止しています…")
+            QTimer.singleShot(250, self.close)
+            ev.ignore()
+            return
         # 転送中のタブがあれば確認
         for i in range(self.tabs.count()):
             w = self.tabs.widget(i)
