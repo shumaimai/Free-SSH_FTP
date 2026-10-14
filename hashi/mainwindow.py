@@ -67,7 +67,7 @@ from .editor import LocalEditorHub
 from .filebrowser import SftpBrowser
 from .forward import DynamicForward, Forward, LocalForward, RemoteForward
 from .keygen import generate_key, location_warning, register_public_key
-from .local_terminal import LocalTerminalPage
+from .local_terminal import LocalTerminalPage, LocalTerminalPane
 from .localbrowser import LocalBrowser, SyncBrowse
 from .sessionlog import SessionLog
 from .snippets import Snippet, SnippetStore, expand_snippet
@@ -640,6 +640,9 @@ class SessionTab(QWidget):
         self.secret_ctx = secret_ctx
         self.registry = registry
         self.terminal_binding = None
+        self.local_terminal = None
+        self._active_terminal = None
+        self._terminal_splitter = None
         self.mode = mode                    # "both" / "ssh" / "sftp"(Issue #112)
         self._use_terminal = mode in ("both", "ssh")
         self._use_browser = mode in ("both", "sftp")
@@ -706,6 +709,10 @@ class SessionTab(QWidget):
             "片方のペインでフォルダを移動したら、もう片方も同じ移動をします\n"
             "(左右でパスの体系が違うので、写すのは相対的な移動だけです)",
             checkable=True)
+        self.bt_wterm = self._tool_button(
+            "W端末", "dualpane", "SSHとこのPCのCMDを並べます", checkable=True)
+        self.bt_wterm.setEnabled(self._use_terminal)
+        self.bt_wterm.toggled.connect(self._toggle_terminal_panes)
         self.bt_term.setEnabled(self._use_terminal)
         self.bt_files.setEnabled(self._use_browser)
         self.bt_local.setEnabled(self._use_browser)
@@ -725,6 +732,7 @@ class SessionTab(QWidget):
         bar.addWidget(self.bt_files)
         bar.addWidget(self.bt_local)
         bar.addWidget(self.bt_sync)
+        bar.addWidget(self.bt_wterm)
         bar.addStretch(1)
         root.addWidget(bar_w)
 
@@ -747,7 +755,11 @@ class SessionTab(QWidget):
             self.terminal.set_session_log(self.session_log)
             self._logging_enabled_at_start = self.session_log.is_open()
             self._term_pane = self._make_pane("SSH ターミナル", self.terminal)
-            self.splitter.addWidget(self._term_pane)
+            self._terminal_splitter = QSplitter(Qt.Horizontal)
+            self._terminal_splitter.addWidget(self._term_pane)
+            self.splitter.addWidget(self._terminal_splitter)
+            self._active_terminal = self.terminal
+            self.terminal.focused.connect(lambda: self._set_active_terminal(self.terminal))
         if self._use_browser:
             self.browser = SftpBrowser(
                 session, session.profile.initial_path,
@@ -849,6 +861,33 @@ class SessionTab(QWidget):
                     self.registry, self.terminal, label=session.profile.label(),
                     kind="ssh", shell="posix", ssh_session=session)
             self.terminal.setFocus()
+        if self._use_terminal and settings.get("terminal_dual_pane"):
+            self.bt_wterm.setChecked(True)
+
+    def active_terminal(self):
+        return self._active_terminal or self.terminal
+
+    def _set_active_terminal(self, terminal):
+        self._active_terminal = terminal
+        self.bt_sendpw.setEnabled(terminal is self.terminal)
+        self.bt_log.setEnabled(terminal is self.terminal)
+
+    def _toggle_terminal_panes(self, on):
+        self.settings.set("terminal_dual_pane", bool(on))
+        if on and self.local_terminal is None and self.registry is not None:
+            self.local_terminal = LocalTerminalPane(
+                self.settings, self.registry, self,
+                cwd=self.settings.get("local_terminal_start_dir") or None)
+            self.local_terminal.terminal.focused.connect(
+                lambda: self._set_active_terminal(self.local_terminal.terminal))
+            self._terminal_splitter.addWidget(self.local_terminal)
+            self._terminal_splitter.setSizes([1, 1])
+        if self.local_terminal is not None:
+            self.local_terminal.setVisible(on)
+        if not on:
+            self._set_active_terminal(self.terminal)
+        elif not self.bt_term.isChecked():
+            self.bt_term.setChecked(True)
 
     # ---- ツールバー部品(#113 / 参考デザイン) -------------------------------
     def _tool_button(self, text: str, icon_name: str, tip: str,
@@ -887,7 +926,7 @@ class SessionTab(QWidget):
     def _refresh_toolbar_icons(self) -> None:
         for b in (self.bt_sendpw, self.bt_snippets, self.bt_tunnel,
                   self.bt_log, self.bt_term, self.bt_files, self.bt_local,
-                  self.bt_sync):
+                  self.bt_sync, self.bt_wterm):
             self._refresh_button_icon(b)
 
     def _toolbar_separator(self) -> QWidget:
@@ -1105,8 +1144,8 @@ class SessionTab(QWidget):
             if other.isEnabled():
                 other.setChecked(True)
         # ペインで包んでいるときは見出しごと出し入れする
-        if self._term_pane is not None:
-            self._term_pane.setVisible(self.bt_term.isChecked())
+        if self._terminal_splitter is not None:
+            self._terminal_splitter.setVisible(self.bt_term.isChecked())
         elif self.terminal is not None:
             self.terminal.setVisible(self.bt_term.isChecked())
         files_on = self.bt_files.isChecked()
@@ -1147,6 +1186,8 @@ class SessionTab(QWidget):
         return True
 
     def shutdown(self):
+        if self.local_terminal is not None:
+            self.local_terminal.shutdown()
         if self.terminal_binding is not None:
             self.terminal_binding.close()
             self.terminal_binding = None
@@ -1915,7 +1956,7 @@ class SessionPage(QWidget):
         body = expand_snippet(snippet.body, values)
         if snippet.send_enter:
             body += "\n"
-        self.session_tab.terminal.send_text(body)
+        self.session_tab.active_terminal().send_text(body)
 
     # ---- 接続 --------------------------------------------------------------
     def start_connect(self):
@@ -2085,7 +2126,8 @@ class SessionPage(QWidget):
     def _font_delta(self, d: int):
         tab = self.session_tab
         if tab is not None and tab.terminal is not None:
-            tab.terminal.set_font_size(tab.terminal.font_size() + d)
+            terminal = tab.active_terminal()
+            terminal.set_font_size(terminal.font_size() + d)
 
     def _toggle_session_log(self):
         tab = self.session_tab
@@ -2491,14 +2533,23 @@ class AppWindow(_SharedOps, QMainWindow):
         theme = self.settings.get("terminal_theme") or ""
         family = self.settings.get("terminal_font_family") or ""
         size = self.settings.get("terminal_font_size")
+        terminals = []
         for page in SessionPage._pages:
             tab = page.session_tab
-            if tab is None or tab.terminal is None:
-                continue
+            if tab is not None:
+                if tab.terminal is not None:
+                    terminals.append(tab.terminal)
+                if tab.local_terminal is not None:
+                    terminals.append(tab.local_terminal.terminal)
+        for i in range(self.tabs.count()):
+            page = self.tabs.widget(i)
+            if isinstance(page, LocalTerminalPage):
+                terminals.append(page.terminal)
+        for terminal in terminals:
             try:
-                tab.terminal.set_theme(theme)
-                tab.terminal.set_font_family(family)
-                tab.terminal.set_font_size(size)
+                terminal.set_theme(theme)
+                terminal.set_font_family(family)
+                terminal.set_font_size(size)
             except RuntimeError:
                 logger.debug("破棄済みタブへの設定反映をスキップ")
 
@@ -2582,6 +2633,10 @@ class AppWindow(_SharedOps, QMainWindow):
         self.launcher.new_profile()
 
     def _page_action(self, method: str, *args):
+        local = self.tabs.currentWidget()
+        if isinstance(local, LocalTerminalPage) and method == "_font_delta":
+            local.terminal.set_font_size(local.terminal.font_size() + args[0])
+            return
         page = self.current_page()
         if page is not None:
             getattr(page, method)(*args)

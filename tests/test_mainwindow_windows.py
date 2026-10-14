@@ -439,3 +439,39 @@ def test_download_to_without_selection_does_nothing(qapp, tmp_path):
     tab.browser.download_to(str(tmp_path))
     assert tab.browser.xfer.q.qsize() == before
     _cleanup(qapp, tab)
+
+
+def test_w_terminal_focus_hide_and_shutdown(qapp, monkeypatch):
+    from PySide6.QtWidgets import QVBoxLayout, QWidget
+
+    import hashi.mainwindow as mw
+    from hashi.session_registry import SessionRegistry
+    from hashi.terminal import TerminalWidget
+
+    class Local(QWidget):
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+            self.terminal = TerminalWidget()
+            QVBoxLayout(self).addWidget(self.terminal)
+            self.stopped = False
+
+        def shutdown(self):
+            self.stopped = True
+            self.terminal.detach()
+
+    monkeypatch.setattr(mw, 'LocalTerminalPane', Local)
+    tab = _make_tab(qapp, 'ssh')
+    tab.registry = SessionRegistry()
+    tab.bt_wterm.setChecked(True)
+    local = tab.local_terminal
+    local.terminal.focused.emit()
+    assert tab.active_terminal() is local.terminal
+    assert not tab.bt_sendpw.isEnabled()
+    assert not tab.bt_log.isEnabled()
+    tab.bt_wterm.setChecked(False)
+    assert tab.active_terminal() is tab.terminal
+    assert not local.stopped
+    tab.bt_wterm.setChecked(True)
+    assert tab.local_terminal is local
+    _cleanup(qapp, tab)
+    assert local.stopped

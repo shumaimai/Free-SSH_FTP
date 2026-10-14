@@ -7,6 +7,17 @@ def test_settings_roundtrip(tmp_config):
     assert s2.get("terminal_font_size") == 15
 
 
+def test_terminal_pane_setting_survives_reload_independently(tmp_config):
+    from hashi.config import Settings
+
+    settings = Settings()
+    assert settings.get("terminal_dual_pane") is False
+    settings.set("terminal_dual_pane", True)
+    reloaded = Settings()
+    assert reloaded.get("terminal_dual_pane") is True
+    assert reloaded.get("dual_pane") is False
+
+
 def test_profile_store_roundtrip(tmp_config):
     from hashi.config import Profile, ProfileStore
     st = ProfileStore()

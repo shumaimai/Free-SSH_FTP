@@ -278,6 +278,7 @@ def tab(qapp):
             self._host = host                       # GC 防止
             self._use_browser = True
             self._term_pane = QWidget(host)
+            self._terminal_splitter = self._term_pane
             self._local_pane = QWidget(host)
             self._browser_pane = QWidget(host)
             self._files_splitter = QWidget(host)
