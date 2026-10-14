@@ -4,7 +4,7 @@
 (terminal / editor のテスト拡充。Issue #7 系)。
 """
 import pytest
-from PySide6.QtCore import QEvent, QPoint, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QPoint, Qt
 from PySide6.QtGui import QKeyEvent
 
 
@@ -25,7 +25,10 @@ def term(qapp):
     t = TerminalWidget()
     t.screen.reset()
     t._channel = FakeChannel()
-    return t
+    yield t
+    t.close()
+    t.deleteLater()
+    QCoreApplication.sendPostedEvents(t, QEvent.DeferredDelete)
 
 
 def _key(term, key, text="", mods=Qt.NoModifier):
@@ -93,6 +96,9 @@ def test_no_channel_is_noop(qapp):
     t = TerminalWidget()
     # _channel なしでもクラッシュしない
     t.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_A, Qt.NoModifier, "a"))
+    t.close()
+    t.deleteLater()
+    QCoreApplication.sendPostedEvents(t, QEvent.DeferredDelete)
 
 
 def test_ime_commit_sends_and_preedit_stored(term):

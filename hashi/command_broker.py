@@ -14,6 +14,27 @@ from dataclasses import dataclass, field
 from .ssh_core import command_channel
 
 
+def _pipe_available(pipe):
+    """同じ読取ハンドルを他スレッドに渡さず、読み取れる分だけ取得する。"""
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    peek = kernel.PeekNamedPipe
+    peek.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD,
+                     ctypes.POINTER(wintypes.DWORD), ctypes.POINTER(wintypes.DWORD),
+                     ctypes.POINTER(wintypes.DWORD)]
+    peek.restype = wintypes.BOOL
+    available = wintypes.DWORD()
+    if not peek(msvcrt.get_osfhandle(pipe.fileno()), None, 0, None, ctypes.byref(available), None):
+        error = ctypes.get_last_error()
+        if error in (109, 232):  # ERROR_BROKEN_PIPE / ERROR_NO_DATA
+            return None
+        raise ctypes.WinError(error)
+    return available.value
+
+
 class _Cancellation(threading.Event):
     def __init__(self, parent=None):
         super().__init__()
@@ -87,6 +108,14 @@ class CommandBroker:
                 if operation.actor == actor:
                     operation.cancel.set()
 
+    def audit_snapshot(self):
+        with self._lock:
+            return {"active": [{"id": o.id, "actor": o.actor, "action": o.action,
+                                "session_id": o.session_id, "generation": o.generation,
+                                "status": "cancel_requested" if o.cancel.is_set() else "pending"}
+                               for o in self._active.values()],
+                    "finished": [item.copy() for item in self.audit]}
+
     def _check(self, sid, generation):
         entry = self.registry.resolve(sid, generation)
         if not entry.shareable:
@@ -101,6 +130,10 @@ class CommandBroker:
                 return []
             return [s for s in self.registry.list(shareable_only=True)
                     if (s["session_id"], s["generation"]) in self._targets]
+
+    def permission_snapshot(self):
+        with self._lock:
+            return {"mode": self._mode, "seconds": max(0, int(self._expires - time.monotonic()))}
 
     def read_output(self, sid, generation, limit=16000):
         with self._lock:
@@ -130,6 +163,7 @@ class CommandBroker:
                 raise ValueError("同じ要求は実行中です")
             self._active[key] = operation
             epoch, mode = self._epoch, self._mode
+        result = None
         try:
             if mode == "confirm":
                 if self.approval is None or not self.approval(operation):
@@ -164,7 +198,10 @@ class CommandBroker:
                 # コマンド本文・出力・認証情報を監査ログへ保存しない。
                 self.audit.append({"id": operation.id, "actor": actor, "action": action,
                                    "session_id": sid, "generation": generation,
-                                   "cancelled": operation.cancel.is_set()})
+                                   "cancelled": operation.cancel.is_set(),
+                                   "status": result["status"] if result is not None else "not_completed",
+                                   "completion": result.get("completion", "unknown") if result is not None else "unknown",
+                                   "exit_code": result.get("exit_code") if result is not None else None})
 
     def _run(self, entry, operation, timeout):
         deadline = time.monotonic() + timeout
@@ -206,38 +243,51 @@ class CommandBroker:
         if not operation.cwd or not os.path.isdir(operation.cwd):
             raise ValueError("独立実行には明示した開始フォルダが必要です。対話CMDのcwdは引き継ぎません")
         # 独立プロセスなので対話CMDの環境変更やTUI状態に影響しない。
+        executable = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "cmd.exe")
+        # 外側はASCIIだけで起動し、chcp後の遅延展開で内側へUnicodeを渡す。
+        # 入力中の%/!を外側で再展開しない。内側の/Sは最外の引用符だけを除く。
+        variable = "HASHI_COMMAND_" + uuid.uuid4().hex.upper()
+        environment = os.environ.copy()
+        environment[variable] = operation.text
+        quoted_exe = subprocess.list2cmdline([executable])
+        command_line = (quoted_exe + ' /D /V:ON /S /C "chcp 65001>nul & ' + quoted_exe +
+                        ' /D /V:OFF /S /C "!' + variable + '!""')
         process = subprocess.Popen(
-            [os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "cmd.exe"),
-             "/D", "/S", "/C", "chcp 65001>nul & " + operation.text],
-            cwd=operation.cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            command_line,
+            cwd=operation.cwd, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             creationflags=subprocess.CREATE_NO_WINDOW)
         chunks = {"output": bytearray(), "error": bytearray()}
-        def drain(pipe, name):
-            while True:
-                data = pipe.read(4096)
-                if not data:
-                    break
-                chunks[name].extend(data)
-                chunks[name][:] = chunks[name][-65536:]
-        readers = [threading.Thread(target=drain, args=(pipe, name), daemon=True)
-                   for pipe, name in ((process.stdout, "output"), (process.stderr, "error"))]
-        for reader in readers:
-            reader.start()
+        pipes = ((process.stdout, "output"), (process.stderr, "error"))
         status = "completed"
+        complete_output = False
         try:
-            while process.poll() is None:
+            while True:
+                got_data, ended = False, 0
+                for pipe, name in pipes:
+                    count = _pipe_available(pipe)
+                    if count is None:
+                        ended += 1
+                    elif count:
+                        data = os.read(pipe.fileno(), min(count, 4096))
+                        chunks[name].extend(data)
+                        chunks[name][:] = chunks[name][-65536:]
+                        got_data = got_data or bool(data)
+                if process.poll() is not None and not got_data:
+                    complete_output = ended == len(pipes)
+                    break
                 if operation.cancel.is_set() or time.monotonic() >= deadline:
                     status = "cancelled" if operation.cancel.is_set() else "timeout"
-                    subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                                   capture_output=True, timeout=3, check=False,
-                                   creationflags=subprocess.CREATE_NO_WINDOW)
-                    process.wait(timeout=3)
+                    if process.poll() is None:
+                        subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                                       capture_output=True, timeout=3, check=False,
+                                       creationflags=subprocess.CREATE_NO_WINDOW)
+                        process.wait(timeout=3)
                     break
-                operation.cancel.wait(.02)
-            for reader in readers:
-                reader.join(1)
-            return {"status": status, "completion": "known" if status == "completed" else "unknown",
+                if not got_data:
+                    operation.cancel.wait(.02)
+            return {"status": status, "completion": "known" if status == "completed" and complete_output else "unknown",
                     "exit_code": process.returncode if status == "completed" else None,
+                    "output_complete": complete_output,
                     **{name: bytes(data).decode("utf-8", errors="replace") for name, data in chunks.items()}}
         finally:
             for pipe in (process.stdout, process.stderr):

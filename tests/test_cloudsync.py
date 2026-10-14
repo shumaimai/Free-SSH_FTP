@@ -103,17 +103,19 @@ def test_push_pull_roundtrip_without_secrets(env):
 def test_push_includes_encrypted_secrets(env):
     store, kh, _ = env
     p = _profile()
-    creds = FakeCredentials({f"{p.id_str()}:password": "pw1"})
+    # Base64の暗号文へ偶然現れる3文字ではなく、平文だけに現れる検証値。
+    password = "pw1!平文クラウド同期"
+    creds = FakeCredentials({f"{p.id_str()}:password": password})
     backend = FakeBackend()
 
     res = push(backend, [p], kh, "master", creds, secrets_passphrase="sekret")
     assert res["secrets"] == 1
-    assert b"pw1" not in backend.blob                # E2E 封筒に平文なし
+    assert password.encode() not in backend.blob    # E2E 封筒に平文なし
 
     bundle = pull(backend, "master")
     assert bundle.has_encrypted_secrets
     bundle.decrypt_secrets("sekret")
-    assert bundle.secrets[p.id_str()]["password"] == "pw1"
+    assert bundle.secrets[p.id_str()]["password"] == password
 
 
 def test_pull_empty_backend_returns_none(env):

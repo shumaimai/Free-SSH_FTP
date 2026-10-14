@@ -1,12 +1,82 @@
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
 
 from hashi.ai_api import ApiProvider, responses_input
 from hashi.ai_core import tool_definitions
-from hashi.ai_http import validate_base_url
+from hashi.ai_http import JsonHttp, validate_base_url
 from hashi.ai_secrets import AiSecretStore
+
+
+def wait_dialog(qapp, dialog):
+    deadline = time.monotonic() + 5
+    while dialog.worker is not None and time.monotonic() < deadline:
+        qapp.processEvents()
+        time.sleep(.005)
+    assert dialog.worker is None
+
+
+def test_saved_key_loading_keeps_gui_responsive_and_defers_close(qapp, tmp_config):
+    from hashi.ai_settings import AiSettingsDialog
+    from hashi.config import Settings
+    entered, finish = threading.Event(), threading.Event()
+    class Secrets:
+        def get(self, key):
+            entered.set()
+            finish.wait(5)
+            return "private-saved-key"
+    dialog = AiSettingsDialog(Settings(), Secrets())
+    try:
+        assert entered.wait(1)  # constructor returned while key storage is still busy
+        dialog.show()
+        qapp.processEvents()
+        assert dialog.isVisible() and "読み込んでいます" in dialog.status.text()
+        dialog.reject()
+        assert dialog.isVisible() and dialog._reject_pending
+    finally:
+        finish.set()
+        wait_dialog(qapp, dialog)
+    assert not dialog.isVisible() and not dialog.key.text() and dialog.provider is None
+    dialog.deleteLater()
+    qapp.processEvents()
+
+
+def test_key_read_failure_is_visible_without_private_exception(qapp, tmp_config):
+    from hashi.ai_settings import AiSettingsDialog
+    from hashi.config import Settings
+    class Secrets:
+        def get(self, key):
+            raise RuntimeError("private-storage-detail")
+    dialog = AiSettingsDialog(Settings(), Secrets())
+    wait_dialog(qapp, dialog)
+    assert "読み込めません" in dialog.status.text()
+    assert "private-storage-detail" not in dialog.status.text() and dialog.key.isEnabled()
+    dialog.deleteLater()
+    qapp.processEvents()
+
+
+def test_connection_check_omits_tools_even_when_terminal_tools_enabled(qapp, tmp_config, monkeypatch):
+    from hashi.ai_settings import AiSettingsDialog
+    from hashi.config import Settings
+    requests = []
+    def events(self, url, payload, headers, cancel):
+        requests.append(payload)
+        yield {"choices": [{"delta": {"content": "OK"}, "finish_reason": "stop"}]}
+    monkeypatch.setattr(JsonHttp, "events", events)
+    dialog = AiSettingsDialog(Settings(), AiSecretStore(SimpleNamespace(_keyring=None)))
+    wait_dialog(qapp, dialog)
+    dialog.kind.setCurrentIndex(dialog.kind.findData("compatible"))
+    wait_dialog(qapp, dialog)
+    dialog.model.setText("test-model")
+    assert dialog.use_tools.isChecked()
+    dialog._test()
+    wait_dialog(qapp, dialog)
+    assert requests and "tools" not in requests[0]
+    assert "接続できました" in dialog.status.text() and dialog.use_tools.isChecked()
+    dialog.deleteLater()
+    qapp.processEvents()
 
 
 class Http:
@@ -16,6 +86,16 @@ class Http:
     def events(self, url, payload, headers, cancel):
         self.requests.append((url, payload, headers))
         yield from self.data
+
+
+def test_invalid_header_error_does_not_display_api_key():
+    http = JsonHttp()
+    def invalid(*args, **kwargs):
+        raise ValueError("Invalid header value b'Bearer test-sensitive-key\\n'")
+    http.opener.open = invalid
+    with pytest.raises(RuntimeError) as caught:
+        http.open("https://example.com/v1/models", headers={"Authorization": "Bearer test-sensitive-key"})
+    assert "入力形式" in str(caught.value) and "test-sensitive-key" not in str(caught.value)
 
 
 def test_responses_tool_and_reasoning_history():
@@ -60,6 +140,79 @@ def test_compatible_advice_mode_omits_tools_and_rejects_unsolicited_calls():
         provider.respond([], "", tool_definitions(), threading.Event(), lambda _: None)
 
 
+@pytest.mark.parametrize("url", [
+    "https://api.commandcode.ai", "https://api.commandcode.ai/v1/",
+    "https://api.commandcode.ai/provider/v1/chat/completions",
+])
+def test_commandcode_normalizes_url(url):
+    provider = ApiProvider("commandcode", "test", "fake", base_url=url)
+    assert provider.base == "https://api.commandcode.ai/provider/v1"
+
+
+def test_commandcode_routes_claude_to_messages_with_bearer():
+    http = Http([{"type": "content_block_delta", "index": 0,
+                  "delta": {"type": "text_delta", "text": "OK"}},
+                 {"type": "message_delta", "delta": {"stop_reason": "end_turn"}},
+                 {"type": "message_stop"}])
+    provider = ApiProvider("commandcode", "claude-sonnet-4-6", "fake", http=http)
+    assert provider.respond([], "", [], threading.Event(), lambda _: None)["text"] == "OK"
+    assert http.requests[0][0].endswith("/provider/v1/messages")
+    assert http.requests[0][2]["Authorization"] == "Bearer fake"
+
+
+def test_settings_save_failure_is_specific_and_does_not_close(qapp, tmp_config):
+    from hashi.ai_settings import AiSettingsDialog
+    from hashi.config import Settings
+
+    class Secrets:
+        def get(self, key):
+            return None
+        def set(self, key, value):
+            raise OSError("test-sensitive-key")
+    dialog = AiSettingsDialog(Settings(), Secrets())
+    wait_dialog(qapp, dialog)
+    dialog.kind.setCurrentIndex(dialog.kind.findData("commandcode"))
+    wait_dialog(qapp, dialog)
+    dialog.model.setText("test-model")
+    dialog.key.setText("test-sensitive-key")
+    dialog.persist.setChecked(True)
+    dialog.show()
+    dialog._accept()
+    deadline = time.monotonic() + 5
+    while dialog.worker is not None and time.monotonic() < deadline:
+        qapp.processEvents()
+        time.sleep(.005)
+    assert dialog.isVisible() and dialog.provider is None
+    assert "APIキーの保存" in dialog.status.text()
+    assert "test-sensitive-key" not in dialog.status.text()
+    dialog.close()
+
+
+def test_commandcode_catalog_selects_supported_protocol(qapp, tmp_config):
+    from hashi.ai_settings import AiSettingsDialog
+    from hashi.config import Settings
+    dialog = AiSettingsDialog(Settings(), AiSecretStore(SimpleNamespace(_keyring=None)))
+    wait_dialog(qapp, dialog)
+    dialog.kind.setCurrentIndex(dialog.kind.findData("commandcode"))
+    wait_dialog(qapp, dialog)
+    dialog.key.setText("fake")
+    dialog._got_models([{"id": "future-model", "supported_endpoints": ["/v1/messages"]}])
+    assert dialog._provider().protocol == "messages"
+    dialog._accept()
+    deadline = time.monotonic() + 5
+    while dialog.worker is not None and time.monotonic() < deadline:
+        qapp.processEvents()
+        time.sleep(.005)
+    assert dialog.provider is not None
+    restored = AiSettingsDialog(Settings(), AiSecretStore(SimpleNamespace(_keyring=None)))
+    wait_dialog(qapp, restored)
+    restored.key.setText("fake")
+    assert restored._provider().protocol == "messages"
+    dialog.deleteLater()
+    restored.deleteLater()
+    qapp.processEvents()
+
+
 @pytest.mark.parametrize("url", ["http://remote.example", "https://user:pw@example.com", "https://example.com?key=x", "file:///tmp/key"])
 def test_unsafe_endpoint(url):
     with pytest.raises(ValueError):
@@ -80,7 +233,9 @@ def test_settings_key_reset(qapp, tmp_config):
     from hashi.ai_settings import AiSettingsDialog
     from hashi.config import Settings
     dialog = AiSettingsDialog(Settings(tmp_config / "settings.json"), AiSecretStore(SimpleNamespace(_keyring=None)))
+    wait_dialog(qapp, dialog)
     dialog.kind.setCurrentIndex(2)
+    wait_dialog(qapp, dialog)
     dialog.key.setText("fake")
     dialog.base.textEdited.emit("new")
     assert not dialog.key.text()
@@ -95,14 +250,22 @@ def test_api_connection_settings_reload_without_secret(qapp, tmp_config):
     settings = Settings()
     secrets = AiSecretStore(SimpleNamespace(_keyring=None))
     dialog = AiSettingsDialog(settings, secrets)
+    wait_dialog(qapp, dialog)
     dialog.kind.setCurrentIndex(dialog.kind.findData("compatible"))
+    wait_dialog(qapp, dialog)
     dialog.base.setText("http://127.0.0.1:4321/v1")
     dialog.model.setText("test-model")
     dialog.key.setText("test-sensitive-key")
     dialog.persist.setChecked(True)
     dialog.use_tools.setChecked(False)
     dialog._accept()
+    deadline = time.monotonic() + 5
+    while dialog.worker is not None and time.monotonic() < deadline:
+        qapp.processEvents()
+        time.sleep(.005)
+    assert dialog.provider is not None
     restored = AiSettingsDialog(Settings(), secrets)
+    wait_dialog(qapp, restored)
     assert restored.kind.currentData() == "compatible"
     assert restored.base.text() == "http://127.0.0.1:4321/v1"
     assert restored.model.text() == "test-model"

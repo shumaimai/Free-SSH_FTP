@@ -15,7 +15,7 @@ import threading
 import uuid
 from pathlib import Path
 
-from .ai_core import TerminalTools, redact, tool_definitions
+from .ai_core import TerminalTools, observation_json, redact, tool_definitions
 from .jsonio import save_json_atomic
 
 MAX_MESSAGE = 65536
@@ -193,7 +193,7 @@ class McpBridge:
             elif method == "tools/call":
                 try:
                     result = TerminalTools(self.broker, actor, cancel).call(params.get("name"), params.get("arguments", {}), str(request_id))
-                    result = {"content": [{"type": "text", "text": redact(json.dumps(result, ensure_ascii=False))}], "isError": False}
+                    result = {"content": [{"type": "text", "text": observation_json(result)}], "isError": False}
                 except (ValueError, PermissionError, RuntimeError, OSError) as exc:
                     result = {"content": [{"type": "text", "text": redact(str(exc))}], "isError": True}
             elif isinstance(method, str) and method.startswith("notifications/"):

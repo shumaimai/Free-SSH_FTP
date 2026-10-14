@@ -95,3 +95,33 @@ def test_real_conpty_cmd(tmp_path):
         reader.join(2)
     assert not reader.is_alive()
     assert not backend.process._thread.is_alive()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows ConPTYの日本語出力とCtrl+C実検証")
+def test_real_conpty_unicode_and_interrupt(tmp_path):
+    # 入力のエコーに日本語/完了マーカーが現れないよう、スクリプトはASCIIで渡す。
+    script = ("import time;print(chr(26085)+chr(26412)+chr(35486),flush=True);"
+              "exec('try:\\n time.sleep(30)\\nexcept KeyboardInterrupt:\\n print(chr(20013)+chr(26029),flush=True)')")
+    backend = ConPtyBackend.spawn(argv=[sys.executable, "-u", "-c", script], cwd=tmp_path)
+    data = bytearray()
+    ready, interrupted = threading.Event(), threading.Event()
+
+    def read():
+        while chunk := backend.recv(4096):
+            data.extend(chunk)
+            if "日本語".encode() in data:
+                ready.set()
+            if "中断".encode() in data:
+                interrupted.set()
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    try:
+        assert ready.wait(15), data.decode(errors="replace")
+        backend.interrupt()
+        assert interrupted.wait(15), data.decode(errors="replace")
+    finally:
+        backend.close()
+        reader.join(2)
+    assert not reader.is_alive()
+    assert not backend.process._thread.is_alive()

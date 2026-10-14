@@ -51,6 +51,22 @@ def initialize(call):
     call(msg("notifications/initialized"))
 
 
+def test_large_mcp_result_is_valid_bounded_json_after_secret_masking(bridge, tmp_path, monkeypatch):
+    value, entry, backend = bridge
+    monkeypatch.setattr(value.broker, "perform", lambda *args, **kwargs: {
+        "output": "password=private\n" + '日本語\\"' * 16000,
+        "error": "E" * 65536, "completion": "known", "exit_code": 7, "status": "completed"})
+    with helper(value, tmp_path) as (_, call, _, _):
+        initialize(call)
+        reply = call(msg("tools/call", 22, name="run_command", arguments={
+            "session_id": entry.id, "generation": entry.generation, "text": "echo test", "cwd": str(tmp_path)}))
+        content = reply["result"]["content"][0]["text"]
+        result = json.loads(content)
+        assert not reply["result"]["isError"] and len(content.encode()) <= 32000
+        assert "private" not in content and result["truncated"]
+        assert result["session_id"] == entry.id and result["exit_code"] == 7
+
+
 @contextmanager
 def helper(value, cwd, executable=None):
     config = value.config()["mcpServers"]["hashi"]

@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import json
 
-from .ai_http import JsonHttp, validate_base_url
+from .ai_http import JsonHttp, normalize_api_base
+
+COMMANDCODE_BASE = "https://api.commandcode.ai/provider/v1"
 
 
 def responses_input(messages):
@@ -22,34 +24,65 @@ def responses_input(messages):
 
 
 class ApiProvider:
-    def __init__(self, kind, model, key, *, base_url=None, http=None, use_tools=True):
+    def __init__(self, kind, model, key, *, base_url=None, http=None, use_tools=True,
+                 protocol="auto"):
         defaults = {"openai": "https://api.openai.com/v1", "anthropic": "https://api.anthropic.com/v1"}
-        if kind not in {*defaults, "compatible"} or not model.strip():
+        if kind not in {*defaults, "compatible", "commandcode"} or not model.strip():
             raise ValueError("プロバイダーとモデルを指定してください")
         self.kind, self.model, self._key = kind, model.strip(), key
-        self.base = validate_base_url(base_url or defaults.get(kind, ""))
+        self.base = normalize_api_base(base_url or (COMMANDCODE_BASE if kind == "commandcode"
+                                                    else defaults.get(kind, "")))
         if kind in defaults and self.base != defaults[kind]:
             raise ValueError("公式API方式は公式接続先を使います。独自URLは互換方式を選択してください")
         self.http = http or JsonHttp()
-        self.use_tools = bool(use_tools) if kind == "compatible" else True
+        self.use_tools = bool(use_tools)
+        if protocol not in {"auto", "chat", "responses", "messages"}:
+            raise ValueError("APIの形式を選んでください")
+        self.protocol = protocol
+        if protocol == "auto":
+            self.protocol = ("responses" if kind == "openai" else "messages"
+                             if kind == "anthropic" or (self.base == COMMANDCODE_BASE
+                                                        and "claude" in self.model.lower()) else "chat")
+
+    def models(self, cancel):
+        if cancel.is_set():
+            raise InterruptedError("接続確認を停止しました")
+        headers = self._headers()
+        data = self.http.json(self.base + "/models", headers=headers)
+        if cancel.is_set():
+            raise InterruptedError("接続確認を停止しました")
+        return [m for m in data.get("data", []) if isinstance(m, dict) and isinstance(m.get("id"), str)]
+
+    def _headers(self):
+        if self.kind == "anthropic":
+            return {"x-api-key": self._key, "anthropic-version": "2023-06-01"}
+        return {"Authorization": "Bearer " + self._key} if self._key else {}
 
     def respond(self, messages, instructions, tools, cancel, on_text):
-        if self.kind == "openai":
-            return self._responses(messages, instructions, tools, cancel, on_text)
-        if self.kind == "anthropic":
-            return self._anthropic(messages, instructions, tools, cancel, on_text)
-        return self._chat(messages, instructions, tools, cancel, on_text)
+        enabled = tools if self.use_tools else []
+        if self.protocol == "responses":
+            reply = self._responses(messages, instructions, enabled, cancel, on_text)
+        elif self.protocol == "messages":
+            reply = self._anthropic(messages, instructions, enabled, cancel, on_text)
+        else:
+            reply = self._chat(messages, instructions, enabled, cancel, on_text)
+        if not self.use_tools and reply.get("tool_calls"):
+            raise RuntimeError("相談専用の接続がツールを要求しました。実行していません")
+        return reply
 
     def _responses_payload(self, messages, instructions, tools):
-        return {"model": self.model, "store": False, "stream": True,
+        payload = {"model": self.model, "store": False, "stream": True,
                 "include": ["reasoning.encrypted_content"], "instructions": instructions,
                 "input": responses_input(messages),
                 "tools": [{"type": "function", "strict": True, **t} for t in tools]}
+        if not self.use_tools:
+            payload.pop("tools")
+        return payload
 
     def _responses(self, messages, instructions, tools, cancel, on_text):
         completed, text = None, []
         for e in self.http.events(self.base + "/responses", self._responses_payload(messages, instructions, tools),
-                                  {"Authorization": "Bearer " + self._key}, cancel):
+                                  self._headers(), cancel):
             kind = e.get("type")
             if kind == "response.output_text.delta":
                 text.append(e["delta"])
@@ -84,9 +117,11 @@ class ApiProvider:
         payload = {"model": self.model, "system": instructions, "max_tokens": 4096, "stream": True,
                    "messages": history, "tools": [{"name": t["name"], "description": t["description"],
                    "input_schema": t["parameters"]} for t in tools]}
+        if not self.use_tools:
+            payload.pop("tools")
         text, calls, ended, reason = [], {}, False, None
         for e in self.http.events(self.base + "/messages", payload,
-                {"x-api-key": self._key, "anthropic-version": "2023-06-01"}, cancel):
+                {**self._headers(), "anthropic-version": "2023-06-01"}, cancel):
             kind = e.get("type")
             if kind == "error":
                 raise RuntimeError("Anthropicの応答エラー。利用上限を確認してください")
@@ -124,7 +159,7 @@ class ApiProvider:
             payload["tools"] = [{"type": "function", "function": t} for t in tools]
         text, calls, ended = [], {}, False
         for e in self.http.events(self.base + "/chat/completions", payload,
-                                  {"Authorization": "Bearer " + self._key}, cancel):
+                                  self._headers(), cancel):
             if e.get("error"):
                 raise RuntimeError("互換APIの応答エラー")
             for choice in e.get("choices", []):

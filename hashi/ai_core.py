@@ -27,6 +27,50 @@ def redact(text):
     return "".join(c for c in text if c in "\n\t" or ord(c) >= 32)[:32000]
 
 
+def observation_json(value, limit=32000):
+    """文字列をマスク・短縮してからJSON化し、構造と端末IDを保つ。"""
+    initial_truncation = False
+    def clean(item):
+        nonlocal initial_truncation
+        if isinstance(item, str):
+            initial_truncation |= len(item) > 32000
+            return redact(item)
+        if isinstance(item, dict):
+            return {key: clean(child) for key, child in item.items()}
+        if isinstance(item, list):
+            return [clean(child) for child in item]
+        return item
+    cleaned = clean(value)
+    text_limit, item_limit = 32000, 128
+    while True:
+        truncated = initial_truncation
+        def clip(item, key=None):
+            nonlocal truncated
+            if isinstance(item, str):
+                if key not in {"session_id", "operation_id", "tool_call_id"} and len(item) > text_limit:
+                    truncated = True
+                    return item[:text_limit] + "[長い内容を省略]"
+                return item
+            if isinstance(item, dict):
+                return {name: clip(child, name) for name, child in item.items()}
+            if isinstance(item, list):
+                truncated |= len(item) > item_limit
+                return [clip(child) for child in item[:item_limit]]
+            return item
+        data = clip(cleaned)
+        if truncated:
+            data = {**data, "truncated": True} if isinstance(data, dict) else {"items": data, "truncated": True}
+        encoded = json.dumps(data, ensure_ascii=False)
+        if len(encoded.encode("utf-8")) <= limit:
+            return encoded
+        if text_limit > 128:
+            text_limit //= 2
+        elif item_limit > 1:
+            item_limit //= 2
+        else:
+            return json.dumps({"truncated": True, "error": "観測データが大きすぎるため省略しました"}, ensure_ascii=False)
+
+
 def context_snapshot(broker):
     data = []
     for session in broker.list_sessions():
@@ -35,7 +79,7 @@ def context_snapshot(broker):
                      "screen": redact(source["screen"]),
                      "recent_output": redact(source["output"]),
                      "trust": "untrusted_observation"})
-    return json.dumps({"terminal_observations": data}, ensure_ascii=False)[:64000]
+    return observation_json({"terminal_observations": data}, 64000)
 
 
 class AiProvider(Protocol):
@@ -120,9 +164,9 @@ class AiConversation:
                     raise InterruptedError("AI処理を停止しました")
                 try:
                     result = self.tools.call(call["name"], call["arguments"], call["id"])
-                    result = redact(json.dumps(result, ensure_ascii=False))
+                    result = observation_json(result)
                 except (ValueError, PermissionError, RuntimeError, OSError) as exc:
-                    result = json.dumps({"error": str(exc)}, ensure_ascii=False)
+                    result = observation_json({"error": str(exc)})
                 self.messages.append({"role": "tool", "tool_call_id": call["id"],
                                       "name": call["name"], "content": result})
         raise RuntimeError("AI操作の回数上限です。状況を確認して続けてください")

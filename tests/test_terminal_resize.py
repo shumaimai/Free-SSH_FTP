@@ -4,6 +4,7 @@ pyte スクリーン・描画グリッド・PTY の 3 者のサイズが常に�
 (ずれるとシェルの折返しと描画が食い違い、入力位置が乱れる)を固定する。
 """
 import pytest
+from PySide6.QtCore import QCoreApplication, QEvent
 
 
 class FakeChannel:
@@ -26,6 +27,8 @@ def term(qapp):
     t.show()   # offscreen でも isVisible() を立てるため
     yield t
     t.close()
+    t.deleteLater()
+    QCoreApplication.sendPostedEvents(t, QEvent.DeferredDelete)
 
 
 def test_resize_keeps_screen_grid_pty_in_sync(term):
@@ -127,6 +130,8 @@ def test_grid_follows_own_geometry_inside_header_pane(qapp):
     # ヘッダーの高さぶん、ホスト全体で計算した行数より必ず小さい
     assert term._rows < int(host.height() / term._chh)
     host.close()
+    host.deleteLater()
+    QCoreApplication.sendPostedEvents(host, QEvent.DeferredDelete)
 
 
 def test_grid_resyncs_after_pane_hidden_and_shown(qapp):
@@ -165,6 +170,8 @@ def test_grid_resyncs_after_pane_hidden_and_shown(qapp):
     assert term._cols == max(4, int(term.width() / term._cw))
     assert term._rows == max(2, int(term.height() / term._chh))
     host.close()
+    host.deleteLater()
+    QCoreApplication.sendPostedEvents(host, QEvent.DeferredDelete)
 
 
 def test_wrap_tracking_marks_continuation_rows(term):
@@ -280,3 +287,117 @@ def test_reflow_skips_alt_screen(term):
     assert term.screen.in_alt_screen
     term._on_data(b"\x1b[?1049l")     # 復帰
     assert not term.screen.in_alt_screen
+
+
+def test_bottom_prompt_survives_shrink_grow_and_input(term):
+    term._pending_grid = (100, 4)
+    term._apply_pending_grid()
+    term._on_data(b"\r\n" * 3 + b"prompt> " + b"X" * 60)
+    for width in (40, 100, 35, 100):
+        term._pending_grid = (width, 4)
+        term._apply_pending_grid()
+        assert "".join(row.rstrip() for row in term.screen.display).endswith("prompt> " + "X" * 60)
+    term._on_data(b"Y")
+    assert term.screen.display[term.screen.cursor.y].rstrip().endswith("X" * 60 + "Y")
+
+
+def test_reflow_preserves_input_longer_than_viewport(term):
+    term._pending_grid = (100, 4)
+    term._apply_pending_grid()
+    term._on_data(b"prompt> " + b"X" * 85)
+    for width in (20, 40, 100):
+        term._pending_grid = (width, 4)
+        term._apply_pending_grid()
+    assert term.screen.display[term.screen.cursor.y].rstrip() == "prompt> " + "X" * 85
+    term._on_data(b"Y")
+    assert term.screen.cursor.x == 94
+
+
+def test_reflow_does_not_split_wide_character(term):
+    term._pending_grid = (100, 4)
+    term._apply_pending_grid()
+    text = "abc" + "日本語" * 9
+    term._on_data(("\r\n" * 3 + text).encode())
+    for width in (10, 41, 100):
+        term._pending_grid = (width, 4)
+        term._apply_pending_grid()
+        for row in term.screen.buffer.values():
+            assert not (row[width - 1].data and len(row[width - 1].data) == 1
+                        and ord(row[width - 1].data) > 127)
+    assert term.screen.display[term.screen.cursor.y].rstrip() == text
+
+
+def test_pty_resize_failure_retries_without_reflowing_twice(term):
+    calls = []
+    def resize(width, height):
+        calls.append((width, height))
+        if len(calls) == 1:
+            raise OSError("temporary")
+    term._channel.resize_pty = resize
+    term._on_data(b"prompt> " + b"X" * 60)
+    term._pending_grid = (40, 4)
+    term._apply_pending_grid()
+    display = term.screen.display
+    term._apply_pending_grid()
+    assert calls == [(40, 4), (40, 4)]
+    assert term.screen.display == display
+
+
+def test_input_synchronizes_geometry_after_hide_and_show(term, qapp):
+    calls = []
+    term._channel.resize_pty = lambda **size: calls.append(("resize", size))
+    term._channel.send = lambda data: calls.append(("send", data))
+    term.hide()
+    term.resize(401, 201)
+    term._apply_pending_grid()
+    assert not calls
+    term.show()
+    term.send_bytes(b"x")
+    assert calls[-1] == ("send", b"x") and calls[-2][0] == "resize"
+    assert calls[-2][1] == {"width": term.screen.columns, "height": term.screen.lines}
+
+
+def test_height_only_resize_preserves_bottom_input(term):
+    term._pending_grid = (40, 8)
+    term._apply_pending_grid()
+    term._on_data(b"\r\n" * 7 + b"prompt> " + b"X" * 50)
+    for height in (2, 5, 8):
+        term._pending_grid = (40, height)
+        term._apply_pending_grid()
+    assert "".join(row.rstrip() for row in term.screen.display).endswith("prompt> " + "X" * 50)
+
+
+def test_padding_overwritten_after_wide_reflow_is_not_discarded(term):
+    term._pending_grid = (80, 4)
+    term._apply_pending_grid()
+    term._on_data("abcdefghi日本語".encode())
+    term._pending_grid = (10, 4)
+    term._apply_pending_grid()
+    term._on_data(b"\x1b[1;10H!\x1b[2;7H")
+    term._pending_grid = (80, 4)
+    term._apply_pending_grid()
+    assert "abcdefghi!日本語" in term.screen.display[0]
+
+
+def test_wide_character_at_right_edge_wraps_without_losing_cells(term):
+    term._pending_grid = (10, 4)
+    term._apply_pending_grid()
+    term._on_data("123456789日本語".encode())
+    assert term.screen.cursor.y == 1 and term.screen.cursor.x == 6
+    assert term.screen.display[1].startswith("日本語")
+    term._pending_grid = (80, 4)
+    term._apply_pending_grid()
+    assert term.screen.display[0].rstrip() == "123456789日本語"
+
+
+def test_wide_overwrite_and_erase_do_not_leave_orphan_stub_or_padding(term):
+    term._pending_grid = (80, 4)
+    term._apply_pending_grid()
+    term._on_data("abcdefghi日本語".encode())
+    term._pending_grid = (10, 4)
+    term._apply_pending_grid()
+    term._on_data(b"\x1b[1;1H\x1b[2K123456789 X")
+    assert term.screen.display[1].startswith("X ")
+    term._pending_grid = (80, 4)
+    term._apply_pending_grid()
+    assert term.screen.display[0].startswith("123456789 X ")
