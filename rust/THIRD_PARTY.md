@@ -12,3 +12,13 @@ Hashi側のコードはMITのままで、依存ソースのライセンスを維
 
 診断/fixture用の `hashi-migration-check` と `hashi-storage-contract` は開発用であり、
 最終利用者向けHashi/HashiMCPの配布対象とは分ける。
+
+ネイティブ候補の日本語fallbackフォントはGoogle Fonts配布のNotoSansJPを埋め込む。
+SIL Open Font License 1.1の本文を `crates/hashi-desktop-native/assets/OFL.txt` に保持する。
+
+- source: https://github.com/google/fonts/blob/main/ofl/notosansjp/NotoSansJP%5Bwght%5D.ttf
+- asset SHA-256: `c2f3b4d463500a2ddcd3849cded1fceeb9fd6d1c32e6cbecd568453ba50fc68f`
+
+SSH候補はrussh 0.64.1（ring/RSA/flate2）、SFTPはrussh-sftp 3.0.1、
+端末はalacritty_terminal 0.26.0、PTYはportable-pty 0.9.0、GUIはeframe 0.36.2。
+ネイティブ候補はPython/Qt/WebViewのランタイムを同梱しない。

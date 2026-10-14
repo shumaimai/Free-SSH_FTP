@@ -519,3 +519,12 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - SSHのPTY種別xterm-256colorからシェルを推測せず、shellはunknownを公開する。独立execの本文はサーバー側の解釈に任せる。
 
 - ConPTY終了時はpywinpty内部readerのsocket shutdown/native cancel_io/joinを行い、Hashi側のreaderだけでなく内部readerも回収する。
+
+### Rust移行のネイティブ候補 (#170)
+
+- `rust/`のcore/terminal/storageはGUIに依存しない。desktop-nativeは候補の操作画面。
+- host鍵承認と秘密応答はchallenge ID/terminal ID/接続世代/host/port/user/hop/kindを照合。
+  期限切れ・取消後の要求から信頼情報を保存しない。秘密をDebug・全画面イベントへ出さない。
+- nav/xferは別のSFTPチャネル。32KiB単位で取消を見て、prefetchも1本に抑える。
+- Rust候補は旧版保存先に書かない。Windows CI artifactはdebug候補で、安定配布ではない。
+  残る全機能は`docs/rust-compatibility.md`で追う。Windows実機のIME/DPIは未検証を維持する。

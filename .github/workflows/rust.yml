@@ -7,7 +7,9 @@ on:
       - 'main.py'
       - 'tests/test_runtime_guard.py'
       - 'tests/test_rust_storage_compat.py'
+      - 'tests/test_rust_ssh_live.py'
       - '.github/workflows/rust.yml'
+      - 'tools/rust_artifact.py'
   push:
     branches: [main]
     paths:
@@ -16,7 +18,9 @@ on:
       - 'main.py'
       - 'tests/test_runtime_guard.py'
       - 'tests/test_rust_storage_compat.py'
+      - 'tests/test_rust_ssh_live.py'
       - '.github/workflows/rust.yml'
+      - 'tools/rust_artifact.py'
 jobs:
   guards:
     strategy:
@@ -29,6 +33,7 @@ jobs:
       PYTHON_KEYRING_BACKEND: keyring.backends.fail.Keyring
       PYTHONUTF8: '1'
       HASHI_RUST_GUARD_BINARY: ${{ github.workspace }}/rust/target/debug/hashi-migration-check${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+      HASHI_RUST_SSH_BINARY: ${{ github.workspace }}/rust/target/debug/hashi-ssh-check${{ matrix.os == 'windows-latest' && '.exe' || '' }}
       HASHI_RUST_STORAGE_BINARY: ${{ github.workspace }}/rust/target/debug/hashi-storage-contract${{ matrix.os == 'windows-latest' && '.exe' || '' }}
     steps:
       - uses: actions/checkout@v4
@@ -41,7 +46,10 @@ jobs:
           components: rustfmt, clippy
       - name: Linux Qt libraries
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon-x11-0 openssh-server xvfb xauth
+      - name: Linux test daemon directory
+        if: runner.os == 'Linux'
+        run: sudo mkdir -p /run/sshd
       - run: python -m pip install -r requirements-dev.txt
       - name: Rust format
         working-directory: rust
@@ -52,8 +60,19 @@ jobs:
       - name: Rust contracts
         working-directory: rust
         run: cargo test --locked --workspace
-      - name: Build guard diagnostic
+      - name: Build native candidate and diagnostics
         working-directory: rust
         run: cargo build --locked --workspace --bins
       - name: Python and Rust process interoperability
-        run: python -m pytest -v -x tests/test_runtime_guard.py tests/test_rust_storage_compat.py
+        run: python -m pytest -v -x tests/test_runtime_guard.py tests/test_rust_storage_compat.py tests/test_rust_ssh_live.py
+      - name: Candidate build identity and licenses
+        if: runner.os == 'Windows'
+        run: python tools/rust_artifact.py --binary rust/target/debug/Hashi-RustPreview.exe --output rust/target/candidate
+      - name: Native candidate artifact
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: Hashi-RustPreview-windows-x64
+          path: rust/target/candidate/
+          if-no-files-found: error
+          retention-days: 30

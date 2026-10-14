@@ -402,3 +402,8 @@ ruff check .
 
 - ConPTY終了時はsocket shutdown/native cancel_io/joinでpywinpty内部readerも回収する。
 - socket shutdown/native cancel_io/joinでpywinpty内部readerも回収する。
+
+## Rust候補 (#170)
+- Rustの認証応答はchallenge IDと端末ID/世代/接続先/hop/種類を照合する。取消・期限切れの要求で信頼情報を保存しない。
+- nav/xfer別チャネル、32KiB転送、bounded端末queue、OSC52拒否を維持する。秘密をDebugや全画面イベントに出さない。
+- Rust候補は旧版保存先へ書かない。CIのdebug候補は安定版ではない。未実装は互換表、Windows実機の未検証は計画へ残す。

@@ -14,7 +14,10 @@
 `rust/` はCargo workspace。`hashi-storage` はGUIを参照せず、保存先と移行ガードを持つ。
 `hashi-migration-check` はガードの診断用CLIで、SSH接続・データ取り込みは行わない。
 旧Python版は通常起動とエディタ単独起動の両方で実行中マーカーを作成する。
-全Rust版のGUI、SSH/SFTP、追加機能は後続の実装対象。
+RustネイティブGUIの候補 `Hashi-RustPreview` はeframe/egui、端末モデルは
+alacritty_terminal、SSH/SFTPはrussh/russh-sftp、ローカルPTYはportable-ptyで動く。
+候補の実行にPython・Qt・WebViewは必要ない。既存Pythonアプリの全機能はまだ揃っていない。
+機能と実測の扱いは [互換表](rust-compatibility.md) に記録する。
 
 保存層にはPython版の全Profileフィールドと設定の取り込み、known_hostsの追加のみの
 マージ、公開鍵blobからの種別/指紋生成、版付きstate.jsonのatomic保存を追加する。
@@ -64,12 +67,13 @@ cargo build --locked --workspace --bins
 cd ..
 HASHI_RUST_GUARD_BINARY="$PWD/rust/target/debug/hashi-migration-check" \
 QT_QPA_PLATFORM=offscreen PYTHON_KEYRING_BACKEND=keyring.backends.fail.Keyring \
-pytest tests/test_runtime_guard.py
+HASHI_RUST_STORAGE_BINARY="$PWD/rust/target/debug/hashi-storage-contract" \
+HASHI_RUST_SSH_BINARY="$PWD/rust/target/debug/hashi-ssh-check" \
+pytest tests/test_runtime_guard.py tests/test_rust_storage_compat.py tests/test_rust_ssh_live.py
 ```
 
 Windows CIは.exeを指定して同じ双方向試験を実行する。通常のPython CIも継続する。
-GUIの変更は起動失敗時の日本語エラー表示だけで、既存の接続/エディタ処理は
-ガードの内側に置く。新しいデータスキーマへ自動変換したり、旧資格情報を上書きしない。
+Python側の接続/エディタ処理はガードの内側に置く。新しいデータスキーマへ自動変換したり、旧資格情報を上書きしない。
 
 ## 残る検証
 
@@ -77,3 +81,23 @@ Windows CIのプロセス間ロック試験と、Windows実機のIME/ConPTY/資�
 実機は現在接続されていない。実装とCIを先行するが、未確認の項目を移行完了とは扱わない。
 GUI/端末/SSH候補の選定結果、機能互換表、旧形式の両方向fixture、起動/メモリ/配布サイズの
 比較もPhase 0以降で記録する。
+
+## ネイティブ候補の起動
+
+```sh
+cd rust
+cargo run --locked --bin Hashi-RustPreview
+```
+
+通常のLinux画面かWindowsで起動する。CIのWindows成果物はdebugビルドの候補であり、
+安定版リリースや移行完了の証拠ではない。初回のRust設定は空で、旧版の自動取り込みは
+まだ行わない。接続先を手入力し、鍵/パスワード/agent認証を選べる。
+ホスト鍵承認は接続先・踏み台・接続世代に結び付け、終了した要求から保存しない。
+SFTPの一覧と転送は別チャネル。転送は32KiBごとに処理し、ライブラリの先読みも1本に抑える。
+キャンセルと古いイベントの破棄をコアに持つ。画面側の全操作導線は互換表で区別する。
+
+Linuxでは管理下loopback OpenSSHへの実鍵認証、exec、1MiBの転送往復と再開を確認する。
+仮想Xサーバーで日本語GUI表示とローカルシェルの入力/echoも確認した。
+WindowsはCIのConPTY・ビルド検証を進め、実機のIME・DPI・資格情報バックエンド検証は
+保留のまま記録する。russhが使うssh-key/RSA依存にはRC版が含まれるため、
+全面的な暗号互換の採用判断は互換マトリクスの検証後に行う。
