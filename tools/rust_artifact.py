@@ -35,6 +35,8 @@ def main():
         license_paths = set()
         for pattern in ('LICENSE*', 'LICENCE*', 'COPYING*', 'NOTICE*', 'LICENSES/*'):
             license_paths.update(path for path in directory.glob(pattern) if path.is_file())
+        if package['name'] == 'epaint_default_fonts':
+            license_paths.update((directory / 'fonts').glob('*.txt'))
         if package.get('license_file'):
             license_paths.add(directory / package['license_file'])
         target = notices / f"{package['name']}-{package['version']}"
