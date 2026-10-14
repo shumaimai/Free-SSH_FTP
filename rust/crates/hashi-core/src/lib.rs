@@ -1,4 +1,6 @@
 //! SSH/SFTP・ローカルPTY・ジョブのGUI非依存コア。
+pub mod editor;
+pub mod editor_language;
 pub mod forward;
 pub mod interaction;
 pub mod local;

@@ -18,7 +18,7 @@ Issue #170の完了条件をこの表で省略しない。候補に存在する�
 | SFTP一覧/単一ファイル転送 | nav/xfer別、32KiB、fsync、明示overwrite、prefix照合resume、取消 | 再帰コピー、転送queue・進捗/取消/overwrite導線、symlink/名前互換 |
 | リモート再帰削除 | 確認語delete、lstat、リンク追跡なし、安全な子名 | UI導線と権限/名前/失敗行列 |
 | デュアルペイン・W端末 | 未実装 | 同期ブラウズ・D&D・ブックマーク・再接続・接続モード |
-| 編集・ログ・snippets | snippets保存形式のみ | text/hex、BOM/改行保持、リモートatomic保存、ログ・検索 |
+| 編集・ログ・snippets | text/固定長hex、BOM/UTF16 byte order/改行、検索/全置換、軽量highlight、local atomic/SFTP POSIX rename、保存失敗時dirty保持 | 行番号/行移動/折返し/全ショートカット、ACL/ハードリンク、8MiB性能、ログ/snippets UI |
 | 権限・サーバー設定 | 未実装 | chmod前のfsync journal、参照数、sudo、深い順復元、sshd/netplan rollback |
 | P2P・Google Drive同期 | 暗号v1契約のみ | X25519/SAS、通信、Google Drive現行backend、秘密同期と衝突処理 |
 | AI/API/OAuth | AI秘密形式のみ | 3種API、会話/観測、OAuth全検証・更新単一所有者・再認証 |
@@ -39,3 +39,11 @@ Profileの明示値を優先し、ProxyCommand、未対応のMatch/Includeは直
 Linuxの合成OpenSSH環境でdirect/alias/2段hop/agent転送の4経路を確認する。
 全経路でexecの締切後の接続維持、-L/-R/-Dのデータ往復と停止後のSSH維持を確認する。
 agent試験は合成鍵を入れた専用ssh-agentを使い、利用者のagent鍵を使わない。
+
+エディタ候補は既存ファイルをローカル/リモートで開く。`--edit FILE`でも起動できる。
+未編集の内容は元バイト列をそのまま返し、UTF-16のbyte orderも保持する。
+既存のBOM/CRLF形式をGUIのCtrl+Sまで確認するLinux実描画試験をCIへ追加する。
+保存前とcommit前に元の内容を照合し、外部変更があれば上書きしない。
+この照合は他アプリを排他ロックする仕組みではなく、最後の照合とrename間の競合は残る。
+POSIX rename未対応のSFTPサーバーでは、元ファイルを保全して保存を拒否する。
+ACL/extended attributes/hard linkの完全保持と権限緩和はこの候補では未対応。

@@ -146,6 +146,46 @@ async fn main() -> Result<()> {
     transfer::delete_tree(&nav, &remote, "delete", &cancel).await?;
     drop(tx);
     drain.await.context("進捗処理が終了しませんでした")?;
+    let edit_path = req
+        .directory
+        .join("edit.txt")
+        .to_string_lossy()
+        .into_owned();
+    tokio::fs::write(&edit_path, b"\xef\xbb\xbfhello\r\n").await?;
+    let mut document = hashi_core::editor::read_remote(&xfer, &edit_path, &cancel).await?;
+    let hashi_core::editor::Body::Text(text) = &mut document.body else {
+        anyhow::bail!("text判定が違います")
+    };
+    text.push_str("日本語\n");
+    let bytes = document.payload()?;
+    hashi_core::editor::save_remote(
+        &session,
+        &xfer,
+        &edit_path,
+        document.original(),
+        &bytes,
+        &cancel,
+    )
+    .await?;
+    anyhow::ensure!(
+        tokio::fs::read(&edit_path).await?
+            == b"\xef\xbb\xbfhello\r\n\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e\r\n",
+        "BOM/CRLF/日本語が変わりました"
+    );
+    let conflict = hashi_core::editor::save_remote(
+        &session,
+        &xfer,
+        &edit_path,
+        document.original(),
+        b"must-not-overwrite",
+        &cancel,
+    )
+    .await;
+    anyhow::ensure!(
+        conflict.is_err() && tokio::fs::read(&edit_path).await? == bytes,
+        "外部変更を上書きしました"
+    );
+    transfer::delete_tree(&nav, &edit_path, "delete", &cancel).await?;
     verify_forwards(session.clone()).await?;
     session.close().await?;
     println!("ssh-sftp-verified");

@@ -1,6 +1,9 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+mod editor_view;
 mod forward_view;
+mod style;
 mod terminal_view;
+use editor_view::{Editor, EditorEvent};
 use eframe::egui;
 use forward_view::{ActiveForward, ForwardEditor};
 use hashi_core::{
@@ -167,9 +170,18 @@ struct App {
     notice: String,
     startup_error: bool,
     forward_editor: ForwardEditor,
+    editors: Vec<Editor>,
+    editor_jobs: usize,
+    editor_events: mpsc::Receiver<EditorEvent>,
+    editor_tx: mpsc::Sender<EditorEvent>,
+    confirm_exit: bool,
+    allow_close: bool,
 }
 impl App {
-    fn new(cc: &eframe::CreationContext<'_>) -> anyhow::Result<Self> {
+    fn new(
+        cc: &eframe::CreationContext<'_>,
+        edit: Option<std::path::PathBuf>,
+    ) -> anyhow::Result<Self> {
         let mut fonts = egui::FontDefinitions::default();
         fonts.font_data.insert(
             "NotoSansJP".into(),
@@ -196,10 +208,11 @@ impl App {
             ),
         };
         let (interaction, requests) = Interaction::new();
+        let (editor_tx, editor_events) = mpsc::channel(8);
         let (tx, events) = mpsc::channel(128);
         let (local_tx, local_events) = mpsc::channel(128);
         let (progress_tx, progress) = mpsc::channel(128);
-        Ok(Self {
+        let mut app = Self {
             runtime: Runtime::new()?,
             store,
             snapshot,
@@ -221,7 +234,17 @@ impl App {
             notice,
             startup_error,
             forward_editor: ForwardEditor::default(),
-        })
+            editors: vec![],
+            editor_jobs: 0,
+            editor_events,
+            editor_tx,
+            confirm_exit: false,
+            allow_close: false,
+        };
+        if let Some(path) = edit {
+            app.load_local_editor(path);
+        }
+        Ok(app)
     }
     fn connect(&mut self) {
         let tab = Tab::new(if self.profile.name.is_empty() {
@@ -587,6 +610,7 @@ impl App {
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         self.process();
+        self.process_editors();
         ctx.request_repaint_after(Duration::from_millis(16));
     }
     fn ui(&mut self, ui: &mut egui::Ui, _: &mut eframe::Frame) {
@@ -596,6 +620,9 @@ impl eframe::App for App {
                 ui.heading("Hashi Rust プレビュー");
                 if ui.button("ローカルCMD").clicked() {
                     self.local();
+                }
+                if ui.button("ローカル編集").clicked() {
+                    self.open_local_editor();
                 }
                 if ui.button("ポート転送").clicked() {
                     self.forward_editor.open = true;
@@ -718,6 +745,9 @@ impl eframe::App for App {
                             if ui.button("送信").clicked() {
                                 self.transfer(true);
                             }
+                            if ui.button("編集").clicked() {
+                                self.open_remote_editor();
+                            }
                             if ui.button("受信").clicked() {
                                 self.transfer(false);
                             }
@@ -751,6 +781,7 @@ impl eframe::App for App {
         });
         self.auth_dialog(&ctx);
         self.forward_dialog(&ctx);
+        self.editor_windows(&ctx);
     }
 }
 impl Drop for App {
@@ -761,6 +792,19 @@ impl Drop for App {
     }
 }
 fn main() -> anyhow::Result<()> {
+    let mut arguments = std::env::args_os().skip(1);
+    let edit = match arguments.next() {
+        None => None,
+        Some(flag) if flag == "--edit" => {
+            Some(std::path::PathBuf::from(arguments.next().ok_or_else(
+                || anyhow::anyhow!("--editにはファイルを指定してください"),
+            )?))
+        }
+        _ => anyhow::bail!("使い方: Hashi-RustPreview [--edit FILE]"),
+    };
+    if arguments.next().is_some() {
+        anyhow::bail!("引数が多すぎます");
+    }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 800.0]),
         ..Default::default()
@@ -768,7 +812,7 @@ fn main() -> anyhow::Result<()> {
     eframe::run_native(
         "Hashi Rust Preview",
         options,
-        Box::new(|cc| Ok(Box::new(App::new(cc)?))),
+        Box::new(move |cc| Ok(Box::new(App::new(cc, edit)?))),
     )
     .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
