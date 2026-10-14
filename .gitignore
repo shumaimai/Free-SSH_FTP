@@ -36,3 +36,6 @@ creds.dat
 profiles.json
 known_hosts.json
 settings.json
+
+# Rust
+/rust/target/

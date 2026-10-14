@@ -13,7 +13,7 @@ import os
 import sys
 
 from PySide6.QtGui import QColor, QPalette
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from hashi.launch import dispatch, normalize_paths, run_editor_only
 
@@ -70,6 +70,24 @@ def main(argv: list[str] | None = None) -> int:
     app = QApplication(cli_argv)
     app.setApplicationName("Hashi")
     apply_dark_theme(app)
+
+    from hashi.runtime_guard import PythonRuntime
+    runtime = PythonRuntime()
+    try:
+        runtime.__enter__()
+    except (OSError, RuntimeError):
+        logging.getLogger(__name__).warning("移行ガードを取得できません", exc_info=True)
+        QMessageBox.critical(None, "Hashiを起動できません",
+                             "移行処理中か、実行中マーカーを作成できません。\n"
+                             "移行処理の終了と保存先の権限を確認してください。")
+        return 1
+    try:
+        return _run_application(app, mode, ns)
+    finally:
+        runtime.close()
+
+
+def _run_application(app, mode, ns) -> int:
 
     if mode == "editor":
         paths = normalize_paths(ns.files)

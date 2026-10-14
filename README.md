@@ -11,6 +11,8 @@ PuTTY + WinSCP を別々に開かなくていいのがコンセプト。起動�
 
 ## 起動
 
+Rustへの移行計画と実装状況は[移行ガイド](docs/rust-migration.md)を参照してください。
+
 ローカルCMD、AI相談、MCPの開発機能は[使い方](docs/terminal-ai.md)を参照してください。
 
 ```
