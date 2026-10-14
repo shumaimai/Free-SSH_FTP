@@ -106,7 +106,8 @@ async fn main() -> Result<()> {
     let (uploaded, listed) = tokio::join!(upload, list);
     uploaded?;
     listed?;
-    let entries = transfer::list(&nav, &req.directory.to_string_lossy(), &cancel).await?;
+    let entries =
+        transfer::list_bounded(&session, &req.directory.to_string_lossy(), &cancel).await?;
     anyhow::ensure!(
         entries.iter().any(|entry| entry.name == "remote.bin"),
         "転送中も一覧を読める必要があります"
@@ -143,7 +144,66 @@ async fn main() -> Result<()> {
         tokio::fs::read(&restored).await? == bytes,
         "再開した内容が一致しません"
     );
+    tokio::fs::write(&remote, &bytes[..65536]).await?;
+    transfer::upload_resume(&xfer, &source, &remote, "resume-upload", &tx, &cancel).await?;
+    anyhow::ensure!(
+        tokio::fs::read(&remote).await? == bytes,
+        "upload再開の内容が一致しません"
+    );
     transfer::delete_tree(&nav, &remote, "delete", &cancel).await?;
+    let local_tree = req.directory.join("tree");
+    let remote_tree = req
+        .directory
+        .join("remote-tree")
+        .to_string_lossy()
+        .into_owned();
+    let downloaded = req.directory.join("downloaded-tree");
+    tokio::fs::create_dir_all(local_tree.join("nested")).await?;
+    tokio::fs::write(local_tree.join("日本語.txt"), "日本語\r\n").await?;
+    tokio::fs::write(local_tree.join("nested/data.bin"), &bytes[..1024]).await?;
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(req.directory.join("outside"), local_tree.join("link"))?;
+    let context = hashi_core::transfer_tree::TaskContext {
+        job: "tree",
+        progress: &tx,
+        cancel: &cancel,
+    };
+    let report = hashi_core::transfer_tree::upload_tree(
+        &xfer,
+        &local_tree,
+        &remote_tree,
+        hashi_core::transfer_tree::Existing::Refuse,
+        &context,
+    )
+    .await?;
+    anyhow::ensure!(report.files == 2, "再帰アップロードの件数が違います");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(
+        req.directory.join("outside"),
+        std::path::Path::new(&remote_tree).join("link"),
+    )?;
+    let report = hashi_core::transfer_tree::download_tree(
+        &session,
+        &xfer,
+        &remote_tree,
+        &downloaded,
+        hashi_core::transfer_tree::Existing::Refuse,
+        &context,
+    )
+    .await?;
+    anyhow::ensure!(
+        report.files == 2
+            && tokio::fs::read(downloaded.join("nested/data.bin")).await? == bytes[..1024],
+        "再帰ダウンロードの内容が違います"
+    );
+    anyhow::ensure!(
+        tokio::fs::read(downloaded.join("日本語.txt")).await? == "日本語\r\n".as_bytes(),
+        "日本語ファイルが変わりました"
+    );
+    let hits =
+        hashi_core::transfer_tree::search(&session, &nav, &remote_tree, "日本語", &cancel).await?;
+    anyhow::ensure!(hits.len() == 1, "再帰検索の結果が違います");
+    transfer::delete_tree(&nav, &remote_tree, "delete", &cancel).await?;
     drop(tx);
     drain.await.context("進捗処理が終了しませんでした")?;
     let edit_path = req

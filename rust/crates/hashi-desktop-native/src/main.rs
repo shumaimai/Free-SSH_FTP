@@ -1,6 +1,8 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 mod editor_view;
+mod file_view;
 mod forward_view;
+use file_view::{Browser, FileEvent};
 mod style;
 mod terminal_view;
 use editor_view::{Editor, EditorEvent};
@@ -46,8 +48,14 @@ enum Message {
         stamp: Stamp,
         message: String,
     },
+    DirectoryError {
+        stamp: Stamp,
+        navigation: Stamp,
+        message: String,
+    },
     Entries {
         stamp: Stamp,
+        navigation: Stamp,
         path: String,
         entries: Vec<Entry>,
     },
@@ -76,6 +84,8 @@ struct Tab {
     pending_input: VecDeque<Vec<u8>>,
     pending_bytes: usize,
     forwards: Vec<ActiveForward>,
+    navigation: Stamp,
+    navigation_cancel: CancellationToken,
 }
 impl Tab {
     fn new(label: String) -> Self {
@@ -99,7 +109,24 @@ impl Tab {
             pending_input: VecDeque::new(),
             pending_bytes: 0,
             forwards: vec![],
+            navigation: Stamp::default(),
+            navigation_cancel: CancellationToken::new(),
         }
+    }
+    fn begin_navigation(&mut self) -> (Stamp, CancellationToken) {
+        self.navigation_cancel.cancel();
+        self.navigation_cancel = self.cancel.child_token();
+        self.navigation = Stamp::default();
+        (self.navigation.clone(), self.navigation_cancel.clone())
+    }
+    fn apply_listing(&mut self, navigation: Stamp, path: String, entries: Vec<Entry>) -> bool {
+        if self.navigation != navigation {
+            return false;
+        }
+        self.path = path;
+        self.entries = entries;
+        self.selected = None;
+        true
     }
     fn send(&mut self, bytes: Vec<u8>) {
         if self.pending_bytes + bytes.len() > 1024 * 1024 {
@@ -176,6 +203,9 @@ struct App {
     editor_tx: mpsc::Sender<EditorEvent>,
     confirm_exit: bool,
     allow_close: bool,
+    browser: Browser,
+    file_events: mpsc::Receiver<FileEvent>,
+    file_tx: mpsc::Sender<FileEvent>,
 }
 impl App {
     fn new(
@@ -209,6 +239,7 @@ impl App {
         };
         let (interaction, requests) = Interaction::new();
         let (editor_tx, editor_events) = mpsc::channel(8);
+        let (file_tx, file_events) = mpsc::channel(16);
         let (tx, events) = mpsc::channel(128);
         let (local_tx, local_events) = mpsc::channel(128);
         let (progress_tx, progress) = mpsc::channel(128);
@@ -240,6 +271,9 @@ impl App {
             editor_tx,
             confirm_exit: false,
             allow_close: false,
+            browser: Browser::default(),
+            file_events,
+            file_tx,
         };
         if let Some(path) = edit {
             app.load_local_editor(path);
@@ -247,12 +281,15 @@ impl App {
         Ok(app)
     }
     fn connect(&mut self) {
-        let tab = Tab::new(if self.profile.name.is_empty() {
+        let mut tab = Tab::new(if self.profile.name.is_empty() {
             self.profile.host.clone()
         } else {
             self.profile.name.clone()
         });
         let profile = self.profile.clone();
+        if !profile.initial_path.is_empty() {
+            tab.path = profile.initial_path.clone();
+        }
         let stamp = tab.stamp.clone();
         let cancel = tab.cancel.clone();
         let known = self.snapshot.known_hosts.clone();
@@ -329,6 +366,7 @@ impl App {
                 | Message::Connected { stamp, .. }
                 | Message::Data { stamp, .. }
                 | Message::Error { stamp, .. }
+                | Message::DirectoryError { stamp, .. }
                 | Message::Entries { stamp, .. }
                 | Message::Done { stamp, .. } => stamp,
             };
@@ -356,7 +394,8 @@ impl App {
                     tab.input = Some(input);
                     tab.resize = Some(resize);
                     tab.status = "接続済み".into();
-                    self.browse(index, ".".into());
+                    let initial = self.tabs[index].path.clone();
+                    self.browse(index, initial);
                 }
                 Message::Data { bytes, .. } => {
                     let tab = &mut self.tabs[index];
@@ -366,11 +405,23 @@ impl App {
                     }
                 }
                 Message::Error { message, .. } => self.tabs[index].status = message,
-                Message::Entries { path, entries, .. } => {
+                Message::DirectoryError {
+                    navigation,
+                    message,
+                    ..
+                } => {
+                    if self.tabs[index].navigation == navigation {
+                        self.notice = message;
+                    }
+                }
+                Message::Entries {
+                    path,
+                    entries,
+                    navigation,
+                    ..
+                } => {
                     let tab = &mut self.tabs[index];
-                    tab.path = path;
-                    tab.entries = entries;
-                    tab.selected = None;
+                    tab.apply_listing(navigation, path, entries);
                 }
                 Message::Done { message, .. } => self.notice = message,
             }
@@ -396,39 +447,48 @@ impl App {
             }
         }
         while let Ok(progress) = self.progress.try_recv() {
-            self.notice = format!("転送 {} / {} バイト", progress.done, progress.total);
+            self.file_progress(&progress);
+            self.notice = format!(
+                "処理中のファイル {} / {} バイト",
+                progress.done, progress.total
+            );
         }
     }
-    fn browse(&self, index: usize, path: String) {
-        let Some(tab) = self.tabs.get(index) else {
+    fn browse(&mut self, index: usize, path: String) {
+        let Some(tab) = self.tabs.get_mut(index) else {
             return;
         };
         let Some(nav) = tab.nav.clone() else {
             return;
         };
+        let Some(session) = tab.session.clone() else {
+            return;
+        };
+        let (navigation, cancel) = tab.begin_navigation();
         let stamp = tab.stamp.clone();
-        let cancel = tab.cancel.clone();
         let tx = self.tx.clone();
         self.runtime.spawn(async move {
             let nav = nav.lock().await;
             let result = async {
                 let path = nav.canonicalize(path).await?;
-                let entries = transfer::list(&nav, &path, &cancel).await?;
+                let entries = transfer::list_bounded(&session, &path, &cancel).await?;
                 anyhow::Ok((path, entries))
             }
             .await;
             let event = match result {
                 Ok((path, entries)) => Message::Entries {
                     stamp,
+                    navigation,
                     path,
                     entries,
                 },
-                Err(error) => Message::Error {
+                Err(error) => Message::DirectoryError {
                     stamp,
+                    navigation,
                     message: error.to_string(),
                 },
             };
-            let _ = tx.send(event).await;
+            tokio::select! { biased; _=cancel.cancelled()=>{},_=tx.send(event)=>{} }
         });
     }
     fn save_profile(&mut self) {
@@ -453,77 +513,6 @@ impl App {
             }
             Err(error) => self.notice = error.to_string(),
         }
-    }
-    fn transfer(&mut self, upload: bool) {
-        let Some(tab) = self.tabs.get(self.active) else {
-            return;
-        };
-        let Some(xfer) = tab.xfer.clone() else {
-            return;
-        };
-        let stamp = tab.stamp.clone();
-        let cancel = tab.cancel.child_token();
-        let path = tab.path.clone();
-        let selected = tab.selected.and_then(|i| tab.entries.get(i)).cloned();
-        let tx = self.tx.clone();
-        let progress = self.progress_tx.clone();
-        let local = if upload {
-            rfd::FileDialog::new().pick_file()
-        } else {
-            rfd::FileDialog::new()
-                .set_file_name(
-                    selected
-                        .as_ref()
-                        .map(|e| e.name.as_str())
-                        .unwrap_or("download.bin"),
-                )
-                .save_file()
-        };
-        let Some(local) = local else {
-            return;
-        };
-        let remote = if upload {
-            format!(
-                "{}/{}",
-                path.trim_end_matches('/'),
-                local
-                    .file_name()
-                    .map(|s| s.to_string_lossy())
-                    .unwrap_or_default()
-            )
-        } else {
-            let Some(selected) = selected else {
-                return;
-            };
-            if selected.directory {
-                self.notice = "再帰転送は実装中です".into();
-                return;
-            }
-            selected.path
-        };
-        self.runtime.spawn(async move {
-            let xfer = xfer.lock().await;
-            let job = stamp.generation.clone();
-            let result = if upload {
-                transfer::upload(&xfer, &local, &remote, false, &job, &progress, &cancel).await
-            } else {
-                transfer::download(
-                    &xfer,
-                    &remote,
-                    &local,
-                    transfer::DownloadPolicy::default(),
-                    &job,
-                    &progress,
-                    &cancel,
-                )
-                .await
-            };
-            let message = match result {
-                Ok(()) => "転送完了".into(),
-                Err(error) => error.to_string(),
-            };
-            let _ = tx.send(Message::Done { stamp, message }).await;
-        });
     }
     fn auth_dialog(&mut self, ctx: &egui::Context) {
         let Some(request) = self.pending.first().cloned() else {
@@ -611,10 +600,12 @@ impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         self.process();
         self.process_editors();
+        self.process_files();
         ctx.request_repaint_after(Duration::from_millis(16));
     }
     fn ui(&mut self, ui: &mut egui::Ui, _: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.reset_file_drop();
         egui::Panel::top("header").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("Hashi Rust プレビュー");
@@ -623,6 +614,10 @@ impl eframe::App for App {
                 }
                 if ui.button("ローカル編集").clicked() {
                     self.open_local_editor();
+                }
+                if ui.button("ファイル・転送").clicked() {
+                    self.browser.open = true;
+                    self.refresh_local(std::env::current_dir().unwrap_or_default());
                 }
                 if ui.button("ポート転送").clicked() {
                     self.forward_editor.open = true;
@@ -727,51 +722,13 @@ impl eframe::App for App {
                 return;
             };
             let status = tab.status.clone();
-            let entries = tab.entries.clone();
-            let path = tab.path.clone();
+
             let has_sftp = tab.nav.is_some();
             ui.label(status);
             if has_sftp {
                 egui::Panel::right("files")
                     .default_size(330.0)
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            if ui.button("親へ").clicked() {
-                                self.browse(self.active, format!("{path}/.."));
-                            }
-                            if ui.button("更新").clicked() {
-                                self.browse(self.active, path.clone());
-                            }
-                            if ui.button("送信").clicked() {
-                                self.transfer(true);
-                            }
-                            if ui.button("編集").clicked() {
-                                self.open_remote_editor();
-                            }
-                            if ui.button("受信").clicked() {
-                                self.transfer(false);
-                            }
-                        });
-                        ui.label(path);
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            for (index, entry) in entries.iter().enumerate() {
-                                let response = ui.selectable_label(
-                                    self.tabs[self.active].selected == Some(index),
-                                    format!(
-                                        "{} {}",
-                                        if entry.directory { "[dir]" } else { "[file]" },
-                                        entry.name
-                                    ),
-                                );
-                                if response.clicked() {
-                                    self.tabs[self.active].selected = Some(index);
-                                }
-                                if response.double_clicked() && entry.directory {
-                                    self.browse(self.active, entry.path.clone());
-                                }
-                            }
-                        });
-                    });
+                    .show(ui, |ui| self.remote_file_panel(ui));
             }
             egui::CentralPanel::default().show(ui, |ui| {
                 if let Some(tab) = self.tabs.get_mut(self.active) {
@@ -782,10 +739,13 @@ impl eframe::App for App {
         self.auth_dialog(&ctx);
         self.forward_dialog(&ctx);
         self.editor_windows(&ctx);
+        self.file_windows(&ctx);
+        self.dropped_files(&ctx);
     }
 }
 impl Drop for App {
     fn drop(&mut self) {
+        self.cancel_files();
         for tab in &self.tabs {
             tab.cancel.cancel();
         }
@@ -820,6 +780,18 @@ fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn old_navigation_cannot_replace_the_new_directory() {
+        let mut tab = Tab::new("試験".into());
+        let (old, old_cancel) = tab.begin_navigation();
+        let (current, current_cancel) = tab.begin_navigation();
+        assert!(old_cancel.is_cancelled());
+        assert!(!current_cancel.is_cancelled());
+        assert!(!tab.apply_listing(old, "/old".into(), vec![]));
+        assert_eq!(tab.path, ".");
+        assert!(tab.apply_listing(current, "/new".into(), vec![]));
+        assert_eq!(tab.path, "/new");
+    }
     #[tokio::test]
     async fn bounded_terminal_input_preserves_order_when_channel_is_full() {
         let mut tab = Tab::new("試験".into());

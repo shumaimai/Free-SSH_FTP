@@ -574,6 +574,15 @@ impl SshSession {
         bail!("接続先がありません")
     }
 
+    pub async fn raw_sftp(&self) -> Result<Arc<russh_sftp::client::RawSftpSession>> {
+        let channel = self.connection.channel_open_session().await?;
+        channel.request_subsystem(true, "sftp").await?;
+        let session = Arc::new(russh_sftp::client::RawSftpSession::new(
+            channel.into_stream(),
+        ));
+        session.init().await?;
+        Ok(session)
+    }
     pub async fn sftp(&self) -> Result<SftpSession> {
         let channel = self.connection.channel_open_session().await?;
         channel.request_subsystem(true, "sftp").await?;

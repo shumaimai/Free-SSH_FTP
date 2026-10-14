@@ -15,9 +15,9 @@ Issue #170の完了条件をこの表で省略しない。候補に存在する�
 | ローカル端末 | portable-pty、Windows JobObject、専用入力スレッド、bounded出力 | ConPTY Windows CI、子孫/連続終了/高負荷の検証 |
 | 端末解析・描画 | alacritty、UTF-8分割、全角、代替画面、履歴、選択コピー、IME導線 | IME・絵文字/結合文字・リフロー実機、検索・URL・右クリック・マウス報告 |
 | 端末安全性 | OSC52拒否、OSC8機能起動なし、入力/出力queue上限 | 全制御列fuzz、大量結合文字のメモリ上限、故障注入 |
-| SFTP一覧/単一ファイル転送 | nav/xfer別、32KiB、fsync、明示overwrite、prefix照合resume、取消 | 再帰コピー、転送queue・進捗/取消/overwrite導線、symlink/名前互換 |
-| リモート再帰削除 | 確認語delete、lstat、リンク追跡なし、安全な子名 | UI導線と権限/名前/失敗行列 |
-| デュアルペイン・W端末 | 未実装 | 同期ブラウズ・D&D・ブックマーク・再接続・接続モード |
+| SFTP一覧/転送 | nav/xfer別、bounded raw一覧、32KiB、双方向prefix resume、再帰コピー、キュー/進捗/取消/既存policy | 非POSIXサーバー・名前・リンク・失敗行列、個別overwrite確認、転送metadata保持 |
+| リモート再帰削除 | 確認語deleteのGUI、lstat、リンク追跡なし、安全な子名 | 権限・名前・失敗行列 |
+| デュアルペイン・W端末 | local/remote二つの一覧、drop送信導線、既存bookmarks形式 | 同期ブラウズ、実D&D、bookmark削除、W端末、再接続・接続モード |
 | 編集・ログ・snippets | text/固定長hex、BOM/UTF16 byte order/改行、検索/全置換、軽量highlight、local atomic/SFTP POSIX rename、保存失敗時dirty保持 | 行番号/行移動/折返し/全ショートカット、ACL/ハードリンク、8MiB性能、ログ/snippets UI |
 | 権限・サーバー設定 | 未実装 | chmod前のfsync journal、参照数、sudo、深い順復元、sshd/netplan rollback |
 | P2P・Google Drive同期 | 暗号v1契約のみ | X25519/SAS、通信、Google Drive現行backend、秘密同期と衝突処理 |
@@ -47,3 +47,10 @@ agent試験は合成鍵を入れた専用ssh-agentを使い、利用者のagent�
 この照合は他アプリを排他ロックする仕組みではなく、最後の照合とrename間の競合は残る。
 POSIX rename未対応のSFTPサーバーでは、元ファイルを保全して保存を拒否する。
 ACL/extended attributes/hard linkの完全保持と権限緩和はこの候補では未対応。
+
+SFTP一覧はraw READDIRの途中で100,000件/16MiBの上限を適用し、一覧要求ごとのIDで
+古い結果を破棄する。再帰転送は深さ256・件数100,000・パス待ち行列16MiBを上限にする。
+リンクは追跡しない。検索結果は10,000件/16MiBまで。GUIの転送は128件・同時4接続までで、
+同じ接続の転送を順に進める。既存ファイルpolicyは追加時に固定し、標準は上書きしない。
+フォルダ全体のトランザクションではなく、取消後の転送済み/部分ファイルは保持する。
+最終照合後の外部変更競合、全階層のreparse防御、属性完全保持は継続検証する。

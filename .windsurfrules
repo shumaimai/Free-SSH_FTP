@@ -413,3 +413,7 @@ ruff check .
 
 - RustエディタのBOM/endian/改行/HEX固定長を保つ。保存失敗・結果不明はdirtyと編集内容を残す。
 - Rustリモート編集はPOSIX rename未対応を変更前に拒否し、外部変更を照合する。権限緩和を無断で追加しない。
+
+- Rust SFTP一覧の要求ID/取消/件数・bytes上限を維持する。navの取消をxferへ波及させない。
+- Rust再帰転送はリンク追跡と転送先リンク上書きを拒否する。既存policyは追加時に固定し、取消で部分ファイルを勝手に削除しない。
+- Rust一覧の全Stringを毎frame複製しない。dropは対象領域/layerを照合し一度だけ消費する。
