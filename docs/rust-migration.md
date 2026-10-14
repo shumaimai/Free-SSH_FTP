@@ -101,3 +101,10 @@ Linuxでは管理下loopback OpenSSHへの実鍵認証、exec、1MiBの転送往
 WindowsはCIのConPTY・ビルド検証を進め、実機のIME・DPI・資格情報バックエンド検証は
 保留のまま記録する。russhが使うssh-key/RSA依存にはRC版が含まれるため、
 全面的な暗号互換の採用判断は互換マトリクスの検証後に行う。
+
+SSH設定は標準の`~/.ssh/config`を読み、HostName/User/Port/IdentityFile/ProxyJump/ForwardAgentを解決する。
+踏み台はそれぞれのIdentityFile、agent、専用passwordを使う。接続先の秘密は使い回さない。
+GUIの「ポート転送」から-L/-R/-Dを開始/停止できる。初期の待受は127.0.0.1で、
+公開アドレスへの変更は利用者が選ぶ。SOCKS5は認証なしのCONNECTだけに対応する。
+独立execには開始から終了まで共通の締切があり、締切/取消は専用チャネルだけを閉じる。
+遠隔プロセスが確実に終了したとは返さない。

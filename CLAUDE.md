@@ -528,3 +528,8 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - nav/xferは別のSFTPチャネル。32KiB単位で取消を見て、prefetchも1本に抑える。
 - Rust候補は旧版保存先に書かない。Windows CI artifactはdebug候補で、安定配布ではない。
   残る全機能は`docs/rust-compatibility.md`で追う。Windows実機のIME/DPIは未検証を維持する。
+
+- RustのSSH設定解決では未対応ProxyCommand/Match/Includeを黙って無視しない。
+  踏み台の秘密は接続先と分離する。agent転送は選んだ最終接続だけで、同時要求数を制限する。
+- -L/-R/-Dの取消は所有チャネルだけへ適用する。遠隔forwardを削除する前に経路を無効化し、
+  停止通信の失敗は未確認として画面へ返す。exec締切は開始から終了まで共通にする。

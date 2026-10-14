@@ -1,6 +1,8 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+mod forward_view;
 mod terminal_view;
 use eframe::egui;
+use forward_view::{ActiveForward, ForwardEditor};
 use hashi_core::{
     interaction::{Challenge, Interaction, Reply, Request, Stamp},
     local::{LocalTerminal, TerminalEvent},
@@ -21,6 +23,10 @@ use tokio::{runtime::Runtime, sync::mpsc};
 use tokio_util::sync::CancellationToken;
 type Sftp = Arc<tokio::sync::Mutex<russh_sftp::client::SftpSession>>;
 enum Message {
+    ForwardReady {
+        stamp: Stamp,
+        handle: ActiveForward,
+    },
     Connected {
         stamp: Stamp,
         session: Arc<SshSession>,
@@ -66,6 +72,7 @@ struct Tab {
     selection_start: Option<(i32, usize)>,
     pending_input: VecDeque<Vec<u8>>,
     pending_bytes: usize,
+    forwards: Vec<ActiveForward>,
 }
 impl Tab {
     fn new(label: String) -> Self {
@@ -88,6 +95,7 @@ impl Tab {
             selection_start: None,
             pending_input: VecDeque::new(),
             pending_bytes: 0,
+            forwards: vec![],
         }
     }
     fn send(&mut self, bytes: Vec<u8>) {
@@ -158,6 +166,7 @@ struct App {
     progress_tx: mpsc::Sender<Progress>,
     notice: String,
     startup_error: bool,
+    forward_editor: ForwardEditor,
 }
 impl App {
     fn new(cc: &eframe::CreationContext<'_>) -> anyhow::Result<Self> {
@@ -211,6 +220,7 @@ impl App {
             progress_tx,
             notice,
             startup_error,
+            forward_editor: ForwardEditor::default(),
         })
     }
     fn connect(&mut self) {
@@ -292,7 +302,8 @@ impl App {
                 break;
             };
             let stamp = match &event {
-                Message::Connected { stamp, .. }
+                Message::ForwardReady { stamp, .. }
+                | Message::Connected { stamp, .. }
                 | Message::Data { stamp, .. }
                 | Message::Error { stamp, .. }
                 | Message::Entries { stamp, .. }
@@ -302,6 +313,11 @@ impl App {
                 continue;
             };
             match event {
+                Message::ForwardReady { handle, .. } => {
+                    if !self.tabs[index].cancel.is_cancelled() {
+                        self.tabs[index].forwards.push(handle);
+                    }
+                }
                 Message::Connected {
                     session,
                     nav,
@@ -581,6 +597,9 @@ impl eframe::App for App {
                 if ui.button("ローカルCMD").clicked() {
                     self.local();
                 }
+                if ui.button("ポート転送").clicked() {
+                    self.forward_editor.open = true;
+                }
             });
         });
         egui::Panel::left("profiles")
@@ -632,6 +651,10 @@ impl eframe::App for App {
                         }
                     }
                 }
+                ui.checkbox(
+                    &mut self.profile.agent_forwarding,
+                    "エージェント転送（接続先に署名を許可）",
+                );
                 ui.label("踏み台（ProxyJump）");
                 ui.text_edit_singleline(&mut self.profile.proxy_jump);
                 ui.horizontal(|ui| {
@@ -727,6 +750,7 @@ impl eframe::App for App {
             });
         });
         self.auth_dialog(&ctx);
+        self.forward_dialog(&ctx);
     }
 }
 impl Drop for App {

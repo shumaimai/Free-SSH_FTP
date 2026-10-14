@@ -1,4 +1,5 @@
 use crate::interaction::{Challenge, Interaction, Reply, Scope, Stamp};
+use crate::ssh_config;
 use anyhow::{bail, Context, Result};
 use hashi_storage::config::{HostKey, KnownHosts, Profile};
 use russh::{
@@ -17,6 +18,9 @@ use std::{
 use tokio_util::sync::CancellationToken;
 
 pub struct Handler {
+    remote_routes: crate::forward::Routes,
+    agent_forwarding: bool,
+    agent_slots: Arc<tokio::sync::Semaphore>,
     scope: Scope,
     interaction: Interaction,
     known: Arc<Mutex<KnownHosts>>,
@@ -25,6 +29,58 @@ pub struct Handler {
 }
 impl client::Handler for Handler {
     type Error = anyhow::Error;
+    async fn server_channel_open_agent_forward(
+        &mut self,
+        channel: russh::Channel<client::Msg>,
+        reply: russh::client::ChannelOpenHandle,
+        _session: &mut client::Session,
+    ) -> Result<()> {
+        if !self.agent_forwarding || self.cancel.is_cancelled() {
+            return Ok(());
+        }
+        let Ok(permit) = self.agent_slots.clone().try_acquire_owned() else {
+            return Ok(());
+        };
+        let agent = tokio::select! { _ = self.cancel.cancelled() => return Ok(()), result = tokio::time::timeout(Duration::from_secs(10), connect_agent()) => result?? };
+        let mut stream = agent.into_inner();
+        reply.accept().await;
+        let cancel = self.cancel.clone();
+        tokio::spawn(async move {
+            let _permit = permit;
+            let mut channel = channel.into_stream();
+            tokio::select! { _ = cancel.cancelled() => {}, _ = tokio::io::copy_bidirectional(&mut channel, &mut stream) => {} }
+        });
+        Ok(())
+    }
+
+    async fn server_channel_open_forwarded_tcpip(
+        &mut self,
+        channel: russh::Channel<client::Msg>,
+        address: &str,
+        port: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        reply: client::ChannelOpenHandle,
+        _session: &mut client::Session,
+    ) -> Result<()> {
+        let route = self
+            .remote_routes
+            .lock()
+            .map_err(|_| anyhow::anyhow!("フォワード台帳が不正です"))?
+            .get(&(address.to_owned(), port))
+            .cloned();
+        let Some(route) = route else {
+            return Ok(());
+        };
+        if self.cancel.is_cancelled() || route.cancel.is_cancelled() {
+            return Ok(());
+        }
+        let Ok(slot) = self.agent_slots.clone().try_acquire_owned() else {
+            return Ok(());
+        };
+        tokio::spawn(crate::forward::accept_remote(channel, reply, route, slot));
+        Ok(())
+    }
     async fn check_server_key(&mut self, key: &PublicKeyOrCertificate) -> Result<bool> {
         if matches!(key, PublicKeyOrCertificate::Certificate(_)) {
             bail!("SSHホスト証明書は未対応です");
@@ -58,10 +114,15 @@ impl client::Handler for Handler {
                 accept: true,
                 confirmation,
             } if old.is_none() || confirmation == "trust" => {
+                let host = format!("{}:{}", self.scope.host, self.scope.port);
                 self.accepted
                     .lock()
                     .map_err(|_| anyhow::anyhow!("信頼情報を更新できません"))?
-                    .insert(format!("{}:{}", self.scope.host, self.scope.port), key);
+                    .insert(host.clone(), key.clone());
+                self.known
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("信頼情報を更新できません"))?
+                    .insert(host, key);
                 Ok(true)
             }
             _ => Ok(false),
@@ -76,6 +137,35 @@ pub struct SshSession {
     hops: Vec<client::Handle<Handler>>,
     pub accepted: Arc<Mutex<KnownHosts>>,
     pub cancel: CancellationToken,
+    agent_forwarding: bool,
+    pub(crate) remote_routes: crate::forward::Routes,
+    pub(crate) forward_limits: Arc<tokio::sync::Semaphore>,
+}
+
+struct ConnectingHops {
+    connections: Vec<client::Handle<Handler>>,
+    cancel: CancellationToken,
+    finished: bool,
+}
+impl Drop for ConnectingHops {
+    fn drop(&mut self) {
+        if self.finished {
+            return;
+        }
+        self.cancel.cancel();
+        let mut connections = std::mem::take(&mut self.connections);
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                for connection in connections.iter_mut().rev() {
+                    let _ = tokio::time::timeout(
+                        Duration::from_secs(1),
+                        connection.disconnect(Disconnect::ByApplication, "Hashi: 接続中止", ""),
+                    )
+                    .await;
+                }
+            });
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -117,14 +207,14 @@ fn parse_hop(text: &str, username: &str) -> Result<Target> {
     } else {
         (host.into(), 22)
     };
-    if host.is_empty() || user.is_empty() || port == 0 {
+    if host.is_empty() || port == 0 {
         bail!("踏み台の接続先が不正です");
     }
     Ok(Target {
         host,
         port,
         username: user.into(),
-        auth_method: "agent".into(),
+        auth_method: "key".into(),
         key_path: String::new(),
     })
 }
@@ -180,11 +270,14 @@ async fn secret(
         .await?
     {
         Reply::Secret(secret) => Ok(secret),
-        _ => bail!("認証を取り消しました"),
+        _ => {
+            cancel.cancel();
+            bail!("認証を取り消しました");
+        }
     }
 }
 
-async fn authenticate(
+async fn authenticate_once(
     connection: &mut client::Handle<Handler>,
     target: &Target,
     scope: &Scope,
@@ -193,11 +286,19 @@ async fn authenticate(
 ) -> Result<()> {
     let accepted = match target.auth_method.as_str() {
         "password" => {
-            let password = secret(target, scope, "password", interaction, cancel).await?;
-            connection
-                .authenticate_password(&target.username, password)
-                .await?
-                .success()
+            let mut accepted = false;
+            for _ in 0..3 {
+                let password = secret(target, scope, "password", interaction, cancel).await?;
+                if connection
+                    .authenticate_password(&target.username, password)
+                    .await?
+                    .success()
+                {
+                    accepted = true;
+                    break;
+                }
+            }
+            accepted
         }
         "key" => {
             let path = if let Some(rest) = target.key_path.strip_prefix("~/") {
@@ -267,6 +368,46 @@ async fn authenticate(
     Ok(())
 }
 
+async fn authenticate(
+    connection: &mut client::Handle<Handler>,
+    target: &Target,
+    scope: &Scope,
+    interaction: &Interaction,
+    cancel: &CancellationToken,
+) -> Result<()> {
+    if scope.hop.is_none() {
+        return authenticate_once(connection, target, scope, interaction, cancel).await;
+    }
+    // 踏み台の設定鍵→agent→専用のpassword。接続先の秘密を使い回さない。
+    if !target.key_path.is_empty() {
+        let mut key = target.clone();
+        key.auth_method = "key".into();
+        if authenticate_once(connection, &key, scope, interaction, cancel)
+            .await
+            .is_ok()
+        {
+            return Ok(());
+        }
+        if cancel.is_cancelled() {
+            bail!("認証を取り消しました");
+        }
+    }
+    let mut agent = target.clone();
+    agent.auth_method = "agent".into();
+    if authenticate_once(connection, &agent, scope, interaction, cancel)
+        .await
+        .is_ok()
+    {
+        return Ok(());
+    }
+    if cancel.is_cancelled() {
+        bail!("認証を取り消しました");
+    }
+    let mut password = target.clone();
+    password.auth_method = "password".into();
+    authenticate_once(connection, &password, scope, interaction, cancel).await
+}
+
 pub async fn connect_agent(
 ) -> Result<AgentClient<Box<dyn russh::keys::agent::client::AgentStream + Send + Unpin>>> {
     #[cfg(unix)]
@@ -298,23 +439,67 @@ impl SshSession {
         interaction: Interaction,
         cancel: CancellationToken,
     ) -> Result<Self> {
+        let path = ssh_config::default_path();
+        Self::connect_with_config(profile, stamp, known, interaction, cancel, path.as_deref()).await
+    }
+    pub async fn connect_with_config(
+        profile: &Profile,
+        stamp: Stamp,
+        known: KnownHosts,
+        interaction: Interaction,
+        cancel: CancellationToken,
+        path: Option<&std::path::Path>,
+    ) -> Result<Self> {
+        let profile = match path {
+            Some(path) => ssh_config::resolve_at(profile, path)?,
+            None => profile.clone(),
+        };
         profile.validate()?;
         if profile.host.is_empty() || profile.username.is_empty() {
             bail!("ホストと利用者名を指定してください");
         }
         let known = Arc::new(Mutex::new(known));
         let accepted = Arc::new(Mutex::new(BTreeMap::new()));
+        let remote_routes = Arc::new(Mutex::new(BTreeMap::new()));
         let mut targets = vec![];
-        for hop in profile
-            .proxy_jump
-            .split(',')
-            .filter(|s| !s.trim().is_empty())
-        {
-            targets.push(parse_hop(hop.trim(), &profile.username)?);
+        if !profile.proxy_jump.trim().eq_ignore_ascii_case("none") {
+            for hop in profile
+                .proxy_jump
+                .split(',')
+                .filter(|s| !s.trim().is_empty())
+            {
+                let target = parse_hop(hop.trim(), "")?;
+                let hop = Profile {
+                    host: target.host,
+                    port: target.port,
+                    username: target.username,
+                    save_secrets: false,
+                    ..Default::default()
+                };
+                let hop = match path {
+                    Some(path) => ssh_config::resolve_at(&hop, path)?,
+                    None => hop,
+                };
+                if !hop.proxy_jump.is_empty() && !hop.proxy_jump.eq_ignore_ascii_case("none") {
+                    bail!("踏み台自身のProxyJumpは未対応です。カンマ区切りへ平坦化してください");
+                }
+                let mut target = Target::from(&hop);
+                if target.username.is_empty() {
+                    target.username = profile.username.clone();
+                }
+                targets.push(target);
+                if targets.len() > 8 {
+                    bail!("ProxyJumpは8段までです");
+                }
+            }
         }
-        targets.push(Target::from(profile));
+        targets.push(Target::from(&profile));
         let last = targets.len() - 1;
-        let mut hops: Vec<client::Handle<Handler>> = vec![];
+        let mut hops = ConnectingHops {
+            connections: vec![],
+            cancel: cancel.clone(),
+            finished: false,
+        };
         for (index, target) in targets.iter().enumerate() {
             let scope = Scope {
                 stamp: stamp.clone(),
@@ -335,6 +520,13 @@ impl SshSession {
                 Arc::new(config(&scope, &known_guard))
             };
             let handler = Handler {
+                remote_routes: if index == last {
+                    remote_routes.clone()
+                } else {
+                    Arc::new(Mutex::new(BTreeMap::new()))
+                },
+                agent_slots: Arc::new(tokio::sync::Semaphore::new(32)),
+                agent_forwarding: index == last && profile.agent_forwarding,
                 scope: scope.clone(),
                 interaction: interaction.clone(),
                 known: known.clone(),
@@ -342,7 +534,7 @@ impl SshSession {
                 accepted: accepted.clone(),
             };
             let future = async {
-                let mut connection = if let Some(previous) = hops.last() {
+                let mut connection = if let Some(previous) = hops.connections.last() {
                     let channel = previous
                         .channel_open_direct_tcpip(&target.host, target.port as u32, "127.0.0.1", 0)
                         .await?;
@@ -350,21 +542,34 @@ impl SshSession {
                 } else {
                     client::connect(config, (&*target.host, target.port), handler).await?
                 };
-                authenticate(&mut connection, target, &scope, &interaction, &cancel).await?;
+                if let Err(error) =
+                    authenticate(&mut connection, target, &scope, &interaction, &cancel).await
+                {
+                    let _ = tokio::time::timeout(
+                        Duration::from_secs(1),
+                        connection.disconnect(Disconnect::ByApplication, "Hashi: 認証中止", ""),
+                    )
+                    .await;
+                    return Err(error);
+                }
                 anyhow::Ok(connection)
             };
             let connection = tokio::select! { _=cancel.cancelled()=>bail!("接続を取り消しました"),result=tokio::time::timeout(Duration::from_secs(180),future)=>result.context("接続がタイムアウトしました")?? };
             if index == last {
+                hops.finished = true;
                 return Ok(Self {
                     stamp,
                     scope,
                     connection,
-                    hops,
+                    hops: std::mem::take(&mut hops.connections),
                     accepted,
                     cancel,
+                    agent_forwarding: profile.agent_forwarding,
+                    remote_routes,
+                    forward_limits: Arc::new(tokio::sync::Semaphore::new(32)),
                 });
             }
-            hops.push(connection);
+            hops.connections.push(connection);
         }
         bail!("接続先がありません")
     }
@@ -387,35 +592,54 @@ impl SshSession {
         channel
             .request_pty(true, "xterm-256color", cols, rows, 0, 0, &[])
             .await?;
+        if self.agent_forwarding {
+            channel.agent_forward(true).await?;
+        }
         channel.request_shell(true).await?;
         Ok(channel)
     }
     pub async fn execute(&self, command: &str) -> Result<(u32, Vec<u8>, Vec<u8>)> {
-        if command.len() > 256 * 1024 || command.contains('\0') {
-            bail!("コマンドの長さ/形式が不正です");
+        self.execute_with_timeout(command, Duration::from_secs(120))
+            .await
+    }
+    pub async fn execute_with_timeout(
+        &self,
+        command: &str,
+        timeout: Duration,
+    ) -> Result<(u32, Vec<u8>, Vec<u8>)> {
+        if command.len() > 256 * 1024
+            || command.contains('\0')
+            || timeout.is_zero()
+            || timeout > Duration::from_secs(3600)
+        {
+            bail!("コマンドの長さ/形式/締切が不正です");
         }
-        let mut channel = self.connection.channel_open_session().await?;
-        channel.exec(true, command).await?;
-        let mut stdout = vec![];
-        let mut stderr = vec![];
-        let mut code = None;
-        loop {
-            tokio::select! {
-                _=self.cancel.cancelled()=> { let _=channel.close().await;bail!("実行を取り消しました"); },
-                message=channel.wait()=>match message {
-                    Some(ChannelMsg::Data { data })=>stdout.extend_from_slice(&data),
-                    Some(ChannelMsg::ExtendedData { data,.. })=>stderr.extend_from_slice(&data),
-                    Some(ChannelMsg::ExitStatus { exit_status })=>code=Some(exit_status),
-                    Some(ChannelMsg::Close)|None=>break,
-                    _=>{},
-                },
-            }
-            if stdout.len() + stderr.len() > 8 * 1024 * 1024 {
-                let _ = channel.close().await;
-                bail!("実行出力が上限を超えました");
-            }
-        }
-        Ok((code.context("終了状態が届きませんでした")?, stdout, stderr))
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut channel = tokio::select! {
+            _ = self.cancel.cancelled() => bail!("実行を取り消しました"),
+            channel = tokio::time::timeout_at(deadline, self.connection.channel_open_session()) => channel.context("コマンド開始がタイムアウトしました")??,
+        };
+        let result = tokio::select! {
+            _ = self.cancel.cancelled() => Err(anyhow::anyhow!("実行を取り消しました")),
+            result = tokio::time::timeout_at(deadline, async {
+                channel.exec(true, command).await?;
+                let mut stdout = vec![]; let mut stderr = vec![]; let mut code = None;
+                while let Some(message) = channel.wait().await {
+                    match message {
+                        ChannelMsg::Data { data } => stdout.extend_from_slice(&data),
+                        ChannelMsg::ExtendedData { data, .. } => stderr.extend_from_slice(&data),
+                        ChannelMsg::ExitStatus { exit_status } => code = Some(exit_status),
+                        ChannelMsg::Close => break,
+                        _ => {},
+                    }
+                    if stdout.len() + stderr.len() > 8 * 1024 * 1024 { bail!("実行出力が上限を超えました"); }
+                }
+                anyhow::Ok((code.context("終了状態が届きませんでした")?, stdout, stderr))
+            }) => match result { Ok(result) => result, Err(_) => Err(anyhow::anyhow!("コマンドがタイムアウトしました（遠隔プロセスの終了は未確認）")) },
+        };
+        // 独立execの専用チャネルだけを閉じ、対話PTY/SFTP/Transportは維持する。
+        let _ = tokio::time::timeout(Duration::from_secs(1), channel.close()).await;
+        result
     }
     pub async fn close(&self) -> Result<()> {
         self.cancel.cancel();
@@ -442,7 +666,7 @@ mod tests {
             (hop.host.as_str(), hop.username.as_str(), hop.port),
             ("::1", "user", 2222)
         );
-        assert_eq!(hop.auth_method, "agent");
+        assert_eq!(hop.auth_method, "key");
         assert!(hop.key_path.is_empty());
         assert!(parse_hop("host:0", "target").is_err());
     }

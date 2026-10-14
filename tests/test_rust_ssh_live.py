@@ -13,8 +13,9 @@ from pathlib import Path
 import pytest
 
 
+@pytest.mark.parametrize("mode", ["direct", "alias", "two_hops", "agent_forward"])
 @pytest.mark.skipif(os.name == "nt", reason="この管理下OpenSSH fixtureはLinux用")
-def test_rust_auth_exec_sftp_and_resume_with_openssh(tmp_path):
+def test_rust_auth_exec_sftp_and_resume_with_openssh(tmp_path, mode):
     binary = os.environ.get("HASHI_RUST_SSH_BINARY")
     if not binary:
         pytest.skip("ビルド付きのSSH結合CIで実行")
@@ -46,6 +47,7 @@ LogLevel ERROR
 ''')
     process = subprocess.Popen([daemon, "-D", "-e", "-f", str(config)],
                                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    agent = None
     try:
         for _ in range(100):
             if process.poll() is not None:
@@ -61,10 +63,33 @@ LogLevel ERROR
                    "auth_method": "key", "key_path": str(tmp_path / "identity")}
         request = {"profile": profile, "expected_key": {"key_type": pub[0], "fingerprint": fingerprint},
                    "directory": str(tmp_path)}
-        result = subprocess.run([str(Path(binary).resolve())], input=json.dumps(request),
+        if mode in ("alias", "two_hops"):
+            client_config = tmp_path / 'ssh-config'
+            client_config.write_text(f"Host target hop\nHostName 127.0.0.1\nUser {getpass.getuser()}\nPort {port}\nIdentityFile {tmp_path / 'identity'}\n")
+            profile.update(host='target', port=22, username='', key_path='')
+            if mode == "two_hops":
+                profile['proxy_jump'] = 'hop,hop'
+            request['ssh_config'] = str(client_config)
+        runtime_env = os.environ.copy()
+        if mode == "agent_forward":
+            socket_path = tmp_path / 'agent.sock'
+            agent = subprocess.Popen(['ssh-agent', '-D', '-a', str(socket_path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            for _ in range(100):
+                if socket_path.exists():
+                    break
+                time.sleep(.02)
+            runtime_env['SSH_AUTH_SOCK'] = str(socket_path)
+            subprocess.run(['ssh-add', str(tmp_path / 'identity')], env=runtime_env, check=True,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+            profile['agent_forwarding'] = True
+            request['expected_agent_key'] = (tmp_path / 'identity.pub').read_text().split()[1]
+        result = subprocess.run([str(Path(binary).resolve())], input=json.dumps(request), env=runtime_env,
                                 capture_output=True, text=True, timeout=60)
         assert result.returncode == 0, result.stderr
         assert result.stdout.strip() == "ssh-sftp-verified"
     finally:
+        if agent is not None:
+            agent.terminate()
+            agent.wait(timeout=10)
         process.terminate()
         process.wait(timeout=10)

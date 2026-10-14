@@ -9,8 +9,9 @@ Issue #170の完了条件をこの表で省略しない。候補に存在する�
 | Profile/Settings/known_hosts/export | 全旧フィールド、atomic state、v1、追加のみmerge | 全設定UI、旧データ取り込み・ロールバックUI |
 | SSH/AI秘密・クラウド暗号 | 分離ファイル、scrypt/Fernet、WinVaultの2種類のTargetName | OSストア/暗号化ファイルの選択UI、実Python keyring双方互換 |
 | 日本語ネイティブGUI | eframe/egui、NotoSansJP、接続先フォーム、タブ | 旧UIの操作・テーマ・DPI互換、IME実機、終了中ワーカー回収 |
-| SSH認証・ホスト鍵 | key/password/agent、RSA SHA-2、公開鍵blob指紋、対象付き認証応答 | 全鍵形式・暗号行列、SSH config、踏み台の鍵/password、agent forwarding |
-| ProxyJump | 複数hopのdirect-tcpip、hop別ホスト鍵・agent認証 | Host alias、接続失敗時の全hop回収、実多段行列 |
+| SSH認証・ホスト鍵 | key/password/agent、RSA SHA-2、公開鍵blob指紋、対象付き認証応答 | 全鍵形式・暗号行列、Windows agent実環境、パスフレーズ再入力行列 |
+| ProxyJump | SSH configのHost解決、複数hop、鍵→agent→passwordの別認証、接続失敗時のhop回収 | Match/Includeの対応、全失敗行列、実運用の多段接続 |
+| ポート転送 | -L/-R/-D、SOCKS5 CONNECT、GUI開始/停止、限定経路、個別取消 | 実Windowsの全経路、停止通信失敗時の待受残存検証 |
 | ローカル端末 | portable-pty、Windows JobObject、専用入力スレッド、bounded出力 | ConPTY Windows CI、子孫/連続終了/高負荷の検証 |
 | 端末解析・描画 | alacritty、UTF-8分割、全角、代替画面、履歴、選択コピー、IME導線 | IME・絵文字/結合文字・リフロー実機、検索・URL・右クリック・マウス報告 |
 | 端末安全性 | OSC52拒否、OSC8機能起動なし、入力/出力queue上限 | 全制御列fuzz、大量結合文字のメモリ上限、故障注入 |
@@ -32,3 +33,9 @@ Issue #170の完了条件をこの表で省略しない。候補に存在する�
 - Windows実機は現在利用できないため、実装とCIを先に進める方針。
   CI成功はIME・DPI・物理入力・利用者環境の資格情報検証の代用にしない。
 - 起動時間・メモリ・配布サイズは未測定。旧版との優劣はまだ主張しない。
+
+SSH互換の追加段階は、HostName/User/Port/IdentityFile/ProxyJump/ForwardAgentを解決する。
+Profileの明示値を優先し、ProxyCommand、未対応のMatch/Includeは直接接続へ格下げせず拒否する。
+Linuxの合成OpenSSH環境でdirect/alias/2段hop/agent転送の4経路を確認する。
+全経路でexecの締切後の接続維持、-L/-R/-Dのデータ往復と停止後のSSH維持を確認する。
+agent試験は合成鍵を入れた専用ssh-agentを使い、利用者のagent鍵を使わない。
