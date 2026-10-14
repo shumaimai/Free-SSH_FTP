@@ -237,23 +237,41 @@ mod tests {
         let program = if cfg!(windows) { "cmd.exe" } else { "/bin/sh" };
         let mut terminal = LocalTerminal::spawn(program, &[], None, stamp.clone(), tx).unwrap();
         terminal.resize(100, 30).unwrap();
-        terminal.send(b"echo HASHI_PTY_TEST\r").unwrap();
+        let mut screen = hashi_terminal::Terminal::new(100, 30);
+        let mut sent = !cfg!(windows);
+        if sent {
+            terminal.send(b"echo HASHI_PTY_TEST\r").unwrap();
+        }
         let found = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-            let mut text = String::new();
             while let Some(event) = rx.recv().await {
                 if let TerminalEvent::Data { stamp: id, bytes } = event {
                     assert_eq!(id, stamp);
-                    text.push_str(&String::from_utf8_lossy(&bytes));
-                    if text.contains("HASHI_PTY_TEST") {
+                    screen.feed(&bytes);
+                    let replies = screen.replies();
+                    let handshake = !replies.is_empty();
+                    for reply in replies {
+                        terminal.send(&reply).unwrap();
+                    }
+                    // Windows ConPTYのINHERIT_CURSORはDSR応答を待ってから起動する。
+                    if cfg!(windows) && !sent && handshake {
+                        terminal.send(b"echo HASHI_PTY_TEST\r").unwrap();
+                        sent = true;
+                    }
+                    if screen.visible_text().iter().any(|line| {
+                        line.trim_end().ends_with("HASHI_PTY_TEST") && !line.contains("echo ")
+                    }) {
                         return true;
                     }
                 }
             }
             false
         })
-        .await
-        .unwrap();
-        assert!(found);
+        .await;
+        assert!(
+            matches!(found, Ok(true)),
+            "CMD/shell実行結果: {:?}",
+            screen.visible_text()
+        );
         terminal.close().unwrap();
     }
 }

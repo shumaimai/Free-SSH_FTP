@@ -1659,6 +1659,7 @@ dependencies = [
  "anyhow",
  "base64",
  "hashi-storage",
+ "hashi-terminal",
  "libc",
  "portable-pty",
  "russh",
