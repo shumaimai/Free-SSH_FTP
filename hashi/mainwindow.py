@@ -632,11 +632,13 @@ class SessionTab(QWidget):
 
     def __init__(self, session: SshSession, settings: Settings,
                  secret_ctx: SecretContext, parent=None, mode: str = "both",
-                 editor_hub=None):
+                 editor_hub=None, registry=None):
         super().__init__(parent)
         self.session = session
         self.settings = settings
         self.secret_ctx = secret_ctx
+        self.registry = registry
+        self.terminal_binding = None
         self.mode = mode                    # "both" / "ssh" / "sftp"(Issue #112)
         self._use_terminal = mode in ("both", "ssh")
         self._use_browser = mode in ("both", "sftp")
@@ -840,6 +842,11 @@ class SessionTab(QWidget):
         if self._use_terminal:
             ch = session.open_shell()
             self.terminal.attach(ch)
+            if self.registry is not None:
+                from .terminal_binding import TerminalBinding
+                self.terminal_binding = TerminalBinding(
+                    self.registry, self.terminal, label=session.profile.label(),
+                    kind="ssh", shell="posix", ssh_session=session)
             self.terminal.setFocus()
 
     # ---- ツールバー部品(#113 / 参考デザイン) -------------------------------
@@ -1139,6 +1146,9 @@ class SessionTab(QWidget):
         return True
 
     def shutdown(self):
+        if self.terminal_binding is not None:
+            self.terminal_binding.close()
+            self.terminal_binding = None
         for fw in self.tunnels:
             fw.stop()
         if self.browser is not None:
@@ -1159,6 +1169,8 @@ class SessionTab(QWidget):
                     rows=self.terminal.screen.lines,
                 )
                 self.terminal.attach(ch)
+                if self.terminal_binding is not None:
+                    self.terminal_binding.replace(ssh_session=session)
             except Exception:  # noqa: BLE001
                 logger.warning("ターミナル再接続に失敗", exc_info=True)
         if self.browser is not None:
@@ -1927,7 +1939,8 @@ class SessionPage(QWidget):
         if worker.used_password:
             ctx.note_login_password(worker.used_password)
         tab = SessionTab(session, self.settings, ctx, mode=self._mode,
-                         editor_hub=self._app.editor_hub)
+                         editor_hub=self._app.editor_hub,
+                         registry=self._app.session_registry)
         self.session_tab = tab
         # ツールバーからの依頼は既存のメニュー処理へ委譲する(ロジックを重複させない)
         tab.request_tunnel.connect(self._add_tunnel)
@@ -2322,6 +2335,8 @@ class AppWindow(_SharedOps, QMainWindow):
                 "snippets": SnippetStore(),
             }
         self._services = services
+        from .session_registry import SessionRegistry
+        self.session_registry = services.setdefault("session_registry", SessionRegistry())
         self.store = services["store"]
         self.known_hosts = services["known_hosts"]
         self.settings = services["settings"]

@@ -19,9 +19,9 @@ Python 3.10+ が必要です。
 ## テストと確認(PR の前に必ず)
 
 ```bash
-QT_QPA_PLATFORM=offscreen pytest        # ネットワーク不要(フェイク SSH 使用)
+QT_QPA_PLATFORM=offscreen PYTHON_KEYRING_BACKEND=keyring.backends.fail.Keyring pytest
 python -m compileall main.py hashi tools
-ruff check .                            # 参考(CI では落とさない)
+ruff check .                            # CI でも失敗を検出する
 ```
 
 - ヘッドレス環境で GUI を触るときは必ず `QT_QPA_PLATFORM=offscreen`。

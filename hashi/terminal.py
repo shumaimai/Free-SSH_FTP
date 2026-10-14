@@ -44,6 +44,7 @@ from wcwidth import wcwidth
 from . import style, themes
 from .dialogs import SnippetVariablesDialog
 from .snippets import expand_snippet
+from .terminal_backend import SshTerminalBackend
 
 logger = logging.getLogger(__name__)
 
@@ -105,8 +106,8 @@ _URL_TRIM_CHARS = ".,;:!?"
 
 class _ChannelBridge(QObject):
     """受信スレッド → GUI スレッドへのシグナル橋渡し。"""
-    data_received = Signal(object)   # bytes
-    channel_closed = Signal()
+    data_received = Signal(int, object)   # 接続世代、bytes
+    channel_closed = Signal(int)
 
 
 # 特殊キー → エスケープシーケンス
@@ -517,6 +518,8 @@ class TerminalWidget(QWidget):
     session_closed = Signal()
     title_changed = Signal(str)
     password_prompt = Signal(str)   # sudo/パスワードプロンプト検知 (種別文字列)
+    output_received = Signal(bytes)
+    focused = Signal()
 
     # パスワード入力を求めるプロンプトのパターン (行末付近で一致)
     _PW_PATTERNS = [
@@ -537,9 +540,10 @@ class TerminalWidget(QWidget):
         self.setCursor(Qt.IBeamCursor)
 
         self._channel = None
+        self._connection_epoch = 0
         self._bridge = _ChannelBridge()
-        self._bridge.data_received.connect(self._on_data)
-        self._bridge.channel_closed.connect(self._on_closed)
+        self._bridge.data_received.connect(self._receive_data)
+        self._bridge.channel_closed.connect(self._receive_closed)
         self._reader: threading.Thread | None = None
         self._closed = False
 
@@ -724,24 +728,36 @@ class TerminalWidget(QWidget):
 
     # ---- チャネル接続 -------------------------------------------------------
     def attach(self, channel):
-        self._channel = channel
+        if self._channel is not None:
+            self.detach()
+        self._connection_epoch += 1
+        self._channel = (channel if getattr(channel, "is_terminal_backend", False)
+                         else SshTerminalBackend(channel))
         self._closed = False
-        self._reader = threading.Thread(target=self._read_loop, daemon=True)
+        self._reader = threading.Thread(
+            target=self._read_loop, args=(self._channel, self._connection_epoch), daemon=True)
         self._reader.start()
         self._recalc_grid()
 
-    def _read_loop(self):
-        ch = self._channel
+    def _read_loop(self, ch, epoch):
         try:
             while True:
                 data = ch.recv(8192)
                 if not data:
                     break
-                self._bridge.data_received.emit(data)
+                self._bridge.data_received.emit(epoch, data)
         except Exception:
             logger.debug("ターミナル受信ループが例外で終了 (チャネルクローズ)",
                          exc_info=True)
-        self._bridge.channel_closed.emit()
+        self._bridge.channel_closed.emit(epoch)
+
+    def _receive_data(self, epoch: int, data: bytes):
+        if epoch == self._connection_epoch and not self._closed:
+            self._on_data(data)
+
+    def _receive_closed(self, epoch: int):
+        if epoch == self._connection_epoch and not self._closed:
+            self._on_closed()
 
     def _on_data(self, data: bytes):
         try:
@@ -751,6 +767,7 @@ class TerminalWidget(QWidget):
         if self._session_log is not None:
             self._session_log.write_screen(self.screen)
         self._dirty = True
+        self.output_received.emit(data)
 
     def _on_closed(self):
         self._closed = True
@@ -872,6 +889,10 @@ class TerminalWidget(QWidget):
         super().showEvent(ev)
         # 非表示中に届いたサイズ変更は捨てているので、表示時点の実サイズで取り直す
         self._recalc_grid()
+
+    def focusInEvent(self, ev):
+        super().focusInEvent(ev)
+        self.focused.emit()
 
     def sizeHint(self) -> QSize:
         return QSize(int(self._cw * 80), int(self._chh * 24))
@@ -1487,6 +1508,7 @@ class TerminalWidget(QWidget):
     # ---- 後始末 --------------------------------------------------------------
     def detach(self):
         self._closed = True
+        self._connection_epoch += 1
         if self._session_log is not None:
             try:
                 self._session_log.flush_visible(self.screen)
@@ -1503,3 +1525,6 @@ class TerminalWidget(QWidget):
                 ch.close()
             except Exception:
                 logger.debug("ターミナルチャネルの close に失敗 (無視)", exc_info=True)
+        reader, self._reader = self._reader, None
+        if reader is not None and reader is not threading.current_thread():
+            reader.join(timeout=0.25)
