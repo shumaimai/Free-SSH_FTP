@@ -136,6 +136,8 @@ class Settings:
         "local_start_dir": "",          # ローカルペインの初期フォルダ(空 = ホーム)
         "local_terminal_start_dir": "", # CMDの開始フォルダ(空 = ホーム、対話後のcwdではない)
         "terminal_dual_pane": False,    # SSH/CMDのW端末。ファイル2ペインとは独立
+        "ai_api_kind": "openai",       # 認証方式の選択。秘密は別ストア
+        "ai_api_profiles": {},         # 方式別モデル/URL/ツール可否。秘密は含めない
         "sync_browse": False,           # 同期ブラウズ: 片方の移動を相手にも写す(#82 第 2 段)
     }
 

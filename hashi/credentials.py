@@ -32,12 +32,14 @@ _PROBE_TIMEOUT = 5.0
 class _FernetFile:
     """cryptography.Fernet による暗号化ファイルバックエンド。"""
 
-    def __init__(self):
+    def __init__(self, namespace=None):
         from cryptography.fernet import Fernet  # paramiko 依存で必ず存在
         self._Fernet = Fernet
         self.dir = config_dir()
-        self.key_path = self.dir / ".credkey"
-        self.data_path = self.dir / "creds.dat"
+        if namespace not in (None, "ai"):
+            raise ValueError("不正な秘密ストア名")
+        self.key_path = self.dir / (".aikey" if namespace else ".credkey")
+        self.data_path = self.dir / ("ai-secrets.dat" if namespace else "creds.dat")
         self._fernet = self._Fernet(self._load_or_create_key())
 
     def _load_or_create_key(self) -> bytes:
