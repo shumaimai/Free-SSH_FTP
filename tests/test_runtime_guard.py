@@ -227,4 +227,3 @@ def test_killed_rust_releases_guard_for_python(tmp_path, rust_binary):
         if rust.poll() is None:
             rust.kill()
             rust.wait(timeout=15)
-

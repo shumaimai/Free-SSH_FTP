@@ -180,12 +180,19 @@ fn process_start(pid: u32) -> io::Result<Option<String>> {
 #[cfg(windows)]
 fn process_start(pid: u32) -> io::Result<Option<String>> {
     use windows_sys::Win32::{
-        Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, FILETIME},
-        System::Threading::{GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION},
+        Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, FILETIME, WAIT_FAILED, WAIT_OBJECT_0},
+        System::Threading::{
+            GetProcessTimes, OpenProcess, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION,
+            PROCESS_SYNCHRONIZE,
+        },
     };
     // 読み取り専用のプロセス照会。アクセス拒否を死亡扱いしない。
     unsafe {
-        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        let handle = OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+            0,
+            pid,
+        );
         if handle.is_null() {
             let error = io::Error::last_os_error();
             return if error.raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32) {
@@ -193,6 +200,16 @@ fn process_start(pid: u32) -> io::Result<Option<String>> {
             } else {
                 Err(error)
             };
+        }
+        let wait = WaitForSingleObject(handle, 0);
+        if wait == WAIT_OBJECT_0 {
+            CloseHandle(handle);
+            return Ok(None);
+        }
+        if wait == WAIT_FAILED {
+            let error = io::Error::last_os_error();
+            CloseHandle(handle);
+            return Err(error);
         }
         let mut times: [FILETIME; 4] = std::mem::zeroed();
         let ptr = times.as_mut_ptr();
