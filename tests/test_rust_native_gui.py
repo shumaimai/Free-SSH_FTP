@@ -19,6 +19,8 @@ def test_native_editor_ctrl_s_preserves_bom_and_crlf(tmp_path):
     fixture = tmp_path / 'editor.py'
     fixture.write_bytes(b'\xef\xbb\xbfprint("hello")\r\n')
     runtime_env = os.environ.copy()
+    runtime_env.pop('WAYLAND_DISPLAY', None)
+    runtime_env.pop('WAYLAND_SOCKET', None)
     runtime_env.update(XDG_CONFIG_HOME=str(tmp_path / 'config'), LIBGL_ALWAYS_SOFTWARE='1')
     app = None
     with (tmp_path / 'xserver.log').open('w') as x_log, (tmp_path / 'app.log').open('w') as app_log:
