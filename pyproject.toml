@@ -27,6 +27,9 @@ dev = ["pytest>=8.0", "pyinstaller>=6.0", "ruff>=0.5"]
 [project.gui-scripts]
 hashi = "main:main"
 
+[project.scripts]
+hashi-mcp = "hashi.mcp_stdio:main"
+
 [project.urls]
 Homepage = "https://github.com/shumaimai/SSH.FTP-"
 Changelog = "https://github.com/shumaimai/SSH.FTP-/blob/main/CHANGELOG.md"

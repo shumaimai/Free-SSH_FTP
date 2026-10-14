@@ -14,6 +14,15 @@ from dataclasses import dataclass, field
 from .ssh_core import command_channel
 
 
+class _Cancellation(threading.Event):
+    def __init__(self, parent=None):
+        super().__init__()
+        self.parent = parent
+
+    def is_set(self):
+        return super().is_set() or (self.parent is not None and self.parent.is_set())
+
+
 @dataclass
 class Operation:
     id: str
@@ -64,6 +73,20 @@ class CommandBroker:
             for operation in self._active.values():
                 operation.cancel.set()
 
+    def cancel_operation(self, actor, operation_id):
+        with self._lock:
+            operation = self._active.get((actor, operation_id))
+            if operation is None:
+                return {"status": "not_running", "completion": "unknown"}
+            operation.cancel.set()
+            return {"status": "cancel_requested", "completion": "unknown"}
+
+    def cancel_actor(self, actor):
+        with self._lock:
+            for operation in self._active.values():
+                if operation.actor == actor:
+                    operation.cancel.set()
+
     def _check(self, sid, generation):
         entry = self.registry.resolve(sid, generation)
         if not entry.shareable:
@@ -85,13 +108,13 @@ class CommandBroker:
             return self.registry.read_output(sid, generation, limit)
 
     def perform(self, actor, action, sid, generation, *, text="", cwd=None,
-                request_id=None, timeout=30):
+                request_id=None, timeout=30, cancel=None):
         if action not in {"send_input", "run_command", "interrupt"}:
             raise ValueError("不明な端末操作")
         if not isinstance(text, str) or len(text) > 16000 or "\x00" in text:
             raise ValueError("入力が長すぎるか不正です")
         operation = Operation(request_id or uuid.uuid4().hex, actor, action, sid,
-                              generation, text, cwd)
+                              generation, text, cwd, _Cancellation(cancel))
         fingerprint = hashlib.sha256(repr((action, sid, generation, text, cwd)).encode()).hexdigest()
         key = (actor, operation.id)
         with self._lock:

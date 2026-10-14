@@ -7,6 +7,7 @@ GUI スレッドに問い合わせる。
 """
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
@@ -22,6 +23,8 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import QColor, QKeySequence
 from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
     QDockWidget,
     QFileDialog,
     QFrame,
@@ -35,6 +38,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QPlainTextEdit,
     QProgressBar,
     QPushButton,
     QSplitter,
@@ -2383,6 +2387,7 @@ class AppWindow(_SharedOps, QMainWindow):
         self.session_registry = services.setdefault("session_registry", SessionRegistry())
         from .command_broker import CommandBroker
         self.command_broker = services.setdefault("command_broker", CommandBroker(self.session_registry))
+        self.mcp_bridge = None
         self.store = services["store"]
         self.known_hosts = services["known_hosts"]
         self.settings = services["settings"]
@@ -2517,6 +2522,39 @@ class AppWindow(_SharedOps, QMainWindow):
             logger.warning("AI設定または認証情報を読み込めません")
             QMessageBox.warning(self, "AI接続設定", "設定または認証情報を読み込めませんでした")
 
+    def _mcp_settings(self):
+        from .mcp_bridge import McpBridge
+        try:
+            if self.mcp_bridge is None:
+                self.mcp_bridge = McpBridge(self.command_broker)
+            config = self.mcp_bridge.config()
+        except Exception:
+            logger.warning("MCP接続を開始できません")
+            QMessageBox.warning(self, "MCP接続", "接続を開始できません。HashiMCP.exeの配置とフォルダの権限を確認してください。")
+            return
+        self.ai_dock.show()
+        dialog = QDialog(self)
+        dialog.setWindowTitle("このHashiへのMCP接続")
+        dialog.resize(style.DIALOG_L, 400)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(style.plain_label("共有端末と実行モードをAI相談で選び、AI/MCP共有を適用してください。\n"
+                                          "この設定は現在のHashiが起動している間だけ有効です。"))
+        preview = QPlainTextEdit(json.dumps(config, ensure_ascii=False, indent=2))
+        preview.setReadOnly(True)
+        layout.addWidget(preview)
+        copy = QPushButton("接続設定をコピー")
+        copy.clicked.connect(lambda: QApplication.clipboard().setText(preview.toPlainText()))
+        layout.addWidget(copy)
+        stop = QPushButton("MCP接続を停止")
+        def stop_bridge():
+            self.ai_panel.stop()
+            self.mcp_bridge.close()
+            self.mcp_bridge = None
+            dialog.accept()
+        stop.clicked.connect(stop_bridge)
+        layout.addWidget(stop)
+        dialog.exec()
+
     def _on_page_title(self, page, title: str):
         idx = self.tabs.indexOf(page)
         if idx >= 0:
@@ -2628,6 +2666,7 @@ class AppWindow(_SharedOps, QMainWindow):
         act_minus.setShortcut("Ctrl+-")
         act_minus.triggered.connect(lambda: self._page_action("_font_delta", -1))
         m_view.addAction("AI相談", lambda: self.ai_dock.show())
+        m_view.addAction("MCP接続設定…", self._mcp_settings)
 
         self.m_sess = self.menuBar().addMenu("セッション")
         self.m_sess.addAction("ポートフォワードを追加…",
@@ -2723,6 +2762,9 @@ class AppWindow(_SharedOps, QMainWindow):
             if isinstance(w, (SessionPage, LocalTerminalPage)):
                 w.shutdown()
         self.command_broker.stop()
+        if self.mcp_bridge is not None:
+            self.mcp_bridge.close()
+            self.mcp_bridge = None
         AppWindow._instance = None
         ev.accept()
 

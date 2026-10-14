@@ -4,7 +4,7 @@ from __future__ import annotations
 import threading
 import uuid
 
-from PySide6.QtCore import QObject, Qt, QThread, Signal
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -83,6 +83,9 @@ class AiPanel(QWidget):
         self.mode.currentIndexChanged.connect(self.stop)
         self.sessions.itemChanged.connect(self.stop)
         controls.addWidget(self.mode)
+        apply = QPushButton("AI/MCP共有を適用")
+        apply.clicked.connect(self.apply_sharing)
+        controls.addWidget(apply)
         layout.addLayout(controls)
         self.transcript = QPlainTextEdit()
         self.transcript.setReadOnly(True)
@@ -120,6 +123,13 @@ class AiPanel(QWidget):
     def selected_targets(self):
         return [self.sessions.item(i).data(Qt.UserRole) for i in range(self.sessions.count())
                 if self.sessions.item(i).checkState() == Qt.Checked]
+
+    def apply_sharing(self):
+        try:
+            self.broker.configure(self.mode.currentData(), self.selected_targets())
+            self.transcript.appendPlainText("選択した端末をAI/MCPへ15分間共有しました。停止で取り消せます。")
+        except (ValueError, PermissionError) as exc:
+            self.transcript.appendPlainText(str(exc))
 
     def set_provider(self, provider):
         if self.worker is not None:
@@ -206,6 +216,10 @@ class AiPanel(QWidget):
         dialog.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         dialog.setDefaultButton(QMessageBox.No)
         self._approvals.append(dialog)
+        timer = QTimer(dialog)
+        timer.setInterval(100)
+        timer.timeout.connect(lambda: dialog.reject() if operation.cancel.is_set() else None)
+        timer.start()
         request["approved"] = dialog.exec() == QMessageBox.Yes
         self._approvals.remove(dialog)
         request["event"].set()

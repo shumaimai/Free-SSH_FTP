@@ -39,7 +39,7 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
-# onefile: バイナリ類を EXE に同梱(配布は単一 Hashi.exe)
+# GUI本体。MCPのstdoutは別のconsole-modeヘルパーが扱う。
 exe = EXE(
     pyz,
     a.scripts,
@@ -60,4 +60,14 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon="assets/hashi.ico",   # 橋モチーフの盾アイコン(assets/hashi.png が元画像)
+)
+
+mcp = Analysis(
+    ["tools/hashi_mcp.py"], pathex=[SPECPATH], binaries=[], datas=[],
+    hiddenimports=[], hookspath=[], hooksconfig={}, runtime_hooks=[],
+    excludes=["PySide6", "paramiko", "keyring"], noarchive=False,
+)
+mcp_exe = EXE(
+    PYZ(mcp.pure), mcp.scripts, mcp.binaries, mcp.datas, [], name="HashiMCP",
+    debug=False, strip=False, upx=True, console=True,
 )
