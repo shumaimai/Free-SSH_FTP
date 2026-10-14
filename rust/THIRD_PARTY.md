@@ -22,3 +22,5 @@ SIL Open Font License 1.1の本文を `crates/hashi-desktop-native/assets/OFL.tx
 SSH候補はrussh 0.64.1（ring/RSA/flate2）、SFTPはrussh-sftp 3.0.1、
 端末はalacritty_terminal 0.26.0、PTYはportable-pty 0.9.0、GUIはeframe 0.36.2。
 ネイティブ候補はPython/Qt/WebViewのランタイムを同梱しない。
+
+GUIの既定フォントはepaint_default_fonts/fontsのUbuntu Font License、SIL OFL、Hackとemoji-iconの各noticeもCI成果物へ同梱する。
