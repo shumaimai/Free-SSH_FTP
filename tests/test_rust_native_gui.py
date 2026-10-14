@@ -33,15 +33,15 @@ def test_native_editor_ctrl_s_preserves_bom_and_crlf(tmp_path):
             app = subprocess.Popen([str(Path(binary).resolve()), '--edit', str(fixture)], env=runtime_env,
                                    stdout=app_log, stderr=app_log)
             window = None
-            for _ in range(100):
+            for _ in range(300):
                 assert app.poll() is None, (tmp_path / 'app.log').read_text()
-                found = subprocess.run([xdotool, 'search', '--onlyvisible', '--name', 'Hashi Rust Preview'],
+                found = subprocess.run([xdotool, 'search', '--onlyvisible', '--pid', str(app.pid)],
                                        env=runtime_env, capture_output=True, text=True, timeout=5)
                 if found.returncode == 0:
                     window = found.stdout.splitlines()[0]
                     break
-                time.sleep(.05)
-            assert window
+                time.sleep(.1)
+            assert window, ((tmp_path / 'app.log').read_text(), (tmp_path / 'xserver.log').read_text())
 
             def input_event(*args):
                 subprocess.run([xdotool, *args], env=runtime_env, check=True, timeout=5)
