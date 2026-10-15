@@ -1,10 +1,11 @@
 //! Rust端末の解析・画面モデル。描画はGUIのアダプターで行う。
+pub use alacritty_terminal::term::TermMode;
 use alacritty_terminal::{
     event::{Event, EventListener},
     grid::{Dimensions, Scroll},
     index::{Column, Line, Point, Side},
     selection::{Selection, SelectionType},
-    term::{cell::Flags, Config, Osc52, TermMode},
+    term::{cell::Flags, Config, Osc52},
     vte::ansi::{Color, NamedColor, Processor},
     Term,
 };
@@ -77,6 +78,18 @@ pub struct Cell {
     pub underline: bool,
     pub inverse: bool,
     pub wide: bool,
+    pub selected: bool,
+}
+
+pub struct MouseInput {
+    pub button: u8,
+    pub column: usize,
+    pub row: usize,
+    pub release: bool,
+    pub motion: bool,
+    pub shift: bool,
+    pub alt: bool,
+    pub ctrl: bool,
 }
 
 pub struct Terminal {
@@ -110,7 +123,35 @@ impl Terminal {
         }
     }
     pub fn feed(&mut self, bytes: &[u8]) {
-        self.parser.advance(&mut self.term, bytes);
+        for byte in bytes {
+            self.parser
+                .advance(&mut self.term, std::slice::from_ref(byte));
+            // 結合文字は表示セルごとに32個まで。CSIで移動する前に上限を適用する。
+            let grid = self.term.grid_mut();
+            let point = grid.cursor.point;
+            let mut column = point.column;
+            if !grid.cursor.input_needs_wrap {
+                column.0 = column.0.saturating_sub(1);
+            }
+            if grid[point.line][column]
+                .flags
+                .contains(Flags::WIDE_CHAR_SPACER)
+            {
+                column.0 = column.0.saturating_sub(1);
+            }
+            let cell = &mut grid[point.line][column];
+            if cell.zerowidth().is_some_and(|extra| extra.len() > 32) {
+                let extra: Vec<char> = cell.zerowidth().unwrap().iter().take(32).copied().collect();
+                let c = cell.c;
+                let flags = cell.flags;
+                cell.clear_wide();
+                cell.c = c;
+                cell.flags = flags;
+                for c in extra {
+                    cell.push_zerowidth(c);
+                }
+            }
+        }
     }
     pub fn resize(&mut self, columns: usize, rows: usize) {
         self.size = Size {
@@ -172,6 +213,9 @@ impl Terminal {
                     underline: cell.flags.contains(Flags::UNDERLINE),
                     inverse: cell.flags.contains(Flags::INVERSE),
                     wide: cell.flags.contains(Flags::WIDE_CHAR),
+                    selected: content
+                        .selection
+                        .is_some_and(|selection| selection.contains(indexed.point)),
                 }
             })
             .collect()
@@ -211,7 +255,193 @@ impl Terminal {
             text.replace('\n', "\r").into_bytes()
         }
     }
+    pub fn http_url_at(&self, row: usize, column: usize) -> Option<String> {
+        let line = self.visible_text().get(row)?.clone();
+        let mut offset = 0;
+        for token in line.split_whitespace() {
+            let start = line[offset..].find(token)? + offset;
+            let end = start + token.len();
+            offset = end;
+            let first = unicode_width::UnicodeWidthStr::width(&line[..start]);
+            let last = unicode_width::UnicodeWidthStr::width(&line[..end]);
+            if column < first || column >= last {
+                continue;
+            }
+            let token = token
+                .trim_matches(['(', ')', '[', ']', '<', '>', '"', '\''])
+                .trim_end_matches([',', ';', '.']);
+            let url = url::Url::parse(token).ok()?;
+            if !["http", "https"].contains(&url.scheme())
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.host_str().is_none()
+            {
+                return None;
+            }
+            return Some(url.to_string());
+        }
+        None
+    }
+    pub fn cursor_visible(&self) -> bool {
+        self.term.mode().contains(TermMode::SHOW_CURSOR)
+    }
+    pub fn mouse(&self, input: MouseInput) -> Vec<u8> {
+        let MouseInput {
+            button,
+            column,
+            row,
+            release,
+            motion,
+            shift,
+            alt,
+            ctrl,
+        } = input;
+        if ![0, 1, 2, 3, 64, 65].contains(&button) {
+            return vec![];
+        }
+        if motion && button == 3 && !self.term.mode().contains(TermMode::MOUSE_MOTION) {
+            return vec![];
+        }
+        if shift || !self.term.mode().intersects(TermMode::MOUSE_MODE) {
+            return vec![];
+        }
+        if motion
+            && !self
+                .term
+                .mode()
+                .intersects(TermMode::MOUSE_MOTION | TermMode::MOUSE_DRAG)
+        {
+            return vec![];
+        }
+        let code = button
+            + if motion { 32 } else { 0 }
+            + if alt { 8 } else { 0 }
+            + if ctrl { 16 } else { 0 };
+        let column = column.min(self.size.columns - 1) + 1;
+        let row = row.min(self.size.rows - 1) + 1;
+        if self.term.mode().contains(TermMode::SGR_MOUSE) {
+            format!(
+                "\x1b[<{code};{column};{row}{}",
+                if release { 'm' } else { 'M' }
+            )
+            .into_bytes()
+        } else if column < 224 && row < 224 {
+            vec![
+                27,
+                b'[',
+                b'M',
+                32 + if release { 3 } else { code },
+                32 + column as u8,
+                32 + row as u8,
+            ]
+        } else {
+            vec![]
+        }
+    }
+    pub fn find_next(&mut self, query: &str, after: Option<(i32, usize)>) -> Option<(i32, usize)> {
+        if query.is_empty() || query.len() > 1024 {
+            return None;
+        }
+        let first = -(self.term.grid().history_size() as i32);
+        let mut found = None;
+        let mut wrap = None;
+        for line in first..self.size.rows as i32 {
+            let mut text = String::new();
+            let mut columns = vec![];
+            for column in 0..self.size.columns {
+                let cell = &self.term.grid()[Line(line)][Column(column)];
+                if cell
+                    .flags
+                    .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+                {
+                    continue;
+                }
+                columns.push((text.len(), column));
+                text.push(cell.c);
+                for c in cell.zerowidth().into_iter().flatten() {
+                    text.push(*c);
+                }
+            }
+            for (index, _) in text.match_indices(query) {
+                let column = columns
+                    .iter()
+                    .rev()
+                    .find(|(byte, _)| *byte <= index)
+                    .map(|(_, column)| *column)
+                    .unwrap_or(0);
+                let position = (line, column);
+                wrap.get_or_insert(position);
+                if after.is_none_or(|after| position > after) {
+                    found = Some(position);
+                    break;
+                }
+            }
+            if found.is_some() {
+                break;
+            }
+        }
+        let found = found.or(wrap)?;
+        let offset = (-found.0).max(0) as usize;
+        self.term.scroll_display(Scroll::Top);
+        self.term.scroll_display(Scroll::Delta(
+            -(self.term.grid().history_size().saturating_sub(offset) as i32),
+        ));
+        let mut selection = Selection::new(
+            SelectionType::Simple,
+            Point::new(Line(found.0), Column(found.1)),
+            Side::Left,
+        );
+        selection.update(
+            Point::new(
+                Line(found.0),
+                Column(
+                    (found.1 + unicode_width::UnicodeWidthStr::width(query).saturating_sub(1))
+                        .min(self.size.columns - 1),
+                ),
+            ),
+            Side::Right,
+        );
+        self.term.selection = Some(selection);
+        Some(found)
+    }
     pub fn key(&self, key: &str, ctrl: bool, alt: bool, shift: bool) -> Vec<u8> {
+        let modifier = 1 + u8::from(shift) + 2 * u8::from(alt) + 4 * u8::from(ctrl);
+        if modifier > 1 {
+            let suffix = match key {
+                "ArrowUp" => Some('A'),
+                "ArrowDown" => Some('B'),
+                "ArrowRight" => Some('C'),
+                "ArrowLeft" => Some('D'),
+                "Home" => Some('H'),
+                "End" => Some('F'),
+                "F1" => Some('P'),
+                "F2" => Some('Q'),
+                "F3" => Some('R'),
+                "F4" => Some('S'),
+                _ => None,
+            };
+            if let Some(suffix) = suffix {
+                return format!("\x1b[1;{modifier}{suffix}").into_bytes();
+            }
+            let number = match key {
+                "Insert" => Some(2),
+                "Delete" => Some(3),
+                "PageUp" => Some(5),
+                "PageDown" => Some(6),
+                "F5" => Some(15),
+                "F6" => Some(17),
+                "F7" => Some(18),
+                "F8" => Some(19),
+                "F9" => Some(20),
+                "F10" => Some(21),
+                "F11" => Some(23),
+                "F12" => Some(24),
+                _ => None,
+            };
+            if let Some(number) = number {
+                return format!("\x1b[{number};{modifier}~").into_bytes();
+            }
+        }
         let app = self.term.mode().contains(TermMode::APP_CURSOR);
         let text = match key {
             "Enter" => "\r".into(),
@@ -294,6 +524,84 @@ impl Terminal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn combining_storage_is_bounded_and_wide_cells_stay_wide() {
+        let mut terminal = Terminal::new(80, 24);
+        terminal.feed("日".as_bytes());
+        for _ in 0..10000 {
+            terminal.feed("\u{0301}".as_bytes());
+        }
+        let cell = &terminal.term.grid()[Line(0)][Column(0)];
+        assert_eq!(cell.zerowidth().unwrap().len(), 32);
+        assert_eq!(cell.c, '日');
+        assert!(cell.flags.contains(Flags::WIDE_CHAR));
+        terminal.feed(b"\x1b[?25l");
+        assert!(!terminal.cursor_visible());
+    }
+    #[test]
+    fn search_finds_unicode_history_and_selects_full_cell_width() {
+        let mut terminal = Terminal::new(20, 2);
+        terminal.feed("日本\r\nline2\r\nline3\r\n".as_bytes());
+        let found = terminal.find_next("日本", None).unwrap();
+        assert!(found.0 < 0);
+        assert_eq!(terminal.selected_text().as_deref(), Some("日本"));
+        assert!(terminal.cells().iter().any(|cell| cell.selected));
+    }
+    #[test]
+    fn modified_keys_and_sgr_mouse_have_correct_sequences() {
+        let mut terminal = Terminal::new(80, 24);
+        assert_eq!(terminal.key("ArrowLeft", true, false, false), b"\x1b[1;5D");
+        terminal.feed(b"\x1b[?1000h\x1b[?1006h");
+        assert_eq!(
+            terminal.mouse(MouseInput {
+                button: 0,
+                column: 2,
+                row: 3,
+                release: false,
+                motion: false,
+                shift: false,
+                alt: false,
+                ctrl: false
+            }),
+            b"\x1b[<0;3;4M"
+        );
+        assert_eq!(
+            terminal.mouse(MouseInput {
+                button: 0,
+                column: 2,
+                row: 3,
+                release: true,
+                motion: false,
+                shift: false,
+                alt: false,
+                ctrl: false
+            }),
+            b"\x1b[<0;3;4m"
+        );
+        assert!(terminal
+            .mouse(MouseInput {
+                button: 0,
+                column: 2,
+                row: 3,
+                release: false,
+                motion: false,
+                shift: true,
+                alt: false,
+                ctrl: false
+            })
+            .is_empty());
+    }
+    #[test]
+    fn only_visible_http_urls_can_be_activated() {
+        let mut terminal = Terminal::new(80, 4);
+        terminal.feed(b"https://example.com/page\r\nfile:///secret\r\n\x1b]8;;https://hidden.example\x07label\x1b]8;;\x07");
+        assert_eq!(
+            terminal.http_url_at(0, 3).as_deref(),
+            Some("https://example.com/page")
+        );
+        assert!(terminal.http_url_at(1, 3).is_none());
+        assert!(terminal.http_url_at(2, 3).is_none());
+    }
     #[test]
     fn utf8_split_wide_text_and_alternate_screen() {
         let mut terminal = Terminal::new(80, 24);

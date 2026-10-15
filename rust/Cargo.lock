@@ -1717,6 +1717,8 @@ dependencies = [
  "alacritty_terminal",
  "serde",
  "serde_json",
+ "unicode-width",
+ "url",
 ]
 
 [[package]]

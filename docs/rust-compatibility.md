@@ -13,8 +13,8 @@ Issue #170の完了条件をこの表で省略しない。候補に存在する�
 | ProxyJump | SSH configのHost解決、複数hop、鍵→agent→passwordの別認証、接続失敗時のhop回収 | Match/Includeの対応、全失敗行列、実運用の多段接続 |
 | ポート転送 | -L/-R/-D、SOCKS5 CONNECT、GUI開始/停止、限定経路、個別取消 | 実Windowsの全経路、停止通信失敗時の待受残存検証 |
 | ローカル端末 | portable-pty、Windows JobObject、専用入力スレッド、bounded出力 | ConPTY Windows CI、子孫/連続終了/高負荷の検証 |
-| 端末解析・描画 | alacritty、UTF-8分割、全角、代替画面、履歴、選択コピー、IME導線 | IME・絵文字/結合文字・リフロー実機、検索・URL・右クリック・マウス報告 |
-| 端末安全性 | OSC52拒否、OSC8機能起動なし、入力/出力queue上限 | 全制御列fuzz、大量結合文字のメモリ上限、故障注入 |
+| 端末解析・描画 | alacritty、UTF-8/全角/代替画面/履歴、選択表示/コピー、検索、SGR mouse、右クリックpaste、修飾キー、IME導線 | IME・絵文字/結合文字・リフロー実機、全TUI/操作/キー行列 |
+| 端末安全性 | OSC52拒否、OSC8機能起動なし、入力/出力queue上限 | 結合文字セル32個上限を追加。全制御列fuzz・故障注入は未実施 |
 | SFTP一覧/転送 | nav/xfer別、bounded raw一覧、32KiB、双方向prefix resume、再帰コピー、キュー/進捗/取消/既存policy | 非POSIXサーバー・名前・リンク・失敗行列、個別overwrite確認、転送metadata保持 |
 | リモート再帰削除 | 確認語deleteのGUI、lstat、リンク追跡なし、安全な子名 | 権限・名前・失敗行列 |
 | デュアルペイン・W端末 | local/remote二つの一覧、drop送信導線、既存bookmarks形式 | 同期ブラウズ、実D&D、bookmark削除、W端末、再接続・接続モード |
@@ -54,3 +54,8 @@ SFTP一覧はraw READDIRの途中で100,000件/16MiBの上限を適用し、一�
 同じ接続の転送を順に進める。既存ファイルpolicyは追加時に固定し、標準は上書きしない。
 フォルダ全体のトランザクションではなく、取消後の転送済み/部分ファイルは保持する。
 最終照合後の外部変更競合、全階層のreparse防御、属性完全保持は継続検証する。
+
+端末検索は履歴の日本語セルも扱い、選択の全角幅を保つ。SGR/legacy mouse、修飾cursor/function key、
+右クリックの明示pasteを追加する。OSC52は拒否し、OSC8の隠れたURLは起動しない。
+可視textのhttp(s) URLだけをCtrl+クリックで起動する。結合文字は1セル32個までで、
+文字/全角flag/表示属性を維持する。IME実機・全TUI/マウス行列・大容量性能は継続検証する。

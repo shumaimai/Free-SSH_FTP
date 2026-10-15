@@ -417,3 +417,6 @@ ruff check .
 - Rust SFTP一覧の要求ID/取消/件数・bytes上限を維持する。navの取消をxferへ波及させない。
 - Rust再帰転送はリンク追跡と転送先リンク上書きを拒否する。既存policyは追加時に固定し、取消で部分ファイルを勝手に削除しない。
 - Rust一覧の全Stringを毎frame複製しない。dropは対象領域/layerを照合し一度だけ消費する。
+
+- Rust端末の結合文字セル上限/全角flag保持を維持する。paste/可視http(s) URL起動は明示操作だけ。
+- OSC52/OSC8からclipboard/URL機能を起動しない。満杯のresize送信は最後のサイズを保持する。

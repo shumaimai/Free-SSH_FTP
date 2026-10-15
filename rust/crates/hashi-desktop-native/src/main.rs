@@ -86,6 +86,10 @@ struct Tab {
     forwards: Vec<ActiveForward>,
     navigation: Stamp,
     navigation_cancel: CancellationToken,
+    terminal_search: String,
+    search_open: bool,
+    search_position: Option<(i32, usize)>,
+    pending_size: Option<(u32, u32)>,
 }
 impl Tab {
     fn new(label: String) -> Self {
@@ -111,6 +115,10 @@ impl Tab {
             forwards: vec![],
             navigation: Stamp::default(),
             navigation_cancel: CancellationToken::new(),
+            terminal_search: String::new(),
+            search_open: false,
+            search_position: None,
+            pending_size: None,
         }
     }
     fn begin_navigation(&mut self) -> (Stamp, CancellationToken) {
@@ -140,6 +148,11 @@ impl Tab {
         self.flush_input();
     }
     fn flush_input(&mut self) {
+        if let (Some(size), Some(resize)) = (self.pending_size, self.resize.as_ref()) {
+            if resize.try_send(size).is_ok() {
+                self.pending_size = None;
+            }
+        }
         while let Some(bytes) = self.pending_input.pop_front() {
             let size = bytes.len();
             if let Some(input) = &self.input {
