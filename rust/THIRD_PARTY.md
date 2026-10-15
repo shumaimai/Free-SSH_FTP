@@ -26,3 +26,6 @@ SSH候補はrussh 0.64.1（ring/RSA/flate2）、SFTPはrussh-sftp 3.0.1、
 GUIの既定フォントはepaint_default_fonts/fontsのUbuntu Font License、SIL OFL、Hackとemoji-iconの各noticeもCI成果物へ同梱する。
 
 更新確認のHTTPSはureq 3.4.2（rustls、rustls-platform-verifierでOSの証明書ストア、Windowsはsystem proxy）を使う。
+
+AI観測データの秘密除去はregex 1（MIT/Apache-2.0）を使う。MCPのstdioヘルパー`HashiMCP-RustPreview`は
+GUIと同じ依存ライセンスを同梱する配布対象で、診断用バイナリとは分ける。

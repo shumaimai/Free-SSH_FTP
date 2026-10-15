@@ -1,0 +1,21 @@
+[package]
+name = "hashi-mcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# console-modeのstdioヘルパー。stdoutはJSON-RPCだけ、診断はstderr。
+[[bin]]
+name = "HashiMCP-RustPreview"
+path = "src/bin/hashi-mcp.rs"
+
+[dependencies]
+hashi-core = { path = "../hashi-core" }
+hashi-ai = { path = "../hashi-ai" }
+serde_json.workspace = true
+anyhow = "1"
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+uuid = { version = "1", features = ["v4"] }
+tempfile.workspace = true

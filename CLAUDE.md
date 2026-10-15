@@ -590,3 +590,6 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - `rust-preview-v*`のworkflowはprerelease・make_latest:falseを維持し、Python版のlatestを変えない。
 - Rust鍵生成は既存秘密鍵を明示確認なしに上書きしない。authorized_keysは既存内容を書き換えず末尾追記し、公開鍵をシェルへ埋め込まない。
 - Rust同期ブラウズは相対移動だけを写し、絶対パスを写さない。跳ね返りは追随要求のStampで判定し、待ちフラグを残さない。追随失敗はダイアログにしない。
+- Rust操作仲介（`hashi_core::broker`）はAI/MCP共通の唯一の窓口。許可はメモリ内15分、停止/対象変更で承認待ち・実行中も取消。端末ID+接続世代を毎回照合。監査記録へ本文・出力を入れない。perform中のFuture破棄でも実行中記録を残さない。
+- Rust MCP（`hashi-mcp`）は本人限定フォルダのendpoint、instance/token照合、notificationからの実行禁止、切断で取消。stdioヘルパーはstdoutへJSON-RPCだけ。
+- 独立実行は専用exec/別プロセス。対話端末のcwd・環境を継承しない。子孫のパイプ保持でEOF待ちに停止を塞がない。

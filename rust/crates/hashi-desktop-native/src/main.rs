@@ -1,5 +1,6 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 mod editor_view;
+mod external_view;
 mod file_view;
 mod forward_view;
 mod keygen_view;
@@ -119,6 +120,8 @@ struct Tab {
     remove_on_close: bool,
     /// SSH端末の受信ログ。CMDは対象外（Python版と同じ）。
     log: Option<hashi_core::session_log::SessionLog>,
+    /// AI/MCP向け端末台帳への登録。
+    binding: external_view::Binding,
 }
 impl Tab {
     fn new(label: String) -> Self {
@@ -159,6 +162,7 @@ impl Tab {
             permissions: None,
             permissions_busy: false,
             log: None,
+            binding: Default::default(),
         }
     }
     /// 確定した受信行をログへ渡す。失敗したらこのタブのログを止めて理由を返す。
@@ -290,6 +294,7 @@ struct App {
     update_check: Option<tokio::sync::oneshot::Receiver<hashi_core::update::Update>>,
     available_update: Option<hashi_core::update::Update>,
     keygen: keygen_view::KeygenWindow,
+    external: external_view::External,
 }
 impl App {
     fn new(
@@ -367,6 +372,7 @@ impl App {
             update_check: None,
             available_update: None,
             keygen: Default::default(),
+            external: Default::default(),
             allow_close: false,
             browser: Browser::default(),
             file_events,
@@ -459,6 +465,7 @@ impl App {
                 tab.status = "ローカル端末".into();
                 self.active = self.tabs.len();
                 self.tabs.push(tab);
+                self.bind_terminal(self.active, hashi_core::broker::Kind::Local);
             }
             Err(error) => self.notice = error.to_string(),
         }
@@ -547,6 +554,9 @@ impl App {
                     tab.input = Some(input);
                     tab.resize = Some(resize);
                     tab.status = "接続済み".into();
+                    if !self.tabs[index].closing {
+                        self.bind_terminal(index, hashi_core::broker::Kind::Ssh);
+                    }
                     if self.session_log_enabled() && !self.tabs[index].closing {
                         let (custom, default) = self.session_log_directory();
                         let tab = &mut self.tabs[index];
@@ -572,6 +582,7 @@ impl App {
                 }
                 Message::Data { bytes, .. } => {
                     let tab = &mut self.tabs[index];
+                    tab.binding.capture(&bytes);
                     tab.terminal.feed(&bytes);
                     for reply in tab.terminal.replies() {
                         tab.send(reply);
@@ -629,6 +640,7 @@ impl App {
             match event {
                 TerminalEvent::Data { stamp, bytes } => {
                     if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.stamp == stamp) {
+                        tab.binding.capture(&bytes);
                         tab.terminal.feed(&bytes);
                         for reply in tab.terminal.replies() {
                             tab.send(reply);
@@ -636,12 +648,14 @@ impl App {
                     }
                 }
                 TerminalEvent::Closed { stamp } => {
-                    if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.stamp == stamp) {
-                        tab.status = "終了".into();
+                    if let Some(index) = self.tabs.iter().position(|tab| tab.stamp == stamp) {
+                        self.tabs[index].status = "終了".into();
+                        self.unbind_terminal(index);
                     }
                 }
             }
         }
+        self.flush_bindings();
         while let Ok(progress) = self.progress.try_recv() {
             self.file_progress(&progress);
             self.notice = format!(
@@ -809,6 +823,7 @@ impl eframe::App for App {
         self.process_files();
         self.poll_update();
         self.sync_track_active();
+        self.poll_external();
         ctx.request_repaint_after(Duration::from_millis(16));
     }
     fn ui(&mut self, ui: &mut egui::Ui, _: &mut eframe::Frame) {
@@ -835,6 +850,9 @@ impl eframe::App for App {
                 }
                 if ui.button("権限補助").clicked() {
                     self.permission_open = true;
+                }
+                if ui.button("外部操作").clicked() {
+                    self.external.open = true;
                 }
                 if ui.button("スニペット").clicked() {
                     self.snippets.open = true;
@@ -969,6 +987,7 @@ impl eframe::App for App {
             self.snippet_dialog(&ctx);
             self.settings_dialog(&ctx);
             self.keygen_dialog(&ctx);
+            self.external_dialog(&ctx);
             self.editor_windows(&ctx);
             self.file_windows(&ctx);
             self.dropped_files(&ctx);

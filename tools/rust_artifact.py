@@ -14,6 +14,8 @@ def sha256(path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
+    parser.add_argument('--helper', type=Path, action='append', default=[],
+                        help='同梱するconsole-modeのヘルパー（HashiMCP等）')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--cargo', default='cargo')
     parser.add_argument('--profile', choices=['debug', 'release'], default='debug')
@@ -26,6 +28,8 @@ def main():
     destination = args.output.resolve()
     destination.mkdir(parents=True, exist_ok=True)
     shutil.copy2(args.binary, destination / args.binary.name)
+    for helper in args.helper:
+        shutil.copy2(helper, destination / helper.name)
     notices = destination / 'licenses'
     notices.mkdir(exist_ok=True)
     dependencies = []
@@ -54,6 +58,7 @@ def main():
               'profile': args.profile,
               'source_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip(),
               'binary': args.binary.name, 'binary_sha256': sha256(args.binary),
+              'helpers': {helper.name: sha256(helper) for helper in args.helper},
               'cargo_lock_sha256': sha256(root / 'rust/Cargo.lock'),
               'font_sha256': sha256(root / 'rust/crates/hashi-desktop-native/assets/NotoSansJP.ttf'),
               'dependencies': dependencies}

@@ -22,8 +22,8 @@ Issue #170の完了条件をこの表で省略しない。候補に存在する�
 | 権限・サーバー設定 | 明示的な一覧/転送の権限補助、chmod前fsync journal、対象/祖先の参照数、深い順・mode確認後の復元、終了時の復元待ち、再接続後の復旧UI | sudo、旧Python journalの復元/引継ぎUI、全終了故障行列、sshd/netplan rollback |
 | SSH鍵生成・公開鍵登録 | Ed25519/ECDSA(256/384/521)/RSA(2048/3072/4096)、パスフレーズ（bcrypt-pbkdf）、全種別OpenSSH形式、no-clobber/明示上書き、Unix 0600と新規フォルダ0700、Windowsの~/.ssh外警告、SFTPで~/.ssh/authorized_keysへ末尾追記・重複防止 | Windows実機のACL、RSA 4096の体感時間、Python版はRSA/ECDSAを従来PEMで書く差（Python版はOpenSSH形式も読める） |
 | P2P・Google Drive同期 | 暗号v1契約のみ | X25519/SAS、通信、Google Drive現行backend、秘密同期と衝突処理 |
-| AI/API/OAuth | AI秘密形式のみ | 3種API、会話/観測、OAuth全検証・更新単一所有者・再認証 |
-| CommandBroker/MCP/公式CLI | 未実装 | 許可/対象世代/dedupe、IPC ACL、console HashiMCP、未改変公式CLI導線 |
+| AI/API/OAuth | AI秘密形式、プロバイダー中立のツール定義/秘密除去/観測JSON | 3種API、会話/観測、OAuth全検証・更新単一所有者・再認証 |
+| CommandBroker/MCP/公式CLI | 端末台帳（ID・接続世代・共有可否・ANSI除去した出力/画面）、Broker（読むだけ/操作ごとに確認/自動実行、15分、停止で取消、actor+要求IDの重複防止、本文なし監査）、SSH専用exec/ローカル別プロセスの独立実行、`hashi-ai`の6ツール・秘密除去・観測JSON、`hashi-mcp`の認証付きloopback IPC（本人限定フォルダ・instance/token照合・notification実行禁止・切断で取消）と`HashiMCP-RustPreview` console stdio、GUIの共有/承認/MCP設定画面 | 未改変公式Claude CLIの導入/起動/MCP連携、Windows実機のicacls/ConPTY、AI会話画面 |
 | 更新・配布 | Rust候補のWindows CI artifact。preview更新通知（Release一覧から`rust-preview-v`タグ・prerelease・公式URLだけを選ぶ）、Python版の更新通知はPythonタグ形式だけを通知、`rust-preview-v*`専用workflow（prerelease・make_latest:false・版照合・ライセンス同梱） | 実タグでのworkflow初回実行、stable `rust-v`のworkflow、署名/SmartScreen、MCP別EXEの同梱、戻し手順 |
 
 ## 試験の範囲
@@ -144,3 +144,16 @@ Cargoの版は`0.1.0-alpha.0`から始め、プレビュー公開時はタグと
 Windowsのドライブ/UNC共有はntpathと同じに分解し、ドライブをまたぐ移動とルートを突き抜ける移動は追随しない。
 跳ね返り防止はPython版の「1回読み飛ばす」フラグではなく、追随で開始した一覧要求のStampだけを読み飛ばす。
 追随が失敗/取消されても待ち状態が残らず、次の本物の移動を取りこぼさない。失敗は通知だけで、ダイアログにしない。
+
+操作仲介はPython版`command_broker.py`の規則を引き継ぐ。許可はメモリ内だけで15分、モデルやMCPツールから変更できない。
+対象は端末IDと接続世代の組で、再接続（再登録）後の古い世代は拒否し、新しい世代も利用者が選び直す。
+確認モードの承認待ちは停止・MCP切断・要求取消で取り消す。実行中の記録はFutureが破棄されても残さない。
+対話入力は送信成功だけを返し、完了や終了コードを推測しない。独立実行はSSHの専用execチャネルか
+ローカルの別プロセスで、対話端末のcwd/環境を引き継がない（ローカルは開始フォルダ必須）。出力は末尾64KiB。
+Windowsのローカル独立実行は旧版と同じく外側cmdをASCIIだけで起動し、本文を環境変数の遅延展開で渡す。
+Rust版はUnixでも`/bin/sh -c`の別プロセスグループで独立実行できる（旧版はWindows専用）。
+子孫が出力パイプを保持する場合はEOFを0.5秒だけ待ち、`output_complete:false`・completion unknownとする。
+MCPの接続情報は本人限定の一時フォルダ（Unix 0700、Windowsはicaclsで継承解除し本人とSYSTEMだけ）に置き、
+アプリ終了/MCP停止で削除する。stdioヘルパーはstdoutへJSON-RPCだけを書き、同時4件まで並列化する。
+GUIの実描画（Xvfb）で、CMD共有→MCP開始→実stdioヘルパーからlist_sessions/send_input→承認ダイアログ→
+CMDでの実行→read_outputまでと、通常終了で接続情報が消えることを確認した。Windows実機は未確認。

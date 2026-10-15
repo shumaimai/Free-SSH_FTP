@@ -667,6 +667,67 @@ impl SshSession {
         let _ = tokio::time::timeout(Duration::from_secs(1), channel.close()).await;
         result
     }
+    /// 操作仲介の独立実行。専用execチャネルだけを使い、出力は末尾`tail`バイトまで保持する。
+    /// 取消/締切では途中までの出力を返し、遠隔プロセスの終了は保証しない。
+    pub async fn run_command(
+        &self,
+        command: &str,
+        timeout: Duration,
+        cancel: &tokio_util::sync::CancellationToken,
+        tail: usize,
+    ) -> Result<CommandRun> {
+        if command.len() > 256 * 1024 || command.contains('\0') || timeout.is_zero() {
+            bail!("コマンドの長さ/形式/締切が不正です");
+        }
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut run = CommandRun::default();
+        let stopped = |run: &mut CommandRun, cancelled: bool| {
+            run.status = if cancelled { "cancelled" } else { "timeout" };
+        };
+        let mut channel = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => { stopped(&mut run, true); return Ok(run); }
+            _ = self.cancel.cancelled() => bail!("接続が終了しました"),
+            channel = tokio::time::timeout_at(deadline, self.connection.channel_open_session()) => match channel {
+                Ok(channel) => channel?,
+                Err(_) => { stopped(&mut run, false); return Ok(run); }
+            },
+        };
+        let result: Result<()> = async {
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled() => { stopped(&mut run, true); return Ok(()); }
+                result = tokio::time::timeout_at(deadline, channel.exec(true, command)) => match result {
+                    Ok(result) => result?,
+                    Err(_) => { stopped(&mut run, false); return Ok(()); }
+                },
+            }
+            loop {
+                let message = tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => { stopped(&mut run, true); return Ok(()); }
+                    _ = self.cancel.cancelled() => bail!("接続が終了しました"),
+                    message = tokio::time::timeout_at(deadline, channel.wait()) => match message {
+                        Ok(message) => message,
+                        Err(_) => { stopped(&mut run, false); return Ok(()); }
+                    },
+                };
+                match message {
+                    Some(ChannelMsg::Data { data }) => keep_tail(&mut run.output, &data, tail),
+                    Some(ChannelMsg::ExtendedData { data, .. }) => keep_tail(&mut run.error, &data, tail),
+                    Some(ChannelMsg::ExitStatus { exit_status }) => run.exit_code = Some(exit_status),
+                    Some(ChannelMsg::Close) | None => break,
+                    _ => {}
+                }
+            }
+            run.status = if run.exit_code.is_some() { "completed" } else { "closed" };
+            Ok(())
+        }
+        .await;
+        // 独立execの専用チャネルだけを閉じ、対話PTY/SFTP/Transportは維持する。
+        let _ = tokio::time::timeout(Duration::from_secs(1), channel.close()).await;
+        result.map(|()| run)
+    }
     pub async fn close(&self) -> Result<()> {
         self.cancel.cancel();
         let result = self
@@ -682,9 +743,33 @@ impl SshSession {
     }
 }
 
+/// 独立実行の結果。`status`はcompleted/closed/cancelled/timeout。
+#[derive(Debug, Default)]
+pub struct CommandRun {
+    pub status: &'static str,
+    pub exit_code: Option<u32>,
+    pub output: Vec<u8>,
+    pub error: Vec<u8>,
+}
+/// 末尾`limit`バイトだけを残す。
+pub fn keep_tail(buffer: &mut Vec<u8>, data: &[u8], limit: usize) {
+    buffer.extend_from_slice(data);
+    if buffer.len() > limit {
+        buffer.drain(..buffer.len() - limit);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn tail_keeps_latest_bytes() {
+        let mut buffer = vec![];
+        keep_tail(&mut buffer, b"abcdef", 4);
+        assert_eq!(buffer, b"cdef");
+        keep_tail(&mut buffer, b"gh", 4);
+        assert_eq!(buffer, b"efgh");
+    }
     #[test]
     fn hops_include_ipv6_and_do_not_reuse_target_secrets() {
         let hop = parse_hop("user@[::1]:2222", "target").unwrap();

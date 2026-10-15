@@ -99,6 +99,47 @@ async fn main() -> Result<()> {
         status == 0 && stdout == b"STILL_ALIVE",
         "execの締切で接続全体が閉じられました"
     );
+    {
+        // 操作仲介の独立実行: 終了コード/標準エラー/締切後の接続維持/取消。
+        let token = tokio_util::sync::CancellationToken::new();
+        let run = session
+            .run_command(
+                "printf 'OUT'; printf 'ERR' >&2; exit 4",
+                std::time::Duration::from_secs(10),
+                &token,
+                64,
+            )
+            .await?;
+        anyhow::ensure!(
+            run.status == "completed"
+                && run.exit_code == Some(4)
+                && run.output == b"OUT"
+                && run.error == b"ERR",
+            "独立実行の結果が違います: {run:?}"
+        );
+        let run = session
+            .run_command(
+                "printf begin; sleep 5",
+                std::time::Duration::from_millis(500),
+                &token,
+                64,
+            )
+            .await?;
+        anyhow::ensure!(
+            run.status == "timeout" && run.exit_code.is_none(),
+            "締切が効きません: {run:?}"
+        );
+        token.cancel();
+        let run = session
+            .run_command("sleep 5", std::time::Duration::from_secs(10), &token, 64)
+            .await?;
+        anyhow::ensure!(run.status == "cancelled", "取消が効きません: {run:?}");
+        let (status, stdout, _) = session.execute("printf AFTER").await?;
+        anyhow::ensure!(
+            status == 0 && stdout == b"AFTER",
+            "独立実行の後に接続が使えません"
+        );
+    }
     let nav = session.sftp().await?;
     let xfer = session.sftp().await?;
     {

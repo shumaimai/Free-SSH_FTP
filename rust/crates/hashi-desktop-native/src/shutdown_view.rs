@@ -23,6 +23,7 @@ impl Drop for RuntimeOwner {
 }
 impl App {
     pub(super) fn begin_close(&mut self, index: usize, remove: bool) {
+        self.unbind_terminal(index);
         let tab = &mut self.tabs[index];
         tab.remove_on_close |= remove;
         if tab.closing {
@@ -174,6 +175,7 @@ impl App {
         self.confirm_exit = false;
         self.exiting = true;
         self.exit_started = self.confirm_started.take().or_else(|| Some(Instant::now()));
+        self.stop_external();
         self.cancel_files();
         self.work.close();
         for index in (0..self.tabs.len()).rev() {

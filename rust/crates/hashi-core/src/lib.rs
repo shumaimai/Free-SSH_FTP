@@ -1,5 +1,6 @@
 //! SSH/SFTP・ローカルPTY・ジョブのGUI非依存コア。
 mod atomic_transfer;
+pub mod broker;
 pub mod editor;
 pub mod editor_language;
 pub mod forward;
@@ -8,6 +9,7 @@ mod in_place_transfer;
 pub mod interaction;
 pub mod keygen;
 pub mod local;
+pub mod local_command;
 pub mod permission_journal;
 pub mod permissions;
 pub mod session_log;

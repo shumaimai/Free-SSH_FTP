@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/hashi-storage", "crates/hashi-core", "crates/hashi-terminal", "crates/hashi-desktop-native"]
+members = ["crates/hashi-storage", "crates/hashi-core", "crates/hashi-terminal", "crates/hashi-ai", "crates/hashi-mcp", "crates/hashi-desktop-native"]
 resolver = "2"
 
 [workspace.package]

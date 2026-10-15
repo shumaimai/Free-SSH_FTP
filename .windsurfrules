@@ -455,3 +455,5 @@ ruff check .
 - Rust版のReleaseを`make_latest`にしないこと。Python版の更新通知へRustのタグを混ぜないこと。
 - Rust鍵生成で既存の秘密鍵を黙って上書きしないこと。authorized_keysを全体書換えしないこと。
 - Rust同期ブラウズで絶対パスを写さないこと。跳ね返り防止を消費されない待ちフラグにしないこと。
+- Rustの端末操作をBrokerを通さずに行わないこと。MCPのnotificationからツールを実行しないこと。監査記録へ本文を入れないこと。
+- MCPのstdout（stdioヘルパー）へJSON-RPC以外を書かないこと。
