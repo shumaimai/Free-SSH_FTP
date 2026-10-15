@@ -2,6 +2,7 @@
 mod editor_view;
 mod file_view;
 mod forward_view;
+mod permission_view;
 use file_view::{Browser, FileEvent};
 mod style;
 mod terminal_view;
@@ -28,6 +29,10 @@ use tokio::{runtime::Runtime, sync::mpsc};
 use tokio_util::sync::CancellationToken;
 type Sftp = Arc<tokio::sync::Mutex<russh_sftp::client::SftpSession>>;
 enum Message {
+    PermissionsReady {
+        stamp: Stamp,
+        result: Result<Arc<hashi_core::permissions::Manager>, String>,
+    },
     ForwardReady {
         stamp: Stamp,
         handle: ActiveForward,
@@ -90,6 +95,8 @@ struct Tab {
     search_open: bool,
     search_position: Option<(i32, usize)>,
     pending_size: Option<(u32, u32)>,
+    permissions: Option<Arc<hashi_core::permissions::Manager>>,
+    permissions_busy: bool,
 }
 impl Tab {
     fn new(label: String) -> Self {
@@ -119,6 +126,8 @@ impl Tab {
             search_open: false,
             search_position: None,
             pending_size: None,
+            permissions: None,
+            permissions_busy: false,
         }
     }
     fn begin_navigation(&mut self) -> (Stamp, CancellationToken) {
@@ -219,6 +228,8 @@ struct App {
     browser: Browser,
     file_events: mpsc::Receiver<FileEvent>,
     file_tx: mpsc::Sender<FileEvent>,
+    permission_open: bool,
+    legacy_stopped: bool,
 }
 impl App {
     fn new(
@@ -283,6 +294,8 @@ impl App {
             editor_events,
             editor_tx,
             confirm_exit: false,
+            permission_open: false,
+            legacy_stopped: false,
             allow_close: false,
             browser: Browser::default(),
             file_events,
@@ -375,7 +388,8 @@ impl App {
                 break;
             };
             let stamp = match &event {
-                Message::ForwardReady { stamp, .. }
+                Message::PermissionsReady { stamp, .. }
+                | Message::ForwardReady { stamp, .. }
                 | Message::Connected { stamp, .. }
                 | Message::Data { stamp, .. }
                 | Message::Error { stamp, .. }
@@ -387,6 +401,16 @@ impl App {
                 continue;
             };
             match event {
+                Message::PermissionsReady { result, .. } => {
+                    self.tabs[index].permissions_busy = false;
+                    match result {
+                        Ok(manager) => {
+                            self.tabs[index].permissions = Some(manager);
+                            self.notice = "この接続の権限補助を有効にしました".into();
+                        }
+                        Err(error) => self.notice = error,
+                    }
+                }
                 Message::ForwardReady { handle, .. } => {
                     if !self.tabs[index].cancel.is_cancelled() {
                         self.tabs[index].forwards.push(handle);
@@ -478,13 +502,20 @@ impl App {
             return;
         };
         let (navigation, cancel) = tab.begin_navigation();
+        let permissions = tab.permissions.clone();
         let stamp = tab.stamp.clone();
         let tx = self.tx.clone();
         self.runtime.spawn(async move {
             let nav = nav.lock().await;
             let result = async {
                 let path = nav.canonicalize(path).await?;
-                let entries = transfer::list_bounded(&session, &path, &cancel).await?;
+                let entries = hashi_core::permissions::with_access(
+                    permissions.as_ref(),
+                    &path,
+                    0o555,
+                    || transfer::list_bounded(&session, &path, &cancel),
+                )
+                .await?;
                 anyhow::Ok((path, entries))
             }
             .await;
@@ -635,6 +666,9 @@ impl eframe::App for App {
                 if ui.button("ポート転送").clicked() {
                     self.forward_editor.open = true;
                 }
+                if ui.button("権限補助").clicked() {
+                    self.permission_open = true;
+                }
             });
         });
         egui::Panel::left("profiles")
@@ -751,6 +785,7 @@ impl eframe::App for App {
         });
         self.auth_dialog(&ctx);
         self.forward_dialog(&ctx);
+        self.permission_dialog(&ctx);
         self.editor_windows(&ctx);
         self.file_windows(&ctx);
         self.dropped_files(&ctx);

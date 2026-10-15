@@ -167,6 +167,7 @@ async fn main() -> Result<()> {
         job: "tree",
         progress: &tx,
         cancel: &cancel,
+        permission: None,
     };
     let report = hashi_core::transfer_tree::upload_tree(
         &xfer,
@@ -246,6 +247,137 @@ async fn main() -> Result<()> {
         "外部変更を上書きしました"
     );
     transfer::delete_tree(&nav, &edit_path, "delete", &cancel).await?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let path = req.directory.join("permission-data.txt");
+        tokio::fs::write(&path, b"permission-fixture").await?;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o0))?;
+        let journal = Arc::new(hashi_core::permission_journal::Journal::at(
+            req.directory.join("permission-journal"),
+        )?);
+        let backend = Arc::new(hashi_core::permissions::SftpBackend::new(
+            session.sftp().await?,
+        ));
+        let connection = format!(
+            "{}@{}:{}",
+            session.scope.username, session.scope.host, session.scope.port
+        );
+        let manager =
+            hashi_core::permissions::Manager::new(backend, journal.clone(), connection.clone());
+        let remote = path.to_string_lossy();
+        let grant = manager.acquire(&remote, 0o444).await?;
+        anyhow::ensure!(
+            xfer.read(remote.as_ref()).await? == b"permission-fixture",
+            "権限付与後の読込が違います"
+        );
+        grant.release().await?;
+        anyhow::ensure!(
+            std::fs::metadata(&path)?.permissions().mode() & 0o777 == 0,
+            "元の権限が復元されません"
+        );
+        anyhow::ensure!(
+            journal.pending(&connection)?.is_empty(),
+            "復元済み記録が残っています"
+        );
+        let tree = req.directory.join("permission-tree");
+        tokio::fs::create_dir_all(tree.join("nested")).await?;
+        tokio::fs::write(tree.join("nested/file"), b"nested-permission-fixture").await?;
+        for target in [&tree.join("nested/file"), &tree.join("nested"), &tree] {
+            std::fs::set_permissions(target, std::fs::Permissions::from_mode(0o0))?;
+        }
+        let (progress, mut receiver) = tokio::sync::mpsc::channel(128);
+        let task = tokio::spawn(async move { while receiver.recv().await.is_some() {} });
+        let context = hashi_core::transfer_tree::TaskContext {
+            job: "permissions",
+            progress: &progress,
+            cancel: &cancel,
+            permission: Some(&manager),
+        };
+        let upload_source = req.directory.join("permission-source");
+        tokio::fs::write(&upload_source, b"permission-overwrite").await?;
+        hashi_core::transfer_tree::upload_tree(
+            &xfer,
+            &upload_source,
+            &remote,
+            hashi_core::transfer_tree::Existing::Overwrite,
+            &context,
+        )
+        .await?;
+        anyhow::ensure!(
+            std::fs::metadata(&path)?.permissions().mode() & 0o777 == 0,
+            "上書き後の権限が復元されません"
+        );
+        let new_directory = req.directory.join("permission-new");
+        tokio::fs::create_dir(&new_directory).await?;
+        std::fs::set_permissions(&new_directory, std::fs::Permissions::from_mode(0o0))?;
+        let new_remote = new_directory.join("new-file");
+        let upload_result = hashi_core::transfer_tree::upload_tree(
+            &xfer,
+            &upload_source,
+            &new_remote.to_string_lossy(),
+            hashi_core::transfer_tree::Existing::Refuse,
+            &context,
+        )
+        .await;
+        anyhow::ensure!(
+            std::fs::metadata(&new_directory)?.permissions().mode() & 0o777 == 0,
+            "新規作成後の親権限が復元されません"
+        );
+        std::fs::set_permissions(&new_directory, std::fs::Permissions::from_mode(0o700))?;
+        upload_result?;
+        anyhow::ensure!(
+            tokio::fs::read(&new_remote).await? == b"permission-overwrite",
+            "新規作成した内容が違います"
+        );
+        tokio::fs::remove_dir_all(new_directory).await?;
+        let result = hashi_core::transfer_tree::download_tree(
+            &session,
+            &xfer,
+            &tree.to_string_lossy(),
+            &req.directory.join("permission-copy"),
+            hashi_core::transfer_tree::Existing::Refuse,
+            &context,
+        )
+        .await;
+        anyhow::ensure!(
+            std::fs::metadata(&tree)?.permissions().mode() & 0o777 == 0,
+            "親権限が復元されません"
+        );
+        std::fs::set_permissions(&tree, std::fs::Permissions::from_mode(0o700))?;
+        anyhow::ensure!(
+            std::fs::metadata(tree.join("nested"))?.permissions().mode() & 0o777 == 0,
+            "子権限が復元されません"
+        );
+        std::fs::set_permissions(tree.join("nested"), std::fs::Permissions::from_mode(0o700))?;
+        anyhow::ensure!(
+            std::fs::metadata(tree.join("nested/file"))?
+                .permissions()
+                .mode()
+                & 0o777
+                == 0,
+            "ファイル権限が復元されません"
+        );
+        std::fs::set_permissions(
+            tree.join("nested/file"),
+            std::fs::Permissions::from_mode(0o600),
+        )?;
+        result?;
+        anyhow::ensure!(
+            tokio::fs::read(req.directory.join("permission-copy/nested/file")).await?
+                == b"nested-permission-fixture",
+            "再帰権限読込が違います"
+        );
+        anyhow::ensure!(
+            journal.pending(&connection)?.is_empty(),
+            "再帰復元済み記録が残っています"
+        );
+        drop(progress);
+        task.await?;
+        tokio::fs::remove_dir_all(tree).await?;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+        tokio::fs::remove_file(path).await?;
+    }
     verify_forwards(session.clone()).await?;
     session.close().await?;
     println!("ssh-sftp-verified");

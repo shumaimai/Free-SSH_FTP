@@ -18,6 +18,8 @@ uuid = { version = "1", features = ["v4", "serde"] }
 anyhow = "1"
 base64 = "0.22"
 tempfile.workspace = true
+fs2.workspace = true
+sha2 = "0.10"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

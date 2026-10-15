@@ -1658,6 +1658,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64",
+ "fs2",
  "hashi-storage",
  "hashi-terminal",
  "libc",
@@ -1666,6 +1667,7 @@ dependencies = [
  "russh-sftp",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "tokio",
  "tokio-util",

@@ -19,7 +19,7 @@ Issue #170の完了条件をこの表で省略しない。候補に存在する�
 | リモート再帰削除 | 確認語deleteのGUI、lstat、リンク追跡なし、安全な子名 | 権限・名前・失敗行列 |
 | デュアルペイン・W端末 | local/remote二つの一覧、drop送信導線、既存bookmarks形式 | 同期ブラウズ、実D&D、bookmark削除、W端末、再接続・接続モード |
 | 編集・ログ・snippets | text/固定長hex、BOM/UTF16 byte order/改行、検索/全置換、軽量highlight、local atomic/SFTP POSIX rename、保存失敗時dirty保持 | 行番号/行移動/折返し/全ショートカット、ACL/ハードリンク、8MiB性能、ログ/snippets UI |
-| 権限・サーバー設定 | 未実装 | chmod前のfsync journal、参照数、sudo、深い順復元、sshd/netplan rollback |
+| 権限・サーバー設定 | 明示的な一覧/転送の権限補助、chmod前fsync journal、対象/祖先の参照数、深い順・mode確認後の復元、再接続後の復旧UI | sudo、旧Python journal引継ぎ、終了時の復元完了待ち、sshd/netplan rollback |
 | P2P・Google Drive同期 | 暗号v1契約のみ | X25519/SAS、通信、Google Drive現行backend、秘密同期と衝突処理 |
 | AI/API/OAuth | AI秘密形式のみ | 3種API、会話/観測、OAuth全検証・更新単一所有者・再認証 |
 | CommandBroker/MCP/公式CLI | 未実装 | 許可/対象世代/dedupe、IPC ACL、console HashiMCP、未改変公式CLI導線 |
@@ -53,9 +53,26 @@ SFTP一覧はraw READDIRの途中で100,000件/16MiBの上限を適用し、一�
 リンクは追跡しない。検索結果は10,000件/16MiBまで。GUIの転送は128件・同時4接続までで、
 同じ接続の転送を順に進める。既存ファイルpolicyは追加時に固定し、標準は上書きしない。
 フォルダ全体のトランザクションではなく、取消後の転送済み/部分ファイルは保持する。
+現段階の上書き転送は直接truncateするため、取消/失敗で既存内容が部分データに置き換わる。
+原本を保持する一時ファイルと確定置換は次段階で実装する。
 最終照合後の外部変更競合、全階層のreparse防御、属性完全保持は継続検証する。
 
 端末検索は履歴の日本語セルも扱い、選択の全角幅を保つ。SGR/legacy mouse、修飾cursor/function key、
 右クリックの明示pasteを追加する。OSC52は拒否し、OSC8の隠れたURLは起動しない。
 可視textのhttp(s) URLだけをCtrl+クリックで起動する。結合文字は1セル32個までで、
 文字/全角flag/表示属性を維持する。IME実機・全TUI/マウス行列・大容量性能は継続検証する。
+
+権限補助は標準で無効。旧Python版停止と旧記録の復元済み確認後だけ有効にする。
+マーカー対応Python版は排他OS guardで起動を防ぎ、未対応旧版は利用者の確認に頼る。
+preview/native共用の永続journalは`Hashi-Rust-Coordination/permission-journal-v2`で、
+LinuxのXDG_CONFIG_HOME（未設定なら.config）、WindowsのLOCALAPPDATAに置く。
+runtime領域には復旧記録を置かない。記録の保存とfsyncに失敗すればchmodしない。
+未commit tempはpreparing領域で保持し、正常な記録の復旧を妨げない。
+接続先/利用者/確認済みホスト鍵へ復旧を束縛する。同名パスは全接続で保守的に排他する。
+最終パス/親リンクの別表記はrealpath照合で拒否するが、照合後の外部競合は排除できない。
+一時chmodのACK途中取消も所有タスクで完了/復元し、読み戻したmodeが元と一致した記録だけ消す。
+子の復元失敗があれば親も延期する。破損・版不明の確定記録は上書き/削除しない。
+sudo/root所有ファイル、旧Pythonの未復元記録の自動取り込み、終了時の非同期タスク完了待ちは未対応。
+突然終了/断線時は記録を保持し、同じ接続/鍵の再接続後に「権限補助」から明示的に復旧する。
+有効な権限補助の一覧/転送/復旧は全タブで直列化し、Grant参加と新規付与の競合を避ける。
+権限補助を有効にしていない別タブ/外部アプリの通常操作は取引に参加しないため、一時mode変更で途中失敗する可能性は残る。

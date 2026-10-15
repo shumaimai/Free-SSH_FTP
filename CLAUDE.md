@@ -549,3 +549,11 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
   選択の可視表示と文字列の範囲を一致させる。TUI mouse modeでもShift選択を維持する。
 - paste/URL起動は利用者の明示操作だけ。OSC52/OSC8から機能を起動せず、URLは可視http(s)のみ。
   resize送信が満杯なら最後のサイズを保持して再送する。IME出力はcursor非表示でも提供する。
+
+- Rust権限補助は明示的に有効化し、旧Python版停止の確認と排他OS guardを保持する。
+- 復旧journalは永続領域でpreview/native共用。runtime/temp領域へ確定記録を保存しない。
+- chmod前に記録/fsyncを完了し、ACK途中の取消でも所有タスクで復元する。mode読戻し一致まで記録を消さない。
+- nav/xferは対象/祖先の既存Grantへ参加する。復元は深い順で、子の未復元記録があれば親も延期する。
+- 別表記/親リンクはrealpath照合で拒否する。破損した確定記録を上書きせず、準備tempは復元対象と分ける。
+- 権限候補はSFTP所有ファイルのみ。sudo・旧Python journal引継ぎ・終了時完了待ちは互換表の未完了条件を維持する。
+- 有効なRust権限補助の一覧/転送/復旧取引はタブをまたいで直列化し、復元までoperation guardを保持する。低レベルacquireを画面側から直接使わない。

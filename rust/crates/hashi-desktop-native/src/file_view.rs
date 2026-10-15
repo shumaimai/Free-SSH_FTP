@@ -208,10 +208,11 @@ impl App {
             let id = job.id.clone();
             let cancel = job.cancel.clone();
             let navigation = job.navigation.clone();
+            let permissions = tab.permissions.clone();
             let progress = self.progress_tx.clone();
             let tx = self.file_tx.clone();
             self.runtime.spawn(async move {
-                let context=TaskContext {job:&id,progress:&progress,cancel:&cancel};
+                let context=TaskContext {job:&id,progress:&progress,cancel:&cancel,permission:permissions.as_ref()};
                 let future=async {
                     match operation {
                         Operation::Upload {local,remote}=>{let sftp=xfer.lock().await;transfer_tree::upload_tree(&sftp,&local,&remote,policy,&context).await.map(Outcome::Transfer)},
@@ -220,7 +221,7 @@ impl App {
                         Operation::Search {root,query}=>{let sftp=nav.lock().await;transfer_tree::search(&session,&sftp,&root,&query,&cancel).await.map(|entries|Outcome::Search {navigation,entries})},
                     }
                 };
-                let result=tokio::select! {biased;_=cancel.cancelled()=>Err(anyhow::anyhow!("中止要求済み（転送済みのファイルは保持）")),result=future=>result}.map_err(|e|e.to_string());
+                let result=tokio::select! {biased;_=cancel.cancelled()=>Err(anyhow::anyhow!("中止要求済み。上書き先を含む部分ファイルを保持。権限復元が未完了の場合は「権限補助」で復旧してください")),result=future=>result}.map_err(|e|e.to_string());
                 let _=tx.send(FileEvent::Finished {id,result}).await;
             });
         }
@@ -405,6 +406,12 @@ impl App {
                 ui.radio_value(&mut self.browser.policy, policy, label);
             }
         });
+        if self.browser.policy == Existing::Overwrite {
+            ui.colored_label(
+                egui::Color32::YELLOW,
+                "上書きは直接書き換えます。取消・失敗で既存内容が部分データに置き換わります。",
+            );
+        }
         let profile = self
             .tabs
             .get(self.active)

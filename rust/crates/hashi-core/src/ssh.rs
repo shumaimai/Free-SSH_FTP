@@ -94,6 +94,10 @@ impl client::Handler for Handler {
                 .cloned()
         };
         if old.as_ref() == Some(&key) {
+            self.accepted
+                .lock()
+                .map_err(|_| anyhow::anyhow!("確認済み鍵の台帳が不正です"))?
+                .insert(format!("{}:{}", self.scope.host, self.scope.port), key);
             return Ok(true);
         }
         let mut scope = self.scope.clone();
