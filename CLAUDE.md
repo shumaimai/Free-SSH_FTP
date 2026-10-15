@@ -576,5 +576,10 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - Rustの転送方式は原本保持（既定）/直接書込みをジョブごとに明示する。失敗時に自動fallbackしない。直接書込み/resumeの変更後エラーをchmod再試行へ流さない。
 - 新規ファイルは0666と実環境umaskを適用する。原本保持のpayload tempは0600、mode probeは空だけ。既存置換のために親writeを増やさず、同一batchの別ファイル用grantも流用しない。
 - 権限補助の追加bitはowner最小限だけ。旧Pythonの既定/残存markerのdata_rootを読取検査し、未復元・破損・不明なら拒否、旧記録を変更しない。
+  §6-2のPython版a+wと意図的に違う。Rust版はsudo非対応で、SFTPで自分が所有するファイルだけchmodするためownerで足りる。
+  sudo/他人所有ファイルへ対応するときは、このbit幅を見直して互換表と試験を更新する。
+- 直接書込みで既存ファイルを開くときmode属性を送らない(open時に属性を適用するサーバーで権限が変わる)。新規作成時だけ0666を送る。
+  書込み/切り詰め前の失敗は「転送先は変更していません」と表示し、変更後の失敗だけ部分更新の可能性を示す。
+- `tests/test_rust_ssh_live.py`はrootでskipする(rootは権限検査を素通りする)。一般ユーザーで実行する。
 - RemoteTempのfallback/commit所有タスクはBatchのcleanup tokenを保持し、親mode復元は削除完了後にする。失敗を隠さない。
 - ポート転送停止は受付tokenを確保してから所有handleを外す。GUIのPTY resizeでblocking lockを取らず、保留サイズを次frameで再試行する。回収済みPID/PGIDへkillを再送しない。

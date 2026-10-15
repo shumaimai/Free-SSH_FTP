@@ -37,3 +37,15 @@ removeのACK待ち中のFuture Dropでtempのpathを失う問題を検出し、�
 後者はSFTPプロトコルのREMOVE応答を停止し、finish taskをabortしてもscopeが完了せず、
 fallbackのNoSuchFile応答確認後に完了する回帰試験を追加した。
 最終の2エージェントの静的再監査では追加P1/P2は見つからなかった。実行試験の結果はPRとIssueに記録する。
+
+## 2026-10-15 PR #181の再監査への対応
+
+| 再監査の指摘 | 対応と検証 |
+| --- | --- |
+| 1. 直接書込みが既存ファイルのopenにもmode 0666属性を送る | 新規作成（CREATE+EXCLUDE）のときだけ0666を送り、既存ファイルは属性なしで開く。open時に属性を適用するサーバーで既存modeが変わる経路を除いた。実OpenSSH 8条件で直接書込み・inode保持・mode復元を再確認 |
+| 2. 書込み前の停止も「部分更新の可能性」と表示 | `complete()`へ変更開始の有無を渡す。新規作成はopen成功、既存は切り詰め直前、resumeは追記直前から変更扱い。変更前の失敗は「転送先は変更していません」と表示する単体試験を追加 |
+| 3. owner最小bitがPython版a+wと違う | Rust版がsudo非対応でSFTP所有ファイルだけをchmodする前提をCLAUDE.md/.windsurfrulesへ明記。sudo対応時に見直す |
+| 補足. live試験をrootで実行すると誤って失敗 | `tests/test_rust_ssh_live.py`はeuid 0でskipし理由を表示。CIは一般ユーザーなので従来どおり実行 |
+
+PR #180で重大/中とした2件（forward停止のpanic、resizeの固まり）は外側のclosing guardを見落とした
+監査側の誤検知だった。#181の防御追加は残し、元の実装に実害はなかったと記録を訂正する。

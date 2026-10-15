@@ -48,16 +48,20 @@ pub async fn upload(
     } else {
         OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::EXCLUDE
     };
+    // 既存ファイルへmode属性を送ると、open時に属性を適用するサーバーで権限が変わる。
+    let attributes = if existing.is_some() {
+        FileAttributes::default()
+    } else {
+        FileAttributes {
+            permissions: Some(0o666),
+            ..Default::default()
+        }
+    };
     let mut output = session
-        .open_with_flags_and_attributes(
-            remote,
-            flags,
-            FileAttributes {
-                permissions: Some(0o666),
-                ..Default::default()
-            },
-        )
+        .open_with_flags_and_attributes(remote, flags, attributes)
         .await?;
+    // 新規作成はopen成功で転送先が変わる。既存ファイルは切り詰め直前から変更扱い。
+    let modified = std::sync::atomic::AtomicBool::new(existing.is_none());
     let result=async {
         let opened=output.metadata().await?;
         if !opened.is_regular(){bail!("書込み先の種類が変わりました");}
@@ -69,6 +73,7 @@ pub async fn upload(
             }
         }
         if context.cancel.is_cancelled(){bail!("転送を取り消しました");}
+        modified.store(true, std::sync::atomic::Ordering::Relaxed);
         if existing.is_some(){output.set_metadata(Metadata{size:Some(0),..Default::default()}).await?;}
         let mut buffer=vec![0;32768];
         let mut done=0;
@@ -86,14 +91,38 @@ pub async fn upload(
     }.await;
     let closed = output.close().await.map_err(anyhow::Error::from);
     // 変更後の失敗を権限補助の自動再試行へ流さず、部分ファイルを残す。
-    complete(result, closed, "直接書込み")
+    complete(
+        result,
+        closed,
+        "直接書込み",
+        modified.load(std::sync::atomic::Ordering::Relaxed),
+    )
 }
-pub(crate) fn complete(result: Result<()>, closed: Result<()>, kind: &str) -> Result<()> {
-    match (result,closed) {
-        (Ok(()),Ok(()))=>Ok(()),
-        (operation,close)=>bail!("{kind}は未完了です。転送先が変更/部分更新された可能性があります（削除していません）。操作: {}; close: {}",
-            operation.err().map(|error|error.to_string()).unwrap_or_else(||"完了".into()),
-            close.err().map(|error|error.to_string()).unwrap_or_else(||"完了".into())),
+/// `modified`は転送先へ書込み/切り詰め/新規作成を始めたか。始める前の停止は原本のままと示す。
+pub(crate) fn complete(
+    result: Result<()>,
+    closed: Result<()>,
+    kind: &str,
+    modified: bool,
+) -> Result<()> {
+    let state = if modified {
+        "転送先が変更/部分更新された可能性があります（削除していません）"
+    } else {
+        "転送先へ書き込む前に停止したため、転送先は変更していません"
+    };
+    match (result, closed) {
+        (Ok(()), Ok(())) => Ok(()),
+        (operation, close) => bail!(
+            "{kind}は未完了です。{state}。操作: {}; close: {}",
+            operation
+                .err()
+                .map(|error| error.to_string())
+                .unwrap_or_else(|| "完了".into()),
+            close
+                .err()
+                .map(|error| error.to_string())
+                .unwrap_or_else(|| "完了".into())
+        ),
     }
 }
 #[cfg(test)]
@@ -104,10 +133,25 @@ mod tests {
             Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied).into()),
             Err(anyhow::anyhow!("close-ACK喪失")),
             "再開",
+            true,
         )
         .unwrap_err();
         assert!(error.to_string().contains("部分更新"));
         assert!(error.to_string().contains("close-ACK喪失"));
         assert!(!crate::permissions::is_permission_error(&error));
+    }
+
+    #[test]
+    fn failure_before_modification_reports_unchanged_target() {
+        let error = super::complete(
+            Err(anyhow::anyhow!("書込み先が外部で変更されました")),
+            Ok(()),
+            "直接書込み",
+            false,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("変更していません"));
+        assert!(!error.contains("部分更新"));
     }
 }

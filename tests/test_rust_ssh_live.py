@@ -15,6 +15,8 @@ import pytest
 
 @pytest.mark.parametrize("mode", ["direct", "alias", "two_hops", "agent_forward", "aes128-cbc", "aes192-cbc", "aes256-cbc", "3des-cbc", "umask027"])
 @pytest.mark.skipif(os.name == "nt", reason="この管理下OpenSSH fixtureはLinux用")
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
+                    reason="rootは権限検査を素通りし、000/親権限の試験が成立しないため一般ユーザーで実行")
 def test_rust_auth_exec_sftp_and_resume_with_openssh(tmp_path, mode):
     binary = os.environ.get("HASHI_RUST_SSH_BINARY")
     if not binary:

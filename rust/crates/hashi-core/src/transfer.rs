@@ -295,6 +295,7 @@ pub async fn download(
     #[cfg(windows)]
     options.custom_flags(0x00200000);
     let mut output = options.open(local).await.map_err(local_error)?;
+    let modified = std::sync::atomic::AtomicBool::new(!exists);
     let result=async {
     let metadata=output.metadata().await.map_err(local_error)?;
     if !metadata.is_file() {bail!("書込み先の種類が変わりました");}
@@ -308,6 +309,7 @@ pub async fn download(
         if metadata.file_attributes() & 0x400 != 0 {bail!("reparse pointへ保存できません");}
     }
     if cancel.is_cancelled() {bail!("直接書込み開始前に取り消しました");}
+    modified.store(true, std::sync::atomic::Ordering::Relaxed);
     if exists && !policy.resume {output.set_len(0).await.map_err(local_error)?;}
     let mut bytes = vec![0; 32768];
     let mut done = offset;
@@ -330,7 +332,12 @@ pub async fn download(
     anyhow::Ok(())
     }.await;
     let flushed = output.flush().await.map_err(local_error);
-    crate::in_place_transfer::complete(result, flushed, "直接書込み/再開")
+    crate::in_place_transfer::complete(
+        result,
+        flushed,
+        "直接書込み/再開",
+        modified.load(std::sync::atomic::Ordering::Relaxed),
+    )
 }
 
 pub async fn upload(
@@ -405,12 +412,14 @@ pub async fn upload_resume(
         bail!("再開前に取り消しました");
     }
     let mut output = session.open_with_flags(remote, OpenFlags::WRITE).await?;
+    let modified = std::sync::atomic::AtomicBool::new(false);
     let result=async {
     let current=session.symlink_metadata(remote).await?;
     let opened=output.metadata().await?;
     if !current.is_regular() || !crate::atomic_transfer::same_remote(&metadata,&current)
         || !crate::atomic_transfer::same_remote(&current,&opened) {bail!("再開元が外部で変更されました");}
     if cancel.is_cancelled(){bail!("再開前に取り消しました");}
+    modified.store(true, std::sync::atomic::Ordering::Relaxed);
     output.seek(std::io::SeekFrom::Start(offset)).await?;
     let mut bytes = vec![0; 32768];
     let mut done = offset;
@@ -431,7 +440,12 @@ pub async fn upload_resume(
     anyhow::Ok(())
     }.await;
     let closed = output.close().await.map_err(anyhow::Error::from);
-    crate::in_place_transfer::complete(result, closed, "再開")
+    crate::in_place_transfer::complete(
+        result,
+        closed,
+        "再開",
+        modified.load(std::sync::atomic::Ordering::Relaxed),
+    )
 }
 
 pub async fn delete_tree(
