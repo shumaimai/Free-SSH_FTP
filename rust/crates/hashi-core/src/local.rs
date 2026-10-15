@@ -206,7 +206,8 @@ impl LocalTerminal {
             return Ok(());
         }
         self.cancel.cancel();
-        // try_waitで回収済みならPID/PGIDが別プロセスに再利用され得る。
+        // try_waitで回収済みならUnixのPID/PGIDが別プロセスに再利用され得る。
+        #[cfg(unix)]
         if self.child_reaped {
             return Ok(());
         }
@@ -234,7 +235,7 @@ impl LocalTerminal {
                 return Err(std::io::Error::last_os_error().into());
             }
         }
-        if let Some(child) = self.child.as_mut() {
+        if let Some(child) = self.child.as_mut().filter(|_| !self.child_reaped) {
             let _ = child.kill();
         }
         Ok(())
@@ -304,17 +305,19 @@ impl Drop for LocalTerminal {
                     libc::kill(-group, libc::SIGKILL);
                 }
             }
+            // WindowsのJob handleは回収済みPIDと異なり有効な所有資源。
+            // shellだけ先に終了していても、残る子孫を停止してからPTYを閉じる。
+            #[cfg(windows)]
+            if let Some(job) = &job {
+                unsafe {
+                    windows_sys::Win32::System::JobObjects::TerminateJobObject(job.0 as _, 1);
+                }
+            }
             if let Some(child) = child.as_mut().filter(|_| !child_reaped) {
                 #[cfg(unix)]
                 if let Some(pid) = child.process_id() {
                     unsafe {
                         libc::kill(-(pid as i32), libc::SIGKILL);
-                    }
-                }
-                #[cfg(windows)]
-                if let Some(job) = &job {
-                    unsafe {
-                        windows_sys::Win32::System::JobObjects::TerminateJobObject(job.0 as _, 1);
                     }
                 }
                 let _ = child.kill();
