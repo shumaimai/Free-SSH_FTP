@@ -29,3 +29,18 @@ Windows ConPTY実機、全通信/保存障害、強制終了時の確定/復元�
 Unix子孫の完全回収は未保証。30秒後の明示終了は未確認を伝え、journalを保持する。
 OS強制終了や電源断で完了を保証しない。全Rust移行の完了条件はIssue #170と
 `rust-compatibility.md` で引き続き追跡する。
+
+## PR #180追加監査への対応
+
+[コメント6191522507](https://github.com/shumaimai/Free-SSH_FTP/pull/180#issuecomment-6191522507)
+の指摘1/2には既に外側のclosing guardがあり、提示されたpanic/freezeは未再現だった。
+停止はWork.startの受付token取得後にhandleを一覧から移し、spawn拒否による所有権喪失を防ぐ。
+端末描画自身にも終了guardを置き、resizeはtry_lockと保留サイズでGUIを待たせず再試行する。
+PTYはtry_waitの回収済み状態を保持し、close失敗後のstop/DropでもPID/PGIDにkillを再送しない。
+未復元件数の表示は以前の記録を含むと明示する。
+
+RemoteTempはBatch.cleanupのtokenを通常/commit/Drop fallbackの所有タスクへ渡す。
+Batch.finish/Dropはその完了後に権限を復元するため、通常以外の削除も親000への復元に先行する。
+削除失敗時は復元を試み、失敗結果・未復元journalを保持する。断線/強制終了の完了保証はしない。
+LinuxのOpenSSH試験は9条件でtoken取消とfutureそのもののDropの両方を再現する。
+単体試験はcleanup未完了時のshutdown待ち、回収済み状態、mutex保持中のGUI描画/resize再送も確認する。

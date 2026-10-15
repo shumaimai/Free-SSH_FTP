@@ -211,6 +211,30 @@ def test_best_effort_does_not_write_into_rejected_runtime_directory(tmp_path):
         runtime.close()
 
 
+@pytest.mark.parametrize('kind', ['pending', 'corrupt', 'clear'])
+def test_rust_checks_stale_marker_data_root_read_only(tmp_path, rust_binary, kind):
+    from hashi.permjournal import PermJournal
+    directory = tmp_path / 'runtime'
+    legacy = tmp_path / 'legacy'
+    legacy.mkdir()
+    process = python_worker(directory, legacy)
+    process.kill()
+    process.wait(timeout=15)
+    path = legacy / 'perm_journal.json'
+    if kind == 'pending':
+        PermJournal(path).record('fixture@host:22', '/fixture', 0o640, process.pid)
+    else:
+        path.write_bytes(b'{' if kind == 'corrupt' else b'{}')
+    original = path.read_bytes()
+    result = subprocess.run([str(rust_binary), str(directory), '--legacy-root', str(tmp_path / 'default')],
+                            capture_output=True, text=True, timeout=15)
+    assert (result.returncode == 0) == (kind == 'clear'), result.stderr
+    assert path.read_bytes() == original
+    assert len(list(directory.glob('python-*.json'))) == 1
+    if kind == 'clear':
+        assert '確認先: 2件' in result.stderr
+
+
 @pytest.fixture
 def rust_binary():
     value = os.environ.get("HASHI_RUST_GUARD_BINARY")

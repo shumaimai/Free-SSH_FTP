@@ -227,6 +227,15 @@ fn parse_hop(text: &str, username: &str) -> Result<Target> {
 
 fn config(scope: &Scope, known: &KnownHosts) -> client::Config {
     let mut preferred = russh::Preferred::default();
+    // Python/Paramiko 5のCBC互換を保つ。現代的な暗号を先に交渉し、SHA-1署名/MACは追加しない。
+    let mut ciphers = preferred.cipher.to_vec();
+    ciphers.extend([
+        russh::cipher::AES_128_CBC,
+        russh::cipher::AES_192_CBC,
+        russh::cipher::AES_256_CBC,
+        russh::cipher::TRIPLE_DES_CBC,
+    ]);
+    preferred.cipher = Cow::Owned(ciphers);
     // Paramiko 5と同様にSHA-1署名へ自動で格下げしない。
     let mut keys = preferred.key.to_vec();
     keys.retain(|algorithm| {

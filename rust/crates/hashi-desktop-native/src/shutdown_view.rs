@@ -82,7 +82,7 @@ impl App {
                     match manager.shutdown().await {
                         Ok(0) => {}
                         Ok(pending) => errors.push(format!(
-                            "{pending}件の権限復元が未完了です。復旧記録を保持しています"
+                            "以前の記録を含む{pending}件の権限復元が未完了です。復旧記録を保持しています"
                         )),
                         Err(error) => errors.push(format!(
                             "権限復元の確認が未完了です。復旧記録を保持: {error}"

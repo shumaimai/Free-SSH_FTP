@@ -23,6 +23,7 @@ struct Job {
     label: String,
     operation: Operation,
     policy: Existing,
+    mode: transfer::Mode,
     cancel: CancellationToken,
     phase: Phase,
     done: u64,
@@ -38,6 +39,7 @@ pub(super) struct Browser {
     local_revision: Stamp,
     hidden: bool,
     policy: Existing,
+    mode: transfer::Mode,
     search: String,
     delete_confirmation: String,
     delete_target: Option<(Stamp, String)>,
@@ -54,6 +56,7 @@ impl Default for Browser {
             local_revision: Stamp::default(),
             hidden: false,
             policy: Existing::Refuse,
+            mode: transfer::Mode::Atomic,
             search: String::new(),
             delete_confirmation: String::new(),
             delete_target: None,
@@ -83,6 +86,28 @@ pub(super) enum Outcome {
 }
 
 impl App {
+    fn transfer_mode_ui(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            ui.label("転送方式:");
+            ui.radio_value(&mut self.browser.mode, transfer::Mode::Atomic, "原本保持");
+            ui.radio_value(
+                &mut self.browser.mode,
+                transfer::Mode::InPlace,
+                "直接書込み（Python互換）",
+            );
+        });
+        if self.browser.mode == transfer::Mode::InPlace {
+            ui.colored_label(
+                egui::Color32::YELLOW,
+                "直接書込みは取消・失敗でも転送先が変更され、部分データが残る場合があります。",
+            );
+        } else {
+            ui.label("原本保持には親フォルダへの書込み権限とサーバーの対応が必要です。");
+        }
+        if self.browser.policy == Existing::Resume {
+            ui.label("再開は内容を照合して部分ファイルへ直接追記します。");
+        }
+    }
     pub(super) fn refresh_local(&mut self, path: PathBuf) {
         if self.exiting {
             return;
@@ -218,6 +243,7 @@ impl App {
             job.phase = Phase::Running;
             let operation = job.operation.clone();
             let policy = job.policy;
+            let mode = job.mode;
             let id = job.id.clone();
             let cancel = job.cancel.clone();
             let navigation = job.navigation.clone();
@@ -230,6 +256,7 @@ impl App {
                     progress: &progress,
                     cancel: &cancel,
                     permission: permissions.as_ref(),
+                    mode,
                 };
                 let future = async {
                     match operation {
@@ -304,6 +331,7 @@ impl App {
             label,
             operation,
             policy: self.browser.policy,
+            mode: self.browser.mode,
             cancel,
             phase: Phase::Queued,
             done: 0,
@@ -457,7 +485,9 @@ impl App {
                 ui.radio_value(&mut self.browser.policy, policy, label);
             }
         });
-        if self.browser.policy == Existing::Overwrite {
+        self.transfer_mode_ui(ui);
+        if self.browser.policy == Existing::Overwrite && self.browser.mode == transfer::Mode::Atomic
+        {
             ui.colored_label(
                 egui::Color32::YELLOW,
                 "確定前の取消・失敗では元ファイルを保持します。確定開始後の通信失敗は結果不明になる場合があります。",
@@ -583,6 +613,7 @@ impl App {
                 .open(&mut open)
                 .default_size([1000.0, 650.0])
                 .show(ctx, |ui| {
+                    self.transfer_mode_ui(ui);
                     ui.horizontal(|ui| {
                         ui.label("既存ファイル");
                         for (policy, label) in [
@@ -678,6 +709,18 @@ impl App {
                                 "{phase}: {} {} / {} {}",
                                 job.label, job.done, job.total, job.message
                             ));
+                            if matches!(
+                                job.operation,
+                                Operation::Upload { .. } | Operation::Download { .. }
+                            ) {
+                                ui.label(if job.policy == Existing::Resume {
+                                    "方式: 直接追記（再開）"
+                                } else if job.mode == transfer::Mode::Atomic {
+                                    "方式: 原本保持"
+                                } else {
+                                    "方式: 直接書込み"
+                                });
+                            }
                             if matches!(job.phase, Phase::Queued | Phase::Running)
                                 && ui.button("中止").clicked()
                             {

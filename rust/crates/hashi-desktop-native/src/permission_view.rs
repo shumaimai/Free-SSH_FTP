@@ -16,13 +16,23 @@ impl App {
                 ui.label("sudo、ACL、旧版の未復元記録の取り込みはまだ対応していません。");
                 ui.checkbox(
                     &mut self.legacy_stopped,
-                    "旧Python版を終了し、未復元の権限変更がないことを確認した",
+                    "マーカーで確認できない旧版も含め、すべての旧Python版を終了した",
                 );
                 let Some(tab) = self.tabs.get(self.active) else {
                     ui.label("SSH接続を選択してください");
                     return;
                 };
                 let enabled = tab.permissions.is_some();
+                if let Some(note) = tab
+                    .permissions
+                    .as_ref()
+                    .and_then(|manager| manager.migration_note())
+                {
+                    ui.label(note);
+                }
+                ui.label(
+                    "旧版の未復元記録があれば権限補助を開始しません。旧版で復旧してください。",
+                );
                 let busy = tab.permissions_busy;
                 let connected = tab.session.is_some()
                     && !tab.closing

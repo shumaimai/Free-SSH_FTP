@@ -105,6 +105,7 @@ struct Tab {
     search_open: bool,
     search_position: Option<(i32, usize)>,
     pending_size: Option<(u32, u32)>,
+    pending_local_size: Option<(u16, u16)>,
     permissions: Option<Arc<hashi_core::permissions::Manager>>,
     permissions_busy: bool,
     work: Work,
@@ -148,6 +149,7 @@ impl Tab {
             search_open: false,
             search_position: None,
             pending_size: None,
+            pending_local_size: None,
             permissions: None,
             permissions_busy: false,
         }
@@ -607,7 +609,7 @@ impl App {
                 let entries = hashi_core::permissions::with_access(
                     permissions.as_ref(),
                     &path,
-                    0o555,
+                    0o500,
                     || transfer::list_bounded(&session, &path, &cancel),
                 )
                 .await?;
@@ -952,6 +954,39 @@ mod tests {
         assert!(tab.apply_listing(current, "/new".into(), vec![]));
         assert_eq!(tab.path, "/new");
     }
+    #[test]
+    fn terminal_resize_does_not_wait_for_local_close_lock_and_retries() {
+        let mut tab = Tab::new("試験".into());
+        let (tx, _rx) = mpsc::channel(1);
+        let program = if cfg!(windows) { "cmd.exe" } else { "/bin/sh" };
+        let local = Arc::new(Mutex::new(
+            LocalTerminal::spawn(program, &[], None, tab.stamp.clone(), tx).unwrap(),
+        ));
+        tab.local = Some(local.clone());
+        let context = egui::Context::default();
+        let show = |tab: &mut Tab| {
+            let mut output =
+                context.run_ui(egui::RawInput::default(), |ui| terminal_view::show(ui, tab));
+            // この試験はrendererを持たず、texture差分は意図して破棄する。
+            output.textures_delta.clear();
+        };
+        // closeが保持する同じmutexを取得済みでも、GUI frameは戻る。
+        let lock = local.lock().unwrap();
+        show(&mut tab);
+        assert!(tab.pending_local_size.is_some());
+        drop(lock);
+        show(&mut tab);
+        assert!(
+            tab.pending_local_size.is_none(),
+            "競合で保留したサイズを次frameで送る"
+        );
+        tab.closing = true;
+        let lock = local.lock().unwrap();
+        show(&mut tab);
+        drop(lock);
+        local.lock().unwrap().close().unwrap();
+    }
+
     #[tokio::test]
     async fn bounded_terminal_input_preserves_order_when_channel_is_full() {
         let mut tab = Tab::new("試験".into());

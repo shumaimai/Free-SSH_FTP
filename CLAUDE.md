@@ -558,7 +558,7 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - 権限候補はSFTP所有ファイルのみ。sudo・旧Python journal引継ぎは互換表の未完了条件を維持する。
 - 有効なRust権限補助の一覧/転送/復旧取引はタブをまたいで直列化し、復元までoperation guardを保持する。低レベルacquireを画面側から直接使わない。
 
-- Rust通常転送は原本へ直接truncateせずprivate tempへ書き、サイズ/metadataと同期を確認して確定する。
+- Rust原本保持転送は原本へ直接truncateせずprivate tempへ書き、サイズ/metadataと同期を確認して確定する。
 - remote uploadのfsync/POSIX rename対応は変更前に確認する。EXCL open成功を確認したtempだけcleanupする。
 - 確定済み/確定結果不明/ローカル失敗をリモートchmod再試行へ流さない。復元エラーで確定状態を消さない。
 - GUIの取消はtokenで伝え、確定ACKと権限復元を待つ。確定後の取消は元へ戻ったと断定しない。
@@ -572,3 +572,9 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 
 - Pythonの移行ガードはOSロック競合だけ起動を停止する。FS/開始時刻/マーカーの異常は警告して起動し、取得できた共有ロックは終了まで保つ。
 - マーカーが無いことから旧版停止を認定しない。Rustの移行/権限補助では旧版停止確認を別途要求する。
+
+- Rustの転送方式は原本保持（既定）/直接書込みをジョブごとに明示する。失敗時に自動fallbackしない。直接書込み/resumeの変更後エラーをchmod再試行へ流さない。
+- 新規ファイルは0666と実環境umaskを適用する。原本保持のpayload tempは0600、mode probeは空だけ。既存置換のために親writeを増やさず、同一batchの別ファイル用grantも流用しない。
+- 権限補助の追加bitはowner最小限だけ。旧Pythonの既定/残存markerのdata_rootを読取検査し、未復元・破損・不明なら拒否、旧記録を変更しない。
+- RemoteTempのfallback/commit所有タスクはBatchのcleanup tokenを保持し、親mode復元は削除完了後にする。失敗を隠さない。
+- ポート転送停止は受付tokenを確保してから所有handleを外す。GUIのPTY resizeでblocking lockを取らず、保留サイズを次frameで再試行する。回収済みPID/PGIDへkillを再送しない。

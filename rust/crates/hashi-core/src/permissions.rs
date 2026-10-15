@@ -24,6 +24,7 @@ pub struct Manager {
     owner: String,
     active: Mutex<BTreeMap<String, Active>>,
     legacy_guard: Option<Arc<hashi_storage::migration::MigrationLease>>,
+    legacy_inspection: Option<hashi_storage::legacy_permissions::Inspection>,
 }
 fn operation_gate() -> Arc<Mutex<()>> {
     static GATE: std::sync::OnceLock<Arc<Mutex<()>>> = std::sync::OnceLock::new();
@@ -44,6 +45,7 @@ impl Manager {
             owner: uuid::Uuid::new_v4().to_string(),
             active: Mutex::new(BTreeMap::new()),
             legacy_guard: None,
+            legacy_inspection: None,
         })
     }
     pub fn scoped(
@@ -73,6 +75,11 @@ impl Manager {
         let journal = Arc::new(Journal::at(
             hashi_storage::paths::permission_journal_root()?
         )?);
+        let legacy_inspection = hashi_storage::legacy_permissions::inspect(
+            &hashi_storage::paths::config_root(hashi_storage::paths::Channel::Python)?,
+            &lease.stale_markers,
+        )?;
+        legacy_inspection.require_clear()?;
         Ok(Arc::new(Self {
             work: crate::work::Work::default(),
             backend,
@@ -81,7 +88,17 @@ impl Manager {
             owner: uuid::Uuid::new_v4().to_string(),
             active: Mutex::new(BTreeMap::new()),
             legacy_guard: Some(lease),
+            legacy_inspection: Some(legacy_inspection),
         }))
+    }
+    pub fn migration_note(&self) -> Option<String> {
+        let guard = self.legacy_guard.as_ref()?;
+        let status = self.legacy_inspection.as_ref()?;
+        Some(format!(
+            "旧版の残存マーカー{}件、復旧記録の確認先{}件（未復元0件）。旧記録は変更していません。",
+            guard.stale_markers.len(),
+            status.paths.len()
+        ))
     }
     pub async fn shutdown(&self) -> Result<usize> {
         self.work.close();
@@ -353,12 +370,30 @@ pub struct Batch {
     grants: Vec<Grant>,
     operation_guard: Option<tokio::sync::OwnedMutexGuard<()>>,
     work: crate::work::Work,
+    cleanup: crate::work::Work,
 }
 impl Batch {
+    pub(crate) fn cleanup(&self) -> crate::work::Work {
+        self.cleanup.clone()
+    }
+    pub fn require_original_parent_write(&self, parent: &str) -> Result<()> {
+        if let Some(manager) = &self.manager {
+            if manager
+                .journal
+                .pending_all()?
+                .iter()
+                .any(|entry| entry.path == parent && entry.original_mode & 0o200 == 0)
+            {
+                bail!("原本保持の既存置換では、新規作成用に一時追加した親の書込み権限を使いません。権限を復元して直接書込みを選択してください");
+            }
+        }
+        Ok(())
+    }
     pub fn new(manager: Option<&Arc<Manager>>) -> Self {
         Self {
             manager: manager.cloned(),
             grants: vec![],
+            cleanup: crate::work::Work::default(),
             operation_guard: None,
             work: manager
                 .map(|manager| manager.work.clone())
@@ -395,10 +430,19 @@ impl Batch {
     pub async fn finish(mut self) -> Result<()> {
         let grants = std::mem::take(&mut self.grants);
         let operation = self.operation_guard.take();
+        let cleanup = self.cleanup.clone();
+        cleanup.close();
         self.work
             .cleanup(&tokio::runtime::Handle::current(), async move {
                 let _operation = operation;
-                restore_batch(grants).await
+                cleanup.wait().await;
+                let errors = cleanup.take_errors();
+                let restored = restore_batch(grants).await;
+                if errors.is_empty() {
+                    restored
+                } else {
+                    complete::<()>(Err(anyhow::anyhow!(errors.join("; "))), restored)
+                }
             })
             .await
             .context("権限復元タスクが終了しました")?
@@ -421,10 +465,13 @@ impl Drop for Batch {
     fn drop(&mut self) {
         let grants = std::mem::take(&mut self.grants);
         let operation = self.operation_guard.take();
-        if !grants.is_empty() {
+        let cleanup = self.cleanup.clone();
+        cleanup.close();
+        if !grants.is_empty() || !cleanup.is_finished() {
             if let Ok(runtime) = tokio::runtime::Handle::try_current() {
                 self.work.cleanup(&runtime, async move {
                     let _operation = operation;
+                    cleanup.wait().await;
                     restore_batch(grants).await
                 });
             }
@@ -580,6 +627,33 @@ mod tests {
         assert_eq!(manager.recover().await.unwrap(), (2, 0));
         assert_eq!(backend.changes.lock().await[0].0, "/parent/child");
     }
+    #[tokio::test]
+    async fn scope_drop_waits_for_temp_cleanup_before_restoring_parent() {
+        let root = tempfile::tempdir().unwrap();
+        let journal = Arc::new(Journal::at(root.path().join("journal")).unwrap());
+        let backend = Arc::new(Fake::default());
+        let manager = Manager::new(backend.clone(), journal.clone(), "conn".into());
+        let mut batch = Batch::new(Some(&manager));
+        batch
+            .grants
+            .push(manager.acquire("/parent", 0o300).await.unwrap());
+        let cleanup = batch.cleanup();
+        let token = cleanup.start().unwrap();
+        drop(batch);
+        let shutdown = manager.shutdown();
+        tokio::pin!(shutdown);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), &mut shutdown)
+                .await
+                .is_err()
+        );
+        assert_eq!(backend.mode("/parent").await.unwrap(), 0o300);
+        assert_eq!(journal.pending("conn").unwrap().len(), 1);
+        drop(token);
+        assert_eq!(shutdown.await.unwrap(), 0);
+        assert_eq!(backend.mode("/parent").await.unwrap(), 0);
+    }
+
     #[tokio::test]
     async fn cancelled_recursive_scope_restores_children_before_parent() {
         let root = tempfile::tempdir().unwrap();

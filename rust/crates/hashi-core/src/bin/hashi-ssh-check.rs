@@ -10,6 +10,8 @@ use serde::Deserialize;
 use std::{io::Read, path::PathBuf, sync::Arc};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+#[path = "support/compat.rs"]
+mod compat;
 
 #[derive(Deserialize)]
 struct Request {
@@ -20,6 +22,8 @@ struct Request {
     ssh_config: Option<PathBuf>,
     #[serde(default)]
     expected_agent_key: Option<String>,
+    #[serde(default)]
+    compat_only: bool,
 }
 
 #[tokio::main]
@@ -52,6 +56,15 @@ async fn main() -> Result<()> {
         )
         .await?,
     );
+    if req.compat_only {
+        compat::verify(&session, &req.directory).await?;
+        session.background.close();
+        session.background.wait().await;
+        anyhow::ensure!(session.background.take_errors().is_empty(), "cleanup失敗");
+        session.close().await?;
+        println!("ssh-sftp-compat-verified");
+        return Ok(());
+    }
     if let Some(key) = req.expected_agent_key.as_ref() {
         let mut channel = session.shell(80, 24).await?;
         channel.data(&b"ssh-add -L\r"[..]).await?;
@@ -104,6 +117,7 @@ async fn main() -> Result<()> {
         progress: &tx,
         cancel: &cancel,
         permission: None,
+        mode: transfer::Mode::Atomic,
     };
     let upload = transfer::upload(&session, &xfer, &source, &remote, false, &upload_context);
     let directory = req.directory.to_string_lossy();
@@ -112,6 +126,27 @@ async fn main() -> Result<()> {
     let (uploaded, listed) = tokio::join!(upload, list);
     uploaded?;
     listed?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let server_default = req.directory.join("server-default");
+        let expected = xfer
+            .open_with_flags_and_attributes(
+                server_default.to_string_lossy().as_ref(),
+                russh_sftp::protocol::OpenFlags::WRITE
+                    | russh_sftp::protocol::OpenFlags::CREATE
+                    | russh_sftp::protocol::OpenFlags::EXCLUDE,
+                russh_sftp::protocol::FileAttributes::default(),
+            )
+            .await?;
+        expected.close().await?;
+        anyhow::ensure!(
+            std::fs::metadata(&remote)?.permissions().mode() & 0o777
+                == std::fs::metadata(&server_default)?.permissions().mode() & 0o777,
+            "新規upload modeがサーバー既定と違います"
+        );
+        tokio::fs::remove_file(server_default).await?;
+    }
     let entries =
         transfer::list_bounded(&session, &req.directory.to_string_lossy(), &cancel).await?;
     anyhow::ensure!(
@@ -128,6 +163,18 @@ async fn main() -> Result<()> {
         &cancel,
     )
     .await?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let default = tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o666))
+            .tempfile_in(&req.directory)?;
+        anyhow::ensure!(
+            std::fs::metadata(&restored)?.permissions().mode() & 0o777
+                == default.as_file().metadata()?.permissions().mode() & 0o777,
+            "新規download modeがローカル既定と違います"
+        );
+    }
     anyhow::ensure!(
         tokio::fs::read(&restored).await? == bytes,
         "転送内容が一致しません"
@@ -140,6 +187,7 @@ async fn main() -> Result<()> {
         transfer::DownloadPolicy {
             overwrite: false,
             resume: true,
+            mode: transfer::Mode::Atomic,
         },
         "resume",
         &tx,
@@ -175,6 +223,7 @@ async fn main() -> Result<()> {
         progress: &tx,
         cancel: &cancel,
         permission: None,
+        mode: transfer::Mode::Atomic,
     };
     let report = hashi_core::transfer_tree::upload_tree(
         &session,
@@ -301,6 +350,7 @@ async fn main() -> Result<()> {
             progress: &progress,
             cancel: &cancel,
             permission: Some(&manager),
+            mode: transfer::Mode::Atomic,
         };
         let upload_source = req.directory.join("permission-source");
         tokio::fs::write(&upload_source, b"permission-overwrite").await?;
@@ -341,59 +391,205 @@ async fn main() -> Result<()> {
             "新規作成した内容が違います"
         );
         tokio::fs::remove_dir_all(new_directory).await?;
-        // 親000の取消ではtemp削除を終えてから親modeを戻す。
-        let cancelled_directory = req.directory.join("permission-cancel");
-        tokio::fs::create_dir(&cancelled_directory).await?;
-        let cancelled_destination = cancelled_directory.join("original");
-        tokio::fs::write(&cancelled_destination, b"keep-original").await?;
-        tokio::fs::write(&upload_source, vec![b'x'; 1024 * 1024]).await?;
-        std::fs::set_permissions(&cancelled_directory, std::fs::Permissions::from_mode(0o0))?;
-        let token = CancellationToken::new();
-        let (updates, mut receiver) = mpsc::channel(1);
-        let cancellation_context = hashi_core::transfer_tree::TaskContext {
-            job: "permission-cancel",
-            progress: &updates,
-            cancel: &token,
+        // token取消だけでなくfuture自体のDropでも、temp削除を終えてから親000へ戻す。
+        for drop_future in [false, true] {
+            let cancelled_directory = req.directory.join(if drop_future {
+                "permission-drop"
+            } else {
+                "permission-cancel"
+            });
+            tokio::fs::create_dir(&cancelled_directory).await?;
+            let preserved_original = cancelled_directory.join("original");
+            let cancelled_destination = cancelled_directory.join("new-file");
+            tokio::fs::write(&preserved_original, b"keep-original").await?;
+            tokio::fs::write(&upload_source, vec![b'x'; 1024 * 1024]).await?;
+            std::fs::set_permissions(&cancelled_directory, std::fs::Permissions::from_mode(0o0))?;
+            let token = CancellationToken::new();
+            let (updates, mut receiver) = mpsc::channel(1);
+            let cancellation_context = hashi_core::transfer_tree::TaskContext {
+                job: "permission-cancel",
+                progress: &updates,
+                cancel: &token,
+                permission: Some(&manager),
+                mode: transfer::Mode::Atomic,
+            };
+            let destination = cancelled_destination.to_string_lossy();
+            {
+                let upload = hashi_core::transfer_tree::upload_tree(
+                    &session,
+                    &xfer,
+                    &upload_source,
+                    &destination,
+                    hashi_core::transfer_tree::Existing::Overwrite,
+                    &cancellation_context,
+                );
+                tokio::pin!(upload);
+                tokio::select! {
+                    progress=receiver.recv()=>{
+                        anyhow::ensure!(progress.is_some(), "取消試験の進捗がありません");
+                        if !drop_future {
+                            token.cancel();
+                            anyhow::ensure!(upload.await.is_err(), "取消が結果へ反映されません");
+                        }
+                        // drop_futureなら、scopeを抜けてupload自体をDropする。
+                    },
+                    result=&mut upload=>{result?; anyhow::bail!("取消前に転送が終わりました");},
+                }
+            }
+            if drop_future {
+                tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                    while !journal.pending(&connection)?.is_empty() {
+                        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                    }
+                    anyhow::Ok(())
+                })
+                .await??;
+            }
+            anyhow::ensure!(
+                std::fs::metadata(&cancelled_directory)?
+                    .permissions()
+                    .mode()
+                    & 0o777
+                    == 0,
+                "取消後の親権限が復元されません"
+            );
+            std::fs::set_permissions(&cancelled_directory, std::fs::Permissions::from_mode(0o700))?;
+            anyhow::ensure!(
+                std::fs::read_dir(&cancelled_directory)?.count() == 1,
+                "親権限復元後に未削除のtempが残りました"
+            );
+            anyhow::ensure!(
+                tokio::fs::read(&preserved_original).await? == b"keep-original",
+                "取消で既存ファイルが変わりました"
+            );
+            tokio::fs::remove_dir_all(cancelled_directory).await?;
+        }
+        let readonly_parent = req.directory.join("direct-readonly-parent");
+        tokio::fs::create_dir(&readonly_parent).await?;
+        let destination = readonly_parent.join("file");
+        tokio::fs::write(&destination, b"original").await?;
+        use std::os::unix::fs::MetadataExt;
+        let inode = std::fs::metadata(&destination)?.ino();
+        std::fs::set_permissions(&destination, std::fs::Permissions::from_mode(0o0))?;
+        std::fs::set_permissions(&readonly_parent, std::fs::Permissions::from_mode(0o500))?;
+        let remote = destination.to_string_lossy();
+        let refused = hashi_core::transfer_tree::upload_tree(
+            &session,
+            &xfer,
+            &upload_source,
+            &remote,
+            hashi_core::transfer_tree::Existing::Overwrite,
+            &context,
+        )
+        .await;
+        anyhow::ensure!(
+            refused.is_err(),
+            "原本保持が書込み不可の親を自動拡大しました"
+        );
+        anyhow::ensure!(
+            std::fs::metadata(&readonly_parent)?.permissions().mode() & 0o777 == 0o500,
+            "原本保持で親のmodeが変わりました"
+        );
+        let (writes, mut write_progress) = mpsc::channel(1);
+        let direct = hashi_core::transfer_tree::TaskContext {
+            job: "direct-permission",
+            progress: &writes,
+            cancel: &cancel,
             permission: Some(&manager),
+            mode: transfer::Mode::InPlace,
         };
-        let destination = cancelled_destination.to_string_lossy();
         {
             let upload = hashi_core::transfer_tree::upload_tree(
                 &session,
                 &xfer,
                 &upload_source,
-                &destination,
+                &remote,
                 hashi_core::transfer_tree::Existing::Overwrite,
-                &cancellation_context,
+                &direct,
             );
             tokio::pin!(upload);
             tokio::select! {
-                progress=receiver.recv()=>{
-                    anyhow::ensure!(progress.is_some(), "取消試験の進捗がありません");
-                    token.cancel();
-                    anyhow::ensure!(upload.await.is_err(), "取消が結果へ反映されません");
+                update=write_progress.recv()=>{
+                    anyhow::ensure!(update.is_some(),"権限中の書込み進捗がありません");
+                    anyhow::ensure!(std::fs::metadata(&destination)?.permissions().mode() & 0o777==0o200,"現在の利用者以外へ書込み権限が広がりました");
+                    anyhow::ensure!(std::fs::metadata(&readonly_parent)?.permissions().mode() & 0o777==0o500,"転送中に親のmodeを広げました");
                 },
-                result=&mut upload=>{result?; anyhow::bail!("取消前に転送が終わりました");},
+                result=&mut upload=>{result?;anyhow::bail!("検証前に転送が完了しました");},
+            }
+            loop {
+                tokio::select! {
+                    result=&mut upload=>{result?;break;},
+                    _=write_progress.recv()=>{},
+                }
             }
         }
         anyhow::ensure!(
-            std::fs::metadata(&cancelled_directory)?
-                .permissions()
-                .mode()
-                & 0o777
-                == 0,
-            "取消後の親権限が復元されません"
-        );
-        std::fs::set_permissions(&cancelled_directory, std::fs::Permissions::from_mode(0o700))?;
-        anyhow::ensure!(
-            std::fs::read_dir(&cancelled_directory)?.count() == 1,
-            "親権限復元後に未削除のtempが残りました"
+            std::fs::metadata(&readonly_parent)?.permissions().mode() & 0o777 == 0o500,
+            "直接書込みで親のmodeが変わりました"
         );
         anyhow::ensure!(
-            tokio::fs::read(&cancelled_destination).await? == b"keep-original",
-            "取消で既存ファイルが変わりました"
+            std::fs::metadata(&destination)?.permissions().mode() & 0o777 == 0,
+            "対象ファイルのmodeが復元されません"
         );
-        tokio::fs::remove_dir_all(cancelled_directory).await?;
+        anyhow::ensure!(
+            std::fs::metadata(&destination)?.ino() == inode,
+            "直接書込みでinodeが変わりました"
+        );
+        anyhow::ensure!(
+            journal.pending(&connection)?.is_empty(),
+            "直接書込みの復旧記録が残りました"
+        );
+        std::fs::set_permissions(&destination, std::fs::Permissions::from_mode(0o600))?;
+        anyhow::ensure!(
+            tokio::fs::read(&destination).await? == tokio::fs::read(&upload_source).await?,
+            "直接書込みの内容が違います"
+        );
+        std::fs::set_permissions(&readonly_parent, std::fs::Permissions::from_mode(0o700))?;
+        tokio::fs::remove_dir_all(readonly_parent).await?;
+        let mixed_local = req.directory.join("mixed-local");
+        let mixed_remote = req.directory.join("mixed-remote");
+        tokio::fs::create_dir(&mixed_local).await?;
+        tokio::fs::create_dir(&mixed_remote).await?;
+        tokio::fs::write(mixed_local.join("a"), b"mixed-new").await?;
+        tokio::fs::write(mixed_local.join("b"), b"mixed-new").await?;
+        // 変更しない二要素のfixtureで、実際のreaddir順から新規→既存を設定する。
+        let order = std::fs::read_dir(&mixed_local)?
+            .map(|entry| entry.map(|entry| entry.file_name()))
+            .collect::<std::io::Result<Vec<_>>>()?;
+        tokio::fs::write(mixed_remote.join(&order[1]), b"mixed-original").await?;
+        std::fs::set_permissions(&mixed_remote, std::fs::Permissions::from_mode(0o500))?;
+        let result = hashi_core::transfer_tree::upload_tree(
+            &session,
+            &xfer,
+            &mixed_local,
+            &mixed_remote.to_string_lossy(),
+            hashi_core::transfer_tree::Existing::Overwrite,
+            &context,
+        )
+        .await;
+        anyhow::ensure!(
+            result.is_err(),
+            "再帰中の借用済み親writeを既存置換に使いました"
+        );
+        anyhow::ensure!(
+            tokio::fs::read(mixed_remote.join(&order[0])).await? == b"mixed-new",
+            "新規→既存の試験順が違います"
+        );
+        anyhow::ensure!(
+            tokio::fs::read(mixed_remote.join(&order[1])).await? == b"mixed-original",
+            "混在ツリーで既存原本を変えました"
+        );
+        anyhow::ensure!(
+            std::fs::metadata(&mixed_remote)?.permissions().mode() & 0o777 == 0o500,
+            "混在ツリーの親modeが戻りません"
+        );
+        anyhow::ensure!(
+            journal.pending(&connection)?.is_empty(),
+            "混在ツリーの復旧記録が残りました"
+        );
+        std::fs::set_permissions(&mixed_remote, std::fs::Permissions::from_mode(0o700))?;
+        tokio::fs::remove_dir_all(mixed_remote).await?;
+        tokio::fs::remove_dir_all(mixed_local).await?;
         let result = hashi_core::transfer_tree::download_tree(
             &session,
             &xfer,
@@ -479,6 +675,7 @@ async fn verify_atomic_transfers(
         progress: &tx,
         cancel: &cancel,
         permission: None,
+        mode: transfer::Mode::Atomic,
     };
     {
         let upload = transfer::upload(session, sftp, source, remote, true, &context);
@@ -500,6 +697,7 @@ async fn verify_atomic_transfers(
         progress: &failed,
         cancel: &token,
         permission: None,
+        mode: transfer::Mode::Atomic,
     };
     anyhow::ensure!(
         transfer::upload(session, sftp, source, remote, true, &context)
@@ -518,6 +716,7 @@ async fn verify_atomic_transfers(
         progress: &tx,
         cancel: &token,
         permission: None,
+        mode: transfer::Mode::Atomic,
     };
     transfer::upload(session, sftp, source, remote, true, &context).await?;
     anyhow::ensure!(
@@ -532,6 +731,7 @@ async fn verify_atomic_transfers(
     let policy = transfer::DownloadPolicy {
         overwrite: true,
         resume: false,
+        mode: transfer::Mode::Atomic,
     };
     {
         let download =

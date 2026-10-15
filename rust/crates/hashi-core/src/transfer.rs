@@ -209,6 +209,13 @@ async fn notify(
 pub struct DownloadPolicy {
     pub overwrite: bool,
     pub resume: bool,
+    pub mode: Mode,
+}
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum Mode {
+    #[default]
+    Atomic,
+    InPlace,
 }
 
 pub async fn download(
@@ -220,14 +227,27 @@ pub async fn download(
     progress: &mpsc::Sender<Progress>,
     cancel: &CancellationToken,
 ) -> Result<()> {
-    if !policy.resume {
+    if !policy.resume && policy.mode == Mode::Atomic {
         return crate::atomic_transfer::download(
             session, remote, local, policy, job, progress, cancel,
         )
         .await;
     }
     let total = session.metadata(remote).await?.len();
-    let exists = tokio::fs::try_exists(local).await.map_err(local_error)?;
+    let existing = match tokio::fs::symlink_metadata(local).await {
+        Ok(meta) if meta.is_file() && !meta.file_type().is_symlink() => Some(meta),
+        Ok(_) => bail!("通常ファイル以外へ保存できません"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(local_error(error)),
+    };
+    #[cfg(windows)]
+    if let Some(meta) = &existing {
+        use std::os::windows::fs::MetadataExt;
+        if meta.file_attributes() & 0x400 != 0 {
+            bail!("reparse pointへ保存できません");
+        }
+    }
+    let exists = existing.is_some();
     if exists && !policy.overwrite && !policy.resume {
         bail!("既存ファイルの上書き確認が必要です");
     }
@@ -261,15 +281,34 @@ pub async fn download(
     }
     input.seek(std::io::SeekFrom::Start(offset)).await?;
     let mut options = tokio::fs::OpenOptions::new();
+    if cancel.is_cancelled() {
+        bail!("直接書込み開始前に取り消しました");
+    }
     options.write(true);
     if policy.resume && exists {
         options.append(true);
-    } else if exists {
-        options.truncate(true);
-    } else {
+    } else if !exists {
         options.create_new(true);
     }
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NOFOLLOW);
+    #[cfg(windows)]
+    options.custom_flags(0x00200000);
     let mut output = options.open(local).await.map_err(local_error)?;
+    let result=async {
+    let metadata=output.metadata().await.map_err(local_error)?;
+    if !metadata.is_file() {bail!("書込み先の種類が変わりました");}
+    #[cfg(unix)]
+    if let Some(expected)=&existing {
+        use std::os::unix::fs::MetadataExt;
+        if (expected.dev(),expected.ino()) != (metadata.dev(),metadata.ino()) {bail!("書込み先が外部で変更されました");}
+    }
+    #[cfg(windows)] {
+        use std::os::windows::fs::MetadataExt;
+        if metadata.file_attributes() & 0x400 != 0 {bail!("reparse pointへ保存できません");}
+    }
+    if cancel.is_cancelled() {bail!("直接書込み開始前に取り消しました");}
+    if exists && !policy.resume {output.set_len(0).await.map_err(local_error)?;}
     let mut bytes = vec![0; 32768];
     let mut done = offset;
     loop {
@@ -288,10 +327,41 @@ pub async fn download(
     if done != total {
         bail!("転送したサイズが一致しません");
     }
-    Ok(())
+    anyhow::Ok(())
+    }.await;
+    let flushed = output.flush().await.map_err(local_error);
+    crate::in_place_transfer::complete(result, flushed, "直接書込み/再開")
 }
 
-pub use crate::atomic_transfer::upload;
+pub async fn upload(
+    ssh: &crate::ssh::SshSession,
+    session: &SftpSession,
+    local: &Path,
+    remote: &str,
+    overwrite: bool,
+    context: &crate::transfer_tree::TaskContext<'_>,
+) -> Result<()> {
+    upload_scoped(ssh, session, local, remote, overwrite, context, None).await
+}
+pub(crate) async fn upload_scoped(
+    ssh: &crate::ssh::SshSession,
+    session: &SftpSession,
+    local: &Path,
+    remote: &str,
+    overwrite: bool,
+    context: &crate::transfer_tree::TaskContext<'_>,
+    cleanup: Option<&crate::work::Work>,
+) -> Result<()> {
+    match context.mode {
+        Mode::Atomic => {
+            crate::atomic_transfer::upload(ssh, session, local, remote, overwrite, context, cleanup)
+                .await
+        }
+        Mode::InPlace => {
+            crate::in_place_transfer::upload(ssh, session, local, remote, overwrite, context).await
+        }
+    }
+}
 
 pub async fn upload_resume(
     session: &SftpSession,
@@ -331,7 +401,16 @@ pub async fn upload_resume(
     if session.metadata(remote).await?.len() != offset {
         bail!("再開確認中にリモートファイルが変わりました");
     }
+    if cancel.is_cancelled() {
+        bail!("再開前に取り消しました");
+    }
     let mut output = session.open_with_flags(remote, OpenFlags::WRITE).await?;
+    let result=async {
+    let current=session.symlink_metadata(remote).await?;
+    let opened=output.metadata().await?;
+    if !current.is_regular() || !crate::atomic_transfer::same_remote(&metadata,&current)
+        || !crate::atomic_transfer::same_remote(&current,&opened) {bail!("再開元が外部で変更されました");}
+    if cancel.is_cancelled(){bail!("再開前に取り消しました");}
     output.seek(std::io::SeekFrom::Start(offset)).await?;
     let mut bytes = vec![0; 32768];
     let mut done = offset;
@@ -346,11 +425,13 @@ pub async fn upload_resume(
     }
     output.flush().await?;
     output.sync_all().await?;
-    output.close().await?;
     if done != total {
         bail!("転送元のサイズが変わりました");
     }
-    Ok(())
+    anyhow::Ok(())
+    }.await;
+    let closed = output.close().await.map_err(anyhow::Error::from);
+    crate::in_place_transfer::complete(result, closed, "再開")
 }
 
 pub async fn delete_tree(
