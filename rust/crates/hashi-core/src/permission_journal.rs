@@ -107,7 +107,20 @@ impl Journal {
         }
         let file = options.open(path)?;
         validate_file(&file)?;
-        FileExt::try_lock_exclusive(&file).context("別の処理が権限記録を保存しています")?;
+        // fsyncや同時プロセス起動による短い競合を待つ。外部所有者で無期限停止しない。
+        let until = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        loop {
+            match FileExt::try_lock_exclusive(&file) {
+                Ok(()) => break,
+                Err(error)
+                    if error.raw_os_error() == fs2::lock_contended_error().raw_os_error()
+                        && std::time::Instant::now() < until =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(2))
+                }
+                Err(error) => return Err(error).context("別の処理が権限記録を保存しています"),
+            }
+        }
         Ok(file)
     }
     fn key(_connection: &str, path: &str) -> String {
