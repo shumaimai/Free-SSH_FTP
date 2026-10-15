@@ -8,7 +8,7 @@ Issue #170の完了条件をこの表で省略しない。候補に存在する�
 | 旧版との保存先分離・実行中マーカー | shared/exclusive OSロック、PID+開始時刻、記録失敗は警告してPython起動、旧journalの検出 | マーカー非対応旧版停止の取り込みUI確認、Darwin照会 |
 | Profile/Settings/known_hosts/export | 全旧フィールド、atomic state、v1、追加のみmerge | 全設定UI、旧データ取り込み・ロールバックUI |
 | SSH/AI秘密・クラウド暗号 | 分離ファイル、scrypt/Fernet、WinVaultの2種類のTargetNameとPython互換Enterprise永続化 | OSストア/暗号化ファイルの選択UI、実Python keyring双方互換 |
-| 日本語ネイティブGUI | eframe/egui、NotoSansJP、接続先フォーム、タブ、受付停止→処理/復元待ち→接続終了 | 旧UIの操作・テーマ・DPI互換、IME実機、全終了故障行列 |
+| 日本語ネイティブGUI | eframe/egui、NotoSansJP、新しい画面構成（ホームの接続カード、接続の編集窓、上部タブ、右の「ファイル/AI」ドック、ツールメニュー）、受付停止→処理/復元待ち→接続終了 | テーマ・DPI、IME実機、全終了故障行列。旧Python版の画面構成は意図して再現しない（機能の対応だけを本表で追う） |
 | SSH認証・ホスト鍵 | key/password/agent、RSA SHA-2、公開鍵blob指紋、対象付き認証応答 | 全鍵形式・SHA-1専用サーバー等の暗号行列、Windows agent実環境、パスフレーズ再入力行列 |
 | ProxyJump | SSH configのHost解決、複数hop、鍵→agent→passwordの別認証、接続失敗時のhop回収 | Match/Includeの対応、全失敗行列、実運用の多段接続 |
 | ポート転送 | -L/-R/-D、SOCKS5 CONNECT、GUI開始/停止、限定経路、個別取消、停止の受付token確保後にハンドルを移す | 実Windowsの全経路、停止通信失敗時の待受残存検証 |
@@ -22,7 +22,7 @@ Issue #170の完了条件をこの表で省略しない。候補に存在する�
 | 権限・サーバー設定 | 明示的な一覧/転送の権限補助、chmod前fsync journal、対象/祖先の参照数、深い順・mode確認後の復元、終了時の復元待ち、再接続後の復旧UI | sudo、旧Python journalの復元/引継ぎUI、全終了故障行列、sshd/netplan rollback |
 | SSH鍵生成・公開鍵登録 | Ed25519/ECDSA(256/384/521)/RSA(2048/3072/4096)、パスフレーズ（bcrypt-pbkdf）、全種別OpenSSH形式、no-clobber/明示上書き、Unix 0600と新規フォルダ0700、Windowsの~/.ssh外警告、SFTPで~/.ssh/authorized_keysへ末尾追記・重複防止 | Windows実機のACL、RSA 4096の体感時間、Python版はRSA/ECDSAを従来PEMで書く差（Python版はOpenSSH形式も読める） |
 | P2P・Google Drive同期 | 暗号v1契約のみ | X25519/SAS、通信、Google Drive現行backend、秘密同期と衝突処理 |
-| AI/API/OAuth | AI秘密形式、プロバイダー中立のツール定義/秘密除去/観測JSON、APIキー方式（OpenAI Responses・Anthropic Messages・互換Chat Completions・Command Code、モデル一覧、toolsなし接続確認、URL検証・リダイレクト禁止・SSE上限）、会話（最大8往復・取消・観測データの送信前確認/編集）、AI専用暗号化ストアへのキー保存、`ai_api_kind`/`ai_api_profiles` | ChatGPT OAuth（独立サインイン・アカウント選択・更新単一所有者）、実API（OpenAI/Anthropic/Command Code）での確認、OSの資格情報ストア |
+| AI/API/OAuth | AI秘密形式、プロバイダー中立のツール定義/秘密除去/観測JSON、APIキー方式（OpenAI Responses・Anthropic Messages・互換Chat Completions・Command Code、モデル一覧、toolsなし接続確認、URL検証・リダイレクト禁止・SSE上限）、会話（最大8往復・取消・観測データの送信前確認/編集）、AI専用暗号化ストアへのキー保存、設定は`ai_connection`（Python版の`ai_api_kind`/`ai_api_profiles`は引き継がない） | ChatGPT OAuth（独立サインイン・アカウント選択・更新単一所有者）、実API（OpenAI/Anthropic/Command Code）での確認、OSの資格情報ストア |
 | CommandBroker/MCP/公式CLI | 端末台帳（ID・接続世代・共有可否・ANSI除去した出力/画面）、Broker（読むだけ/操作ごとに確認/自動実行、15分、停止で取消、actor+要求IDの重複防止、本文なし監査）、SSH専用exec/ローカル別プロセスの独立実行、`hashi-ai`の6ツール・秘密除去・観測JSON、`hashi-mcp`の認証付きloopback IPC（本人限定フォルダ・instance/token照合・notification実行禁止・切断で取消）と`HashiMCP-RustPreview` console stdio、GUIの共有/承認/MCP設定画面 | 未改変公式Claude CLIの導入/起動/MCP連携、Windows実機のicacls/ConPTY、AI会話画面 |
 | 更新・配布 | Rust候補のWindows CI artifact。preview更新通知（Release一覧から`rust-preview-v`タグ・prerelease・公式URLだけを選ぶ）、Python版の更新通知はPythonタグ形式だけを通知、`rust-preview-v*`専用workflow（prerelease・make_latest:false・版照合・ライセンス同梱） | 実タグでのworkflow初回実行、stable `rust-v`のworkflow、署名/SmartScreen、MCP別EXEの同梱、戻し手順 |
 
@@ -158,11 +158,18 @@ MCPの接続情報は本人限定の一時フォルダ（Unix 0700、Windowsはi
 GUIの実描画（Xvfb）で、CMD共有→MCP開始→実stdioヘルパーからlist_sessions/send_input→承認ダイアログ→
 CMDでの実行→read_outputまでと、通常終了で接続情報が消えることを確認した。Windows実機は未確認。
 
-AI相談はPython版と同じく、接続設定の保存値を`ai_api_kind`/`ai_api_profiles`に置き、APIキーはAI専用の暗号化ストア
-（`ai-secrets.dat`、キー名`api:{種別}:{正規化URLのSHA-256}`）へ保存する。SSH資格情報・設定JSONへ混ぜない。
+AI相談の画面はPython版から作り直した。サービス（OpenAI / Claude / 自分のPC / その他）を選び、APIキーを貼って
+「接続する」を押すと、モデル一覧の取得→モデルの自動選択→toolsなしの応答確認→設定とキーの保存を1回で行う。
+API形式・種別・URL検証はサービスから内部で決め、「自分のPC」「その他」だけ詳細設定（通信形式・ツール対応）を出す。
+Command CodeのURLは「その他」に入力したときだけ自動で専用扱いにする。キー名は従来どおり
+`api:{種別}:{正規化URLのSHA-256}`で、設定は`ai_connection`（サービス/URL/モデル/形式/ツール可否）だけに置く。
+再起動時は保存キーを読み戻し、通信せずに会話へ戻る。キーは既定でこのPCへ暗号化保存し（チェックで外せる）、
+「保存キーを削除」で消せる。APIキーはAI専用の暗号化ストア（`ai-secrets.dat`）へ保存し、SSH資格情報・設定JSONへ混ぜない。
+公式サービスは入力済みのURLを無視して公式URLだけを使う。モデル切替は通信せず会話を新しくする。
 接続確認ではtoolsを送らない。相談専用（端末ツールなし）ではtoolsを送らず、返されたツール要求も実行しない。
 完了イベントのない応答（Responsesのcompleted、Messagesのmessage_stop+stop_reason、Chatのfinish_reason）の
 ツールは実行しない。HTTPSだけ（loopbackのHTTPは可）、認証付き通信のリダイレクトを拒否し、POSTを自動再送しない。
-共有対象がある送信では、送信前に観測データを確認・編集できる。共有対象と実行モードは「外部操作」画面の選択を使う。
-GUI実描画で、ローカルの互換API偽サーバーを相手に、モデル一覧→接続確認→保存→送信内容の確認→
+共有対象がある送信では、送信前に観測データを確認・編集できる。共有する端末と実行モード（読むだけ/操作は確認/自動で操作）は
+会話欄の上で選び、送信のたびにBrokerへ設定する。「外部連携（MCP）」はMCPクライアント向けの共有だけを扱う。
+GUI実描画（新UI）で、ローカルの互換API偽サーバーを相手に、1回の接続操作→再起動後の自動復元→送信内容の確認→
 AIのsend_input要求がBroker経由でCMDへ届き、ツール結果を返して最終応答を表示するまでを確認した。実サービスは未確認。

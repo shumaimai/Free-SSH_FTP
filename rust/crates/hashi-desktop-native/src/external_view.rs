@@ -1,6 +1,7 @@
 //! 外部操作（AI/MCP）の共有許可・承認とMCP連携。端末操作は必ずBrokerを通す。
 //! 許可はメモリ内だけで15分。停止・対象変更で進行中の要求も取り消す。
 use super::*;
+use crate::theme;
 use hashi_core::broker::{ApprovalRequest, Broker, Kind, Mode, Registration, Registry};
 use std::time::Duration;
 
@@ -167,11 +168,12 @@ impl App {
             })
             .collect();
         let external = &mut self.external;
-        egui::Window::new("外部操作（AI・MCP）")
+        egui::Window::new("外部連携（MCP）")
             .default_width(560.0)
             .open(&mut open)
             .show(ctx, |ui| {
-                ui.label("AIやMCPクライアントに端末の閲覧・操作を許可します。");
+                ui.label("MCPクライアント（Claude Desktopなど）に、端末の閲覧・操作を許可します。");
+                ui.label(theme::muted("アプリ内のAIに見せる端末は、AI欄で選びます。"));
                 ui.label(
                     "端末の出力は信頼できない観測データです。秘密の除去は完全ではありません。",
                 );
@@ -296,6 +298,7 @@ impl App {
         egui::Window::new("外部からの端末操作の確認")
             .collapsible(false)
             .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
                 ui.label(format!("依頼元: {}", request.actor));
                 ui.label(format!(
@@ -323,7 +326,7 @@ impl App {
                     );
                 }
                 ui.horizontal(|ui| {
-                    if ui.button("許可して実行").clicked() {
+                    if ui.add(theme::primary("許可して実行")).clicked() {
                         answer = Some(true);
                     }
                     if ui.button("拒否").clicked() {
