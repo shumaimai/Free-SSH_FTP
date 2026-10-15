@@ -519,3 +519,6 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - SSHのPTY種別xterm-256colorからシェルを推測せず、shellはunknownを公開する。独立execの本文はサーバー側の解釈に任せる。
 
 - ConPTY終了時はpywinpty内部readerのsocket shutdown/native cancel_io/joinを行い、Hashi側のreaderだけでなく内部readerも回収する。
+
+- Pythonの移行ガードはOSロック競合だけ起動を停止する。FS/開始時刻/マーカーの異常は警告して起動し、取得できた共有ロックは終了まで保つ。
+- マーカーが無いことから旧版停止を認定しない。Rustの移行/権限補助では旧版停止確認を別途要求する。
