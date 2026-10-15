@@ -7,6 +7,7 @@ mod permission_view;
 mod settings_view;
 mod shutdown_view;
 mod snippet_view;
+mod sync_view;
 use file_view::{Browser, FileEvent};
 mod style;
 mod terminal_view;
@@ -371,6 +372,12 @@ impl App {
             file_events,
             file_tx,
         };
+        app.browser.sync.enabled = app
+            .snapshot
+            .settings
+            .get("sync_browse")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
         if let Some(path) = edit {
             app.load_local_editor(path);
         } else {
@@ -584,7 +591,9 @@ impl App {
                     message,
                     ..
                 } => {
-                    if self.tabs[index].navigation == navigation {
+                    if let Some(sync) = self.browser.sync.remote_failed(&navigation, &message) {
+                        self.notice = sync;
+                    } else if self.tabs[index].navigation == navigation {
                         self.notice = message;
                     }
                 }
@@ -595,7 +604,13 @@ impl App {
                     ..
                 } => {
                     let tab = &mut self.tabs[index];
-                    tab.apply_listing(navigation, path, entries);
+                    let stamp = tab.stamp.clone();
+                    if tab.apply_listing(navigation.clone(), path.clone(), entries) {
+                        let follow = self.browser.sync.on_remote(&stamp, &navigation, &path);
+                        if index == self.active {
+                            self.apply_follow(follow);
+                        }
+                    }
                 }
                 Message::Done {
                     message, failed, ..
@@ -635,21 +650,16 @@ impl App {
             );
         }
     }
-    fn browse(&mut self, index: usize, path: String) {
-        let Some(tab) = self.tabs.get_mut(index) else {
-            return;
-        };
+    fn browse(&mut self, index: usize, path: String) -> Option<Stamp> {
+        let tab = self.tabs.get_mut(index)?;
         if self.exiting || tab.closing || tab.work.is_closed() {
-            return;
+            return None;
         }
         let work = tab.work.clone();
-        let Some(nav) = tab.nav.clone() else {
-            return;
-        };
-        let Some(session) = tab.session.clone() else {
-            return;
-        };
+        let nav = tab.nav.clone()?;
+        let session = tab.session.clone()?;
         let (navigation, cancel) = tab.begin_navigation();
+        let navigation_stamp = navigation.clone();
         let permissions = tab.permissions.clone();
         let stamp = tab.stamp.clone();
         let tx = self.tx.clone();
@@ -682,6 +692,7 @@ impl App {
             };
             tokio::select! { biased; _=cancel.cancelled()=>{},_=tx.send(event)=>{} }
         });
+        Some(navigation_stamp)
     }
     fn save_profile(&mut self) {
         if self.exiting {
@@ -797,6 +808,7 @@ impl eframe::App for App {
         self.process_editors();
         self.process_files();
         self.poll_update();
+        self.sync_track_active();
         ctx.request_repaint_after(Duration::from_millis(16));
     }
     fn ui(&mut self, ui: &mut egui::Ui, _: &mut eframe::Frame) {

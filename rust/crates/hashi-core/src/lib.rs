@@ -13,6 +13,7 @@ pub mod permissions;
 pub mod session_log;
 pub mod ssh;
 pub mod ssh_config;
+pub mod sync_browse;
 pub mod transfer;
 pub mod transfer_tree;
 pub mod update;

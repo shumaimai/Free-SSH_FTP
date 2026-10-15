@@ -17,7 +17,7 @@ Issue #170の完了条件をこの表で省略しない。候補に存在する�
 | 端末安全性 | OSC52拒否、OSC8機能起動なし、入力/出力queue上限 | 結合文字セル32個上限を追加。全制御列fuzz・故障注入は未実施 |
 | SFTP一覧/転送 | nav/xfer別、bounded raw一覧、32KiB、双方向prefix resume、再帰コピー、キュー/進捗/取消/既存policy、原本保持/直接書込みの明示選択、新規umask互換 | 非POSIXサーバー・名前・リンク・失敗行列、個別overwrite確認、転送metadata保持 |
 | リモート再帰削除 | 確認語deleteのGUI、lstat、リンク追跡なし、安全な子名 | 権限・名前・失敗行列 |
-| デュアルペイン・W端末 | local/remote二つの一覧、drop送信導線、既存bookmarks形式 | 同期ブラウズ、実D&D、bookmark削除、W端末、再接続・接続モード |
+| デュアルペイン・W端末 | local/remote二つの一覧、drop送信導線、既存bookmarks形式、同期ブラウズ（相対移動・ドライブ/ルート越え拒否・`sync_browse`設定） | 実D&D、bookmark削除、W端末、再接続・接続モード、同期ブラウズの実サーバー深い階層/リンク越え |
 | 編集・ログ・snippets | text/固定長hex、BOM/UTF16 byte order/改行、検索/全置換、軽量highlight、local atomic/SFTP POSIX rename、保存失敗時dirty保持。snippets（Python形式・`{{変数}}`・Enter送信・並べ替え）、SSH受信のセッションログ（LF確定行・有界キュー・0600）、設定画面のログ項目 | 行番号/行移動/折返し/全ショートカット、ACL/ハードリンク、8MiB性能。ログは代替画面とカーソル移動だけで描いた行を記録しない（Python版の画面差分方式と違う） |
 | 権限・サーバー設定 | 明示的な一覧/転送の権限補助、chmod前fsync journal、対象/祖先の参照数、深い順・mode確認後の復元、終了時の復元待ち、再接続後の復旧UI | sudo、旧Python journalの復元/引継ぎUI、全終了故障行列、sshd/netplan rollback |
 | SSH鍵生成・公開鍵登録 | Ed25519/ECDSA(256/384/521)/RSA(2048/3072/4096)、パスフレーズ（bcrypt-pbkdf）、全種別OpenSSH形式、no-clobber/明示上書き、Unix 0600と新規フォルダ0700、Windowsの~/.ssh外警告、SFTPで~/.ssh/authorized_keysへ末尾追記・重複防止 | Windows実機のACL、RSA 4096の体感時間、Python版はRSA/ECDSAを従来PEMで書く差（Python版はOpenSSH形式も読める） |
@@ -139,3 +139,8 @@ Cargoの版は`0.1.0-alpha.0`から始め、プレビュー公開時はタグと
 公開鍵の登録は既存のauthorized_keysを書き換えず末尾へ追記する（Python版は全体を書き直す）。
 読み込みは1MiBまでで、超える場合は登録しない。公開鍵をシェルへ埋め込まない点はPython版と同じ。
 実OpenSSHのSFTPで、改行なし既存行への追記・重複防止・0600/0700・新規.ssh作成を確認する（一時.sshを使い実ホームを変更しない）。
+
+同期ブラウズはPython版`mirror_move`と同じ相対移動（共通の親までさかのぼって降りる）だけを写し、絶対パスを写さない。
+Windowsのドライブ/UNC共有はntpathと同じに分解し、ドライブをまたぐ移動とルートを突き抜ける移動は追随しない。
+跳ね返り防止はPython版の「1回読み飛ばす」フラグではなく、追随で開始した一覧要求のStampだけを読み飛ばす。
+追随が失敗/取消されても待ち状態が残らず、次の本物の移動を取りこぼさない。失敗は通知だけで、ダイアログにしない。

@@ -45,6 +45,12 @@ pub(super) struct Browser {
     delete_target: Option<(Stamp, String)>,
     jobs: VecDeque<Job>,
     drop_area: Option<(egui::Rect, egui::LayerId)>,
+    pub(super) sync: super::sync_view::SyncState,
+}
+impl Browser {
+    pub(super) fn local_path(&self) -> &std::path::Path {
+        &self.local_path
+    }
 }
 impl Default for Browser {
     fn default() -> Self {
@@ -62,6 +68,7 @@ impl Default for Browser {
             delete_target: None,
             jobs: VecDeque::new(),
             drop_area: None,
+            sync: Default::default(),
         }
     }
 }
@@ -108,9 +115,9 @@ impl App {
             ui.label("再開は内容を照合して部分ファイルへ直接追記します。");
         }
     }
-    pub(super) fn refresh_local(&mut self, path: PathBuf) {
+    pub(super) fn refresh_local(&mut self, path: PathBuf) -> Option<Stamp> {
         if self.exiting {
-            return;
+            return None;
         }
         self.browser.local_revision = Stamp::default();
         let revision = self.browser.local_revision.clone();
@@ -129,6 +136,7 @@ impl App {
                     .await;
             })
             .expect("一覧の受付確認済み");
+        Some(self.browser.local_revision.clone())
     }
     pub(super) fn process_files(&mut self) {
         let mut refresh = vec![];
@@ -140,11 +148,15 @@ impl App {
                     result,
                 } if revision == self.browser.local_revision => match result {
                     Ok(entries) => {
+                        let follow = self.browser.sync.on_local(&revision, &path);
                         self.browser.local_path = path;
                         self.browser.local_entries = entries;
                         self.browser.local_selected = None;
+                        self.apply_follow(follow);
                     }
-                    Err(error) => self.notice = error,
+                    Err(error) => {
+                        self.notice = self.browser.sync.local_failed(&revision).unwrap_or(error)
+                    }
                 },
                 FileEvent::Local { .. } => {}
                 FileEvent::Finished { id, result } => {
@@ -614,6 +626,16 @@ impl App {
                 .default_size([1000.0, 650.0])
                 .show(ctx, |ui| {
                     self.transfer_mode_ui(ui);
+                    let mut sync = self.browser.sync.enabled;
+                    if ui
+                        .checkbox(
+                            &mut sync,
+                            "同期ブラウズ（片側のフォルダ移動を相手側へ相対的に写す）",
+                        )
+                        .changed()
+                    {
+                        self.set_sync_browse(sync);
+                    }
                     ui.horizontal(|ui| {
                         ui.label("既存ファイル");
                         for (policy, label) in [
