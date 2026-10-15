@@ -586,3 +586,5 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 
 - Rustセッションログは端末モデルのLF確定行だけを有界キュー経由で専用スレッドへ書く。GUIでファイルI/Oを待たない。満杯/失敗はログを止めて表示する。SSH専用でCMDは記録しない。
 - Rustスニペットの保存値はPython形式の配列のまま扱う。解析できない記録を上書き/空扱いしない。改行はCRへ変換して送る。
+- Rust更新確認は`/releases/latest`を使わない。Release一覧から接頭辞・SemVer・prerelease区分・公式URLが揃ったものだけ。Python版の更新通知はPythonタグ形式だけ。
+- `rust-preview-v*`のworkflowはprerelease・make_latest:falseを維持し、Python版のlatestを変えない。

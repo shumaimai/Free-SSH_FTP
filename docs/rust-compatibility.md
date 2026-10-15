@@ -23,7 +23,7 @@ Issue #170の完了条件をこの表で省略しない。候補に存在する�
 | P2P・Google Drive同期 | 暗号v1契約のみ | X25519/SAS、通信、Google Drive現行backend、秘密同期と衝突処理 |
 | AI/API/OAuth | AI秘密形式のみ | 3種API、会話/観測、OAuth全検証・更新単一所有者・再認証 |
 | CommandBroker/MCP/公式CLI | 未実装 | 許可/対象世代/dedupe、IPC ACL、console HashiMCP、未改変公式CLI導線 |
-| 更新・配布 | Rust候補のWindows CI artifact | preview/stableチャンネル分離、最新API保護、releaseビルド、全ライセンス、source/build証跡 |
+| 更新・配布 | Rust候補のWindows CI artifact。preview更新通知（Release一覧から`rust-preview-v`タグ・prerelease・公式URLだけを選ぶ）、Python版の更新通知はPythonタグ形式だけを通知、`rust-preview-v*`専用workflow（prerelease・make_latest:false・版照合・ライセンス同梱） | 実タグでのworkflow初回実行、stable `rust-v`のworkflow、署名/SmartScreen、MCP別EXEの同梱、戻し手順 |
 
 ## 試験の範囲
 
@@ -127,3 +127,9 @@ WinVaultのPersistはkeyring 25.7.0のWindows backend既定と同じEnterprise�
 書込みは専用スレッドへ有界キューで渡し、GUIでI/Oを待たない。満杯/書込み失敗はそのタブのログを停止し、
 理由を表示する（黙って欠落させない）。新規ファイルはUnixで0600。既定の保存先は各版の設定ルート/logsで、旧Python版のlogsへ書かない。
 スニペットはPython版`snippets.json`と同じ`[{name, body, send_enter}]`。型が違う記録は上書きせず編集を拒否する。
+
+更新確認は`GET /repos/shumaimai/Free-SSH_FTP/releases?per_page=100`を読み、draftを除外し、
+チャネルの接頭辞+SemVer（buildメタデータなし、stableはprereleaseなし）とGitHubのprerelease区分が一致し、
+`html_url`が公式リポジトリのタグページと一致するものだけを比較する。失敗はPython版と同じく表示しない。
+HTTPはOSの証明書検証器（rustls-platform-verifier）・5秒・4MiB上限で、HTTPSだけを使う。
+Cargoの版は`0.1.0-alpha.0`から始め、プレビュー公開時はタグと同じ版にする（workflowが照合する）。

@@ -16,6 +16,8 @@ def main():
     parser.add_argument('--binary', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--cargo', default='cargo')
+    parser.add_argument('--profile', choices=['debug', 'release'], default='debug')
+    parser.add_argument('--tag', default='', help='公開するrust-preview-vタグ。CI成果物では空')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     metadata = json.loads(subprocess.check_output(
@@ -48,7 +50,8 @@ def main():
     shutil.copy2(root / 'LICENSE', notices / 'Hashi-LICENSE')
     shutil.copy2(root / 'rust/crates/hashi-desktop-native/assets/OFL.txt', notices / 'NotoSansJP-OFL.txt')
     shutil.copy2(root / 'rust/THIRD_PARTY.md', destination / 'THIRD_PARTY.md')
-    record = {'channel': 'rust-preview', 'release': False, 'profile': 'debug',
+    record = {'channel': 'rust-preview', 'release': bool(args.tag), 'tag': args.tag or None,
+              'profile': args.profile,
               'source_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip(),
               'binary': args.binary.name, 'binary_sha256': sha256(args.binary),
               'cargo_lock_sha256': sha256(root / 'rust/Cargo.lock'),

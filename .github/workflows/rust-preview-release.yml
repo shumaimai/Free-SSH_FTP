@@ -1,0 +1,58 @@
+name: Rust preview release
+
+# rust-preview-vX.Y.Z-alpha.N タグだけで起動する。旧Python版の v* とは別系統(#170)。
+# GitHub上はprerelease・make_latest:falseで公開し、Python版の /releases/latest を変えない。
+on:
+  push:
+    tags:
+      - "rust-preview-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.99.0'
+      - name: タグとCargoの版・SemVer prereleaseを照合
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os, re, tomllib
+          tag = os.environ["GITHUB_REF_NAME"]
+          match = re.fullmatch(r"rust-preview-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-([0-9A-Za-z.-]+)", tag)
+          if not match:
+              raise SystemExit(f"::error::rust-preview-vX.Y.Z-pre 形式ではありません: {tag}")
+          with open("rust/Cargo.toml", "rb") as f:
+              version = tomllib.load(f)["workspace"]["package"]["version"]
+          if tag.removeprefix("rust-preview-v") != version:
+              raise SystemExit(f"::error::タグ {tag} とCargoの版 {version} が一致しません")
+          print("ok", tag, version)
+          PY
+      - name: Release build
+        working-directory: rust
+        run: cargo build --locked --release --bin Hashi-RustPreview
+      - name: 版の証跡と依存ライセンス
+        run: python tools/rust_artifact.py --profile release --tag "${{ github.ref_name }}" --binary rust/target/release/Hashi-RustPreview.exe --output rust/target/preview
+      - name: zip 化
+        shell: pwsh
+        run: Compress-Archive -Path rust/target/preview/* -DestinationPath "rust/target/Hashi-RustPreview-${{ github.ref_name }}-windows-x64.zip"
+      - name: プレビューを作成（prerelease・latestにしない）
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Hashi Rust Preview ${{ github.ref_name }}
+          body: |
+            Rust移行のプレビュー版です（#170）。旧Python版とは保存先・資格情報サービスが別です。
+            未移植・未検証の項目は docs/rust-compatibility.md を確認してください。
+          draft: false
+          prerelease: true
+          make_latest: false
+          files: rust/target/Hashi-RustPreview-${{ github.ref_name }}-windows-x64.zip

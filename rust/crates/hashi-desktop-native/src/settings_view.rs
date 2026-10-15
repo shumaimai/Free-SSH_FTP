@@ -9,12 +9,17 @@ pub(super) struct SettingsWindow {
 }
 #[derive(Clone, PartialEq)]
 struct Draft {
+    update_check: bool,
     session_log: bool,
     session_log_dir: String,
 }
 impl Draft {
     fn from(settings: &serde_json::Map<String, Value>) -> Self {
         Self {
+            update_check: settings
+                .get("update_check")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
             session_log: settings
                 .get("session_log")
                 .and_then(Value::as_bool)
@@ -66,6 +71,13 @@ impl App {
             .default_width(480.0)
             .open(&mut open)
             .show(ctx, |ui| {
+                ui.heading("更新");
+                ui.checkbox(
+                    &mut draft.update_check,
+                    "起動時にRustプレビュー版の新しいリリースを確認する",
+                );
+                ui.label("旧Python版のリリースとは別に、rust-preview-v のタグだけを確認します。");
+                ui.separator();
                 ui.heading("セッションログ");
                 ui.checkbox(
                     &mut draft.session_log,
@@ -96,6 +108,9 @@ impl App {
             match self.store.transact(|snapshot| {
                 snapshot
                     .settings
+                    .insert("update_check".into(), Value::Bool(draft.update_check));
+                snapshot
+                    .settings
                     .insert("session_log".into(), Value::Bool(draft.session_log));
                 snapshot.settings.insert(
                     "session_log_dir".into(),
@@ -113,6 +128,63 @@ impl App {
         }
         if !open {
             self.settings.open = false;
+        }
+    }
+}
+
+impl App {
+    /// 起動時の更新確認。失敗はPython版と同じく画面へ出さない。
+    pub(super) fn start_update_check(&mut self) {
+        let enabled = self
+            .snapshot
+            .settings
+            .get("update_check")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        if !enabled || self.startup_error {
+            return;
+        }
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        // 読取専用の確認なので終了待ちの対象にしない（終了をネットワーク待ちで遅らせない）。
+        self.runtime.handle().spawn(async move {
+            let result = tokio::task::spawn_blocking(|| {
+                hashi_core::update::check(
+                    hashi_core::update::UpdateChannel::Preview,
+                    env!("CARGO_PKG_VERSION"),
+                    None,
+                )
+            })
+            .await;
+            if let Ok(Ok(Some(update))) = result {
+                let _ = tx.send(update);
+            }
+        });
+        self.update_check = Some(rx);
+    }
+    pub(super) fn poll_update(&mut self) {
+        let Some(receiver) = &mut self.update_check else {
+            return;
+        };
+        match receiver.try_recv() {
+            Ok(update) => {
+                self.available_update = Some(update);
+                self.update_check = None;
+            }
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed) => self.update_check = None,
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
+        }
+    }
+    pub(super) fn update_banner(&mut self, ui: &mut egui::Ui) {
+        let Some(update) = &self.available_update else {
+            return;
+        };
+        ui.separator();
+        ui.label(format!("新しいプレビュー版 {} があります", update.tag));
+        // selectで公式リポジトリのタグページと一致したURLだけを保持している。
+        if ui.button("リリースページを開く").clicked() {
+            if let Err(error) = webbrowser::open(&update.url) {
+                self.notice = format!("ブラウザを開けません: {error}");
+            }
         }
     }
 }

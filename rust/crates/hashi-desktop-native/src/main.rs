@@ -285,6 +285,8 @@ struct App {
     legacy_stopped: bool,
     snippets: snippet_view::SnippetWindow,
     settings: settings_view::SettingsWindow,
+    update_check: Option<tokio::sync::oneshot::Receiver<hashi_core::update::Update>>,
+    available_update: Option<hashi_core::update::Update>,
 }
 impl App {
     fn new(
@@ -359,6 +361,8 @@ impl App {
             legacy_stopped: false,
             snippets: Default::default(),
             settings: Default::default(),
+            update_check: None,
+            available_update: None,
             allow_close: false,
             browser: Browser::default(),
             file_events,
@@ -366,6 +370,8 @@ impl App {
         };
         if let Some(path) = edit {
             app.load_local_editor(path);
+        } else {
+            app.start_update_check();
         }
         Ok(app)
     }
@@ -787,6 +793,7 @@ impl eframe::App for App {
         self.process();
         self.process_editors();
         self.process_files();
+        self.poll_update();
         ctx.request_repaint_after(Duration::from_millis(16));
     }
     fn ui(&mut self, ui: &mut egui::Ui, _: &mut eframe::Frame) {
@@ -820,6 +827,7 @@ impl eframe::App for App {
                 if ui.button("設定").clicked() {
                     self.settings.open = true;
                 }
+                self.update_banner(ui);
             });
         });
         egui::Panel::left("profiles")

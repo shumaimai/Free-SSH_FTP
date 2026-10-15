@@ -24,3 +24,5 @@ SSH候補はrussh 0.64.1（ring/RSA/flate2）、SFTPはrussh-sftp 3.0.1、
 ネイティブ候補はPython/Qt/WebViewのランタイムを同梱しない。
 
 GUIの既定フォントはepaint_default_fonts/fontsのUbuntu Font License、SIL OFL、Hackとemoji-iconの各noticeもCI成果物へ同梱する。
+
+更新確認のHTTPSはureq 3.4.2（rustls、rustls-platform-verifierでOSの証明書ストア、Windowsはsystem proxy）を使う。
