@@ -92,7 +92,7 @@ def test_native_editor_ctrl_s_and_orderly_shutdown(tmp_path, exit_mode):
 
             input_event('windowfocus', '--sync', window)
             time.sleep(.3)
-            input_event('mousemove', '180', '112', 'click', '1')
+            input_event('mousemove', '300', '300', 'click', '1')
             time.sleep(.2)
             input_event('key', 'ctrl+a')
             time.sleep(.1)
@@ -108,8 +108,11 @@ def test_native_editor_ctrl_s_and_orderly_shutdown(tmp_path, exit_mode):
             assert fixture.read_bytes() == expected
             terminal_pid = None
             if exit_mode == 'local_pty':
-                input_event('mousemove', '230', '12', 'click', '1')
+                # 保存済みの編集窓は閉じ、ホームの「ローカル端末」カードを押す。
+                input_event('mousemove', '835', '47', 'click', '1')
                 time.sleep(.3)
+                input_event('mousemove', '132', '127', 'click', '1')
+                time.sleep(.5)
                 input_event('mousemove', '600', '650', 'click', '1')
                 pid_file = tmp_path / 'terminal.pid'
                 input_event('type', '--clearmodifiers', f'echo $$ > {shlex.quote(str(pid_file))}; sleep 30')
@@ -121,7 +124,7 @@ def test_native_editor_ctrl_s_and_orderly_shutdown(tmp_path, exit_mode):
                     time.sleep(.05)
                 assert terminal_pid is not None, 'ローカルPTYへコマンドが届きません'
             if exit_mode == 'dirty':
-                input_event('mousemove', '180', '112', 'click', '1')
+                input_event('mousemove', '300', '300', 'click', '1')
                 input_event('type', '--clearmodifiers', '# UNSAVED')
                 time.sleep(.2)
             request_window_close(runtime_env['DISPLAY'], window)
