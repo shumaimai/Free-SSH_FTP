@@ -20,6 +20,7 @@ Issue #170の完了条件をこの表で省略しない。候補に存在する�
 | デュアルペイン・W端末 | local/remote二つの一覧、drop送信導線、既存bookmarks形式 | 同期ブラウズ、実D&D、bookmark削除、W端末、再接続・接続モード |
 | 編集・ログ・snippets | text/固定長hex、BOM/UTF16 byte order/改行、検索/全置換、軽量highlight、local atomic/SFTP POSIX rename、保存失敗時dirty保持。snippets（Python形式・`{{変数}}`・Enter送信・並べ替え）、SSH受信のセッションログ（LF確定行・有界キュー・0600）、設定画面のログ項目 | 行番号/行移動/折返し/全ショートカット、ACL/ハードリンク、8MiB性能。ログは代替画面とカーソル移動だけで描いた行を記録しない（Python版の画面差分方式と違う） |
 | 権限・サーバー設定 | 明示的な一覧/転送の権限補助、chmod前fsync journal、対象/祖先の参照数、深い順・mode確認後の復元、終了時の復元待ち、再接続後の復旧UI | sudo、旧Python journalの復元/引継ぎUI、全終了故障行列、sshd/netplan rollback |
+| SSH鍵生成・公開鍵登録 | Ed25519/ECDSA(256/384/521)/RSA(2048/3072/4096)、パスフレーズ（bcrypt-pbkdf）、全種別OpenSSH形式、no-clobber/明示上書き、Unix 0600と新規フォルダ0700、Windowsの~/.ssh外警告、SFTPで~/.ssh/authorized_keysへ末尾追記・重複防止 | Windows実機のACL、RSA 4096の体感時間、Python版はRSA/ECDSAを従来PEMで書く差（Python版はOpenSSH形式も読める） |
 | P2P・Google Drive同期 | 暗号v1契約のみ | X25519/SAS、通信、Google Drive現行backend、秘密同期と衝突処理 |
 | AI/API/OAuth | AI秘密形式のみ | 3種API、会話/観測、OAuth全検証・更新単一所有者・再認証 |
 | CommandBroker/MCP/公式CLI | 未実装 | 許可/対象世代/dedupe、IPC ACL、console HashiMCP、未改変公式CLI導線 |
@@ -133,3 +134,8 @@ WinVaultのPersistはkeyring 25.7.0のWindows backend既定と同じEnterprise�
 `html_url`が公式リポジトリのタグページと一致するものだけを比較する。失敗はPython版と同じく表示しない。
 HTTPはOSの証明書検証器（rustls-platform-verifier）・5秒・4MiB上限で、HTTPSだけを使う。
 Cargoの版は`0.1.0-alpha.0`から始め、プレビュー公開時はタグと同じ版にする（workflowが照合する）。
+
+鍵生成は秘密鍵を同じフォルダの一時ファイルへ書いてから置き換え、既存ファイルは明示した場合だけ上書きする。
+公開鍵の登録は既存のauthorized_keysを書き換えず末尾へ追記する（Python版は全体を書き直す）。
+読み込みは1MiBまでで、超える場合は登録しない。公開鍵をシェルへ埋め込まない点はPython版と同じ。
+実OpenSSHのSFTPで、改行なし既存行への追記・重複防止・0600/0700・新規.ssh作成を確認する（一時.sshを使い実ホームを変更しない）。

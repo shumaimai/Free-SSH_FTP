@@ -2,6 +2,7 @@
 mod editor_view;
 mod file_view;
 mod forward_view;
+mod keygen_view;
 mod permission_view;
 mod settings_view;
 mod shutdown_view;
@@ -287,6 +288,7 @@ struct App {
     settings: settings_view::SettingsWindow,
     update_check: Option<tokio::sync::oneshot::Receiver<hashi_core::update::Update>>,
     available_update: Option<hashi_core::update::Update>,
+    keygen: keygen_view::KeygenWindow,
 }
 impl App {
     fn new(
@@ -363,6 +365,7 @@ impl App {
             settings: Default::default(),
             update_check: None,
             available_update: None,
+            keygen: Default::default(),
             allow_close: false,
             browser: Browser::default(),
             file_events,
@@ -824,6 +827,9 @@ impl eframe::App for App {
                 if ui.button("スニペット").clicked() {
                     self.snippets.open = true;
                 }
+                if ui.button("SSH鍵生成").clicked() {
+                    self.keygen.open = true;
+                }
                 if ui.button("設定").clicked() {
                     self.settings.open = true;
                 }
@@ -950,6 +956,7 @@ impl eframe::App for App {
             self.permission_dialog(&ctx);
             self.snippet_dialog(&ctx);
             self.settings_dialog(&ctx);
+            self.keygen_dialog(&ctx);
             self.editor_windows(&ctx);
             self.file_windows(&ctx);
             self.dropped_files(&ctx);

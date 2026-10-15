@@ -1680,6 +1680,7 @@ dependencies = [
  "hashi-terminal",
  "libc",
  "portable-pty",
+ "rand",
  "russh",
  "russh-sftp",
  "semver",

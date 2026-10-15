@@ -588,3 +588,4 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - Rustスニペットの保存値はPython形式の配列のまま扱う。解析できない記録を上書き/空扱いしない。改行はCRへ変換して送る。
 - Rust更新確認は`/releases/latest`を使わない。Release一覧から接頭辞・SemVer・prerelease区分・公式URLが揃ったものだけ。Python版の更新通知はPythonタグ形式だけ。
 - `rust-preview-v*`のworkflowはprerelease・make_latest:falseを維持し、Python版のlatestを変えない。
+- Rust鍵生成は既存秘密鍵を明示確認なしに上書きしない。authorized_keysは既存内容を書き換えず末尾追記し、公開鍵をシェルへ埋め込まない。

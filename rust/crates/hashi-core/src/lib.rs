@@ -6,6 +6,7 @@ pub mod forward;
 pub mod http;
 mod in_place_transfer;
 pub mod interaction;
+pub mod keygen;
 pub mod local;
 pub mod permission_journal;
 pub mod permissions;

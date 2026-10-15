@@ -23,6 +23,7 @@ sha2 = "0.10"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 ureq = { version = "=3.4.2", default-features = false, features = ["rustls", "platform-verifier", "win-system-proxy"] }
 semver = "1"
+rand = "0.10"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
