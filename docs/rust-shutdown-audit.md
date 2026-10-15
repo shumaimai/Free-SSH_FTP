@@ -14,6 +14,12 @@
 遅いForwardReadyを終了対象に保持すること、Ready送信後にprimaryを完了する順序、
 転送エラーの終了結果への併記も確認された。
 
+別のエージェントも終了順と各bounded queueの排出を独立に静的監査し、追加P1/P2阻害事項は
+見つからなかった。forward開始/停止・権限復旧の失敗は `Message::Done.failed` で終了結果へ
+保持する。転送temp削除失敗は `Cleanup` variantで確定結果不明と区別し、chmod再試行へ流さない。
+既存の編集用temp削除失敗の通知、SSH内部のagent/forward通信と接続途中hop cleanupの全joinは
+baseにも残っていた別件であり、今回解決した範囲には含めない。
+
 実装側の試験はRust単体、Python既存試験、Python/Rust契約、Linux実GUIを用いる。
 GUIはBOM/CRLF保持のCtrl+S、通常WM_DELETE_WINDOW終了、実ローカルPTYのPID回収、
 未保存の編集がある場合の終了抑止を確認する。権限単体はchmod ACK途中の取消後も

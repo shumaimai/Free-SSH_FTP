@@ -21,6 +21,7 @@ enum TransferFailure {
     Local(String),
     Committed(String),
     Unknown(String),
+    Cleanup(String),
 }
 impl std::fmt::Display for TransferFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -34,6 +35,7 @@ impl std::fmt::Display for TransferFailure {
                 f,
                 "転送確定の結果が不明です。宛先を確認してください: {message}"
             ),
+            Self::Cleanup(message) => write!(f, "転送の後始末が未完了です: {message}"),
         }
     }
 }
@@ -271,7 +273,7 @@ impl RemoteTemp {
                     }
                 };
                 // 削除失敗をchmodの自動再試行に変換しない。
-                return Err(outcome_error(message));
+                return Err(TransferFailure::Cleanup(message).into());
             }
         }
         result
@@ -525,6 +527,7 @@ mod tests {
             local_error(std::io::Error::from(std::io::ErrorKind::PermissionDenied)),
             committed_error(std::io::Error::from(std::io::ErrorKind::PermissionDenied)),
             outcome_error(std::io::Error::from(std::io::ErrorKind::PermissionDenied)),
+            TransferFailure::Cleanup("permission denied".into()).into(),
         ] {
             assert!(!crate::permissions::is_permission_error(
                 &error.context("上位の操作文脈")

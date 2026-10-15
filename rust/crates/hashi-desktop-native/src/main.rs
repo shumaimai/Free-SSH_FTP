@@ -76,6 +76,7 @@ enum Message {
     Done {
         stamp: Stamp,
         message: String,
+        failed: bool,
     },
 }
 struct Tab {
@@ -543,7 +544,14 @@ impl App {
                     let tab = &mut self.tabs[index];
                     tab.apply_listing(navigation, path, entries);
                 }
-                Message::Done { message, .. } => self.notice = message,
+                Message::Done {
+                    message, failed, ..
+                } => {
+                    if self.exiting && failed {
+                        self.close_errors.push(message.clone());
+                    }
+                    self.notice = message;
+                }
             }
         }
         for _ in 0..256 {

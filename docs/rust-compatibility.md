@@ -98,3 +98,6 @@ Dropは専用reaperへ渡す。WindowsのConPTY close自体が戻らない場合
 強制終了時のruntime待ちは1秒までで、残るblocking workerを回収済みと主張しない。
 Linux実描画試験は通常WM_DELETE_WINDOW要求からの終了とローカルPTYのPID回収を確認する。
 Windows物理入力/IME、全通信障害/保存障害、別sessionの子孫回収は引き続き未検証/未対応。
+完了待ちの対象は画面の操作・転送確定/cleanup・権限復元・選択したforwardとPTYである。
+SSH内部のagent/forward通信、接続途中hop cleanupの全joinは未対応で、取消/切断を要求する範囲。
+編集用 `.hashi-edit-*` temp削除失敗の通知も既存の未対応項目として残る。

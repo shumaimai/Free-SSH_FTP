@@ -119,11 +119,17 @@ impl App {
                 let tx = self.tx.clone();
                 tab.work
                     .spawn(self.runtime.handle(), async move {
-                        let message = match forward.stop().await {
-                            Ok(()) => "ポート転送を停止しました".into(),
-                            Err(error) => format!("停止は未確認です: {error}"),
+                        let (message, failed) = match forward.stop().await {
+                            Ok(()) => ("ポート転送を停止しました".into(), false),
+                            Err(error) => (format!("停止は未確認です: {error}"), true),
                         };
-                        let _ = tx.send(Message::Done { stamp, message }).await;
+                        let _ = tx
+                            .send(Message::Done {
+                                stamp,
+                                message,
+                                failed,
+                            })
+                            .await;
                     })
                     .expect("転送停止の受付確認済み");
             }
@@ -178,6 +184,7 @@ impl App {
                                 .send(Message::Done {
                                     stamp,
                                     message: error.to_string(),
+                                    failed: true,
                                 })
                                 .await;
                         }

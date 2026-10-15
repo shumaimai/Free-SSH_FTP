@@ -86,15 +86,25 @@ impl App {
                     let tx = self.tx.clone();
                     tab.work
                         .spawn(self.runtime.handle(), async move {
-                            let message = match manager.recover().await {
-                                Ok((restored, pending)) => format!(
+                            let (message, failed) = match manager.recover().await {
+                                Ok((restored, pending)) => (
+                                    format!(
                                     "権限復旧: {restored}件復元 / {pending}件未完了（記録保持）"
                                 ),
-                                Err(error) => {
-                                    format!("権限復旧できませんでした。記録を保持: {error}")
-                                }
+                                    pending > 0,
+                                ),
+                                Err(error) => (
+                                    format!("権限復旧できませんでした。記録を保持: {error}"),
+                                    true,
+                                ),
                             };
-                            let _ = tx.send(Message::Done { stamp, message }).await;
+                            let _ = tx
+                                .send(Message::Done {
+                                    stamp,
+                                    message,
+                                    failed,
+                                })
+                                .await;
                         })
                         .expect("復旧の受付確認済み");
                 }
