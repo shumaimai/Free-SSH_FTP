@@ -3,7 +3,9 @@ mod editor_view;
 mod file_view;
 mod forward_view;
 mod permission_view;
+mod settings_view;
 mod shutdown_view;
+mod snippet_view;
 use file_view::{Browser, FileEvent};
 mod style;
 mod terminal_view;
@@ -113,6 +115,8 @@ struct Tab {
     work_cancel: CancellationToken,
     closing: bool,
     remove_on_close: bool,
+    /// SSH端末の受信ログ。CMDは対象外（Python版と同じ）。
+    log: Option<hashi_core::session_log::SessionLog>,
 }
 impl Tab {
     fn new(label: String) -> Self {
@@ -152,7 +156,20 @@ impl Tab {
             pending_local_size: None,
             permissions: None,
             permissions_busy: false,
+            log: None,
         }
+    }
+    /// 確定した受信行をログへ渡す。失敗したらこのタブのログを止めて理由を返す。
+    fn drain_log(&mut self) -> Option<String> {
+        let log = self.log.as_mut()?;
+        let (mut lines, dropped) = self.terminal.take_log_lines();
+        if dropped > 0 {
+            lines.push(format!("[Hashi: {dropped}行を記録できませんでした]"));
+        }
+        let error = log.write_lines(lines).err()?;
+        self.log = None;
+        self.terminal.set_line_log(false);
+        Some(format!("セッションログ: {error}"))
     }
     fn begin_navigation(&mut self) -> (Stamp, CancellationToken) {
         self.navigation_cancel.cancel();
@@ -266,6 +283,8 @@ struct App {
     file_tx: mpsc::Sender<FileEvent>,
     permission_open: bool,
     legacy_stopped: bool,
+    snippets: snippet_view::SnippetWindow,
+    settings: settings_view::SettingsWindow,
 }
 impl App {
     fn new(
@@ -338,6 +357,8 @@ impl App {
             confirm_exit: false,
             permission_open: false,
             legacy_stopped: false,
+            snippets: Default::default(),
+            settings: Default::default(),
             allow_close: false,
             browser: Browser::default(),
             file_events,
@@ -510,6 +531,24 @@ impl App {
                     tab.input = Some(input);
                     tab.resize = Some(resize);
                     tab.status = "接続済み".into();
+                    if self.session_log_enabled() && !self.tabs[index].closing {
+                        let (custom, default) = self.session_log_directory();
+                        let tab = &mut self.tabs[index];
+                        match hashi_core::session_log::SessionLog::open(
+                            custom.as_deref(),
+                            &default,
+                            &tab.label,
+                        ) {
+                            Ok(log) => {
+                                tab.terminal.set_line_log(true);
+                                tab.status = format!("接続済み・ログ: {}", log.path().display());
+                                tab.log = Some(log);
+                            }
+                            Err(error) => {
+                                self.notice = format!("セッションログを開始できません: {error:#}")
+                            }
+                        }
+                    }
                     let initial = self.tabs[index].path.clone();
                     if !self.tabs[index].closing {
                         self.browse(index, initial);
@@ -520,6 +559,9 @@ impl App {
                     tab.terminal.feed(&bytes);
                     for reply in tab.terminal.replies() {
                         tab.send(reply);
+                    }
+                    if let Some(error) = tab.drain_log() {
+                        self.notice = error;
                     }
                 }
                 Message::Error { message, .. } => {
@@ -772,6 +814,12 @@ impl eframe::App for App {
                 if ui.button("権限補助").clicked() {
                     self.permission_open = true;
                 }
+                if ui.button("スニペット").clicked() {
+                    self.snippets.open = true;
+                }
+                if ui.button("設定").clicked() {
+                    self.settings.open = true;
+                }
             });
         });
         egui::Panel::left("profiles")
@@ -892,6 +940,8 @@ impl eframe::App for App {
             self.auth_dialog(&ctx);
             self.forward_dialog(&ctx);
             self.permission_dialog(&ctx);
+            self.snippet_dialog(&ctx);
+            self.settings_dialog(&ctx);
             self.editor_windows(&ctx);
             self.file_windows(&ctx);
             self.dropped_files(&ctx);

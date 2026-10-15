@@ -449,3 +449,6 @@ ruff check .
 - Rust直接書込みは既存ファイルのopenへmode属性を送らないこと。書込み前の失敗を部分更新と表示しないこと。
 - RemoteTempのfallback/commit所有タスクはBatchのcleanup tokenを保持し、親mode復元は削除完了後にする。失敗を隠さない。
 - ポート転送停止は受付tokenを確保してから所有handleを外す。GUIのPTY resizeでblocking lockを取らず、保留サイズを次frameで再試行する。回収済みPID/PGIDへkillを再送しない。
+
+- Rustセッションログで、GUIスレッドからファイル書込みを待たないこと。満杯/失敗を黙って欠落させないこと。
+- Rustスニペットで、解析できない保存値を空として上書きしないこと。

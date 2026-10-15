@@ -8,6 +8,7 @@ pub mod interaction;
 pub mod local;
 pub mod permission_journal;
 pub mod permissions;
+pub mod session_log;
 pub mod ssh;
 pub mod ssh_config;
 pub mod transfer;

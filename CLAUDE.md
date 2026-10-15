@@ -583,3 +583,6 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - `tests/test_rust_ssh_live.py`はrootでskipする(rootは権限検査を素通りする)。一般ユーザーで実行する。
 - RemoteTempのfallback/commit所有タスクはBatchのcleanup tokenを保持し、親mode復元は削除完了後にする。失敗を隠さない。
 - ポート転送停止は受付tokenを確保してから所有handleを外す。GUIのPTY resizeでblocking lockを取らず、保留サイズを次frameで再試行する。回収済みPID/PGIDへkillを再送しない。
+
+- Rustセッションログは端末モデルのLF確定行だけを有界キュー経由で専用スレッドへ書く。GUIでファイルI/Oを待たない。満杯/失敗はログを止めて表示する。SSH専用でCMDは記録しない。
+- Rustスニペットの保存値はPython形式の配列のまま扱う。解析できない記録を上書き/空扱いしない。改行はCRへ変換して送る。

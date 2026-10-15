@@ -18,7 +18,7 @@ Issue #170の完了条件をこの表で省略しない。候補に存在する�
 | SFTP一覧/転送 | nav/xfer別、bounded raw一覧、32KiB、双方向prefix resume、再帰コピー、キュー/進捗/取消/既存policy、原本保持/直接書込みの明示選択、新規umask互換 | 非POSIXサーバー・名前・リンク・失敗行列、個別overwrite確認、転送metadata保持 |
 | リモート再帰削除 | 確認語deleteのGUI、lstat、リンク追跡なし、安全な子名 | 権限・名前・失敗行列 |
 | デュアルペイン・W端末 | local/remote二つの一覧、drop送信導線、既存bookmarks形式 | 同期ブラウズ、実D&D、bookmark削除、W端末、再接続・接続モード |
-| 編集・ログ・snippets | text/固定長hex、BOM/UTF16 byte order/改行、検索/全置換、軽量highlight、local atomic/SFTP POSIX rename、保存失敗時dirty保持 | 行番号/行移動/折返し/全ショートカット、ACL/ハードリンク、8MiB性能、ログ/snippets UI |
+| 編集・ログ・snippets | text/固定長hex、BOM/UTF16 byte order/改行、検索/全置換、軽量highlight、local atomic/SFTP POSIX rename、保存失敗時dirty保持。snippets（Python形式・`{{変数}}`・Enter送信・並べ替え）、SSH受信のセッションログ（LF確定行・有界キュー・0600）、設定画面のログ項目 | 行番号/行移動/折返し/全ショートカット、ACL/ハードリンク、8MiB性能。ログは代替画面とカーソル移動だけで描いた行を記録しない（Python版の画面差分方式と違う） |
 | 権限・サーバー設定 | 明示的な一覧/転送の権限補助、chmod前fsync journal、対象/祖先の参照数、深い順・mode確認後の復元、終了時の復元待ち、再接続後の復旧UI | sudo、旧Python journalの復元/引継ぎUI、全終了故障行列、sshd/netplan rollback |
 | P2P・Google Drive同期 | 暗号v1契約のみ | X25519/SAS、通信、Google Drive現行backend、秘密同期と衝突処理 |
 | AI/API/OAuth | AI秘密形式のみ | 3種API、会話/観測、OAuth全検証・更新単一所有者・再認証 |
@@ -121,3 +121,9 @@ SSH内部のagent/forward通信、接続途中hop cleanupの全joinは未対応�
 今回の途中監査と追加終了監査への項目別対応・検証限界は `rust-progress-audit.md` に保存する。
 WinVaultのPersistはkeyring 25.7.0のWindows backend既定と同じEnterpriseにし、Windows CIで
 合成TargetNameのCredRead読戻しを行う。実利用者の旧資格情報とドメインroamingは未検証。
+
+セッションログはSSH端末だけを対象にし、CMDは記録しない（Python版と同じ）。LFを受けた時点のカーソル行を、
+折返しでつながる行と合わせて記録する。CRによる上書きは画面に残った表示を記録し、vim等の代替画面は記録しない。
+書込みは専用スレッドへ有界キューで渡し、GUIでI/Oを待たない。満杯/書込み失敗はそのタブのログを停止し、
+理由を表示する（黙って欠落させない）。新規ファイルはUnixで0600。既定の保存先は各版の設定ルート/logsで、旧Python版のlogsへ書かない。
+スニペットはPython版`snippets.json`と同じ`[{name, body, send_enter}]`。型が違う記録は上書きせず編集を拒否する。

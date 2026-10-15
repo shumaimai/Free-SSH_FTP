@@ -6,5 +6,6 @@ pub mod legacy_permissions;
 pub mod migration;
 pub mod paths;
 pub mod secrets;
+pub mod snippets;
 #[cfg(windows)]
 pub mod winvault;

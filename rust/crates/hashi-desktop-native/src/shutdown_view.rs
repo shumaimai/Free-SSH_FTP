@@ -70,9 +70,29 @@ impl App {
             self.tx.clone(),
         );
         let forwards = std::mem::take(&mut tab.forwards);
+        let log = tab.log.take().map(|mut log| {
+            let (mut lines, dropped) = tab.terminal.take_log_lines();
+            if dropped > 0 {
+                lines.push(format!("[Hashi: {dropped}行を記録できませんでした]"));
+            }
+            lines.extend(tab.terminal.pending_log_line());
+            let written = log.write_lines(lines);
+            tab.terminal.set_line_log(false);
+            (log, written)
+        });
         self.closing_work
             .spawn(self.runtime.handle(), async move {
                 let mut errors = vec![];
+                if let Some((mut log, written)) = log {
+                    let closed = tokio::task::spawn_blocking(move || {
+                        log.close(Duration::from_secs(5))
+                    })
+                    .await
+                    .unwrap_or_else(|_| Err("ログの終了処理が中断されました".into()));
+                    if let Err(error) = written.and(closed) {
+                        errors.push(format!("セッションログ: {error}"));
+                    }
+                }
                 for mut forward in forwards {
                     if let Err(error) = forward.stop().await {
                         errors.push(format!("ポート転送の停止は未確認: {error}"));
