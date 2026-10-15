@@ -99,7 +99,13 @@ async fn main() -> Result<()> {
     tokio::fs::write(&source, &bytes).await?;
     let (tx, mut rx) = mpsc::channel(16);
     let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
-    let upload = transfer::upload(&xfer, &source, &remote, false, "upload", &tx, &cancel);
+    let upload_context = hashi_core::transfer_tree::TaskContext {
+        job: "upload",
+        progress: &tx,
+        cancel: &cancel,
+        permission: None,
+    };
+    let upload = transfer::upload(&session, &xfer, &source, &remote, false, &upload_context);
     let directory = req.directory.to_string_lossy();
     let list = transfer::list(&nav, &directory, &cancel);
     // navとxferの独立チャネルで、同時に要求を進める。
@@ -150,6 +156,7 @@ async fn main() -> Result<()> {
         tokio::fs::read(&remote).await? == bytes,
         "upload再開の内容が一致しません"
     );
+    verify_atomic_transfers(&session, &xfer, &source, &remote, &restored, &bytes).await?;
     transfer::delete_tree(&nav, &remote, "delete", &cancel).await?;
     let local_tree = req.directory.join("tree");
     let remote_tree = req
@@ -170,6 +177,7 @@ async fn main() -> Result<()> {
         permission: None,
     };
     let report = hashi_core::transfer_tree::upload_tree(
+        &session,
         &xfer,
         &local_tree,
         &remote_tree,
@@ -297,6 +305,7 @@ async fn main() -> Result<()> {
         let upload_source = req.directory.join("permission-source");
         tokio::fs::write(&upload_source, b"permission-overwrite").await?;
         hashi_core::transfer_tree::upload_tree(
+            &session,
             &xfer,
             &upload_source,
             &remote,
@@ -313,6 +322,7 @@ async fn main() -> Result<()> {
         std::fs::set_permissions(&new_directory, std::fs::Permissions::from_mode(0o0))?;
         let new_remote = new_directory.join("new-file");
         let upload_result = hashi_core::transfer_tree::upload_tree(
+            &session,
             &xfer,
             &upload_source,
             &new_remote.to_string_lossy(),
@@ -381,6 +391,144 @@ async fn main() -> Result<()> {
     verify_forwards(session.clone()).await?;
     session.close().await?;
     println!("ssh-sftp-verified");
+    Ok(())
+}
+
+async fn verify_atomic_transfers(
+    session: &SshSession,
+    sftp: &russh_sftp::client::SftpSession,
+    source: &std::path::Path,
+    remote: &str,
+    local: &std::path::Path,
+    bytes: &[u8],
+) -> anyhow::Result<()> {
+    tokio::fs::write(remote, b"remote-original").await?;
+    let cancel = CancellationToken::new();
+    let (tx, mut rx) = mpsc::channel(1);
+    let context = hashi_core::transfer_tree::TaskContext {
+        job: "cancel-upload",
+        progress: &tx,
+        cancel: &cancel,
+        permission: None,
+    };
+    {
+        let upload = transfer::upload(session, sftp, source, remote, true, &context);
+        tokio::pin!(upload);
+        tokio::select! {
+            progress=rx.recv()=>{ anyhow::ensure!(progress.is_some(),"取消試験の進捗がありません");cancel.cancel();anyhow::ensure!(upload.await.is_err(),"upload取消が効きません"); },
+            result=&mut upload=>{result?;anyhow::bail!("取消前に試験転送が完了しました");},
+        }
+    }
+    anyhow::ensure!(
+        tokio::fs::read(remote).await? == b"remote-original",
+        "取消でリモート原本を壊しました"
+    );
+    let (failed, receiver) = mpsc::channel(1);
+    drop(receiver);
+    let token = CancellationToken::new();
+    let context = hashi_core::transfer_tree::TaskContext {
+        job: "failed-upload",
+        progress: &failed,
+        cancel: &token,
+        permission: None,
+    };
+    anyhow::ensure!(
+        transfer::upload(session, sftp, source, remote, true, &context)
+            .await
+            .is_err(),
+        "転送故障が伝わりません"
+    );
+    anyhow::ensure!(
+        tokio::fs::read(remote).await? == b"remote-original",
+        "故障でリモート原本を壊しました"
+    );
+    let (tx, mut rx) = mpsc::channel(128);
+    let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+    let context = hashi_core::transfer_tree::TaskContext {
+        job: "atomic-upload",
+        progress: &tx,
+        cancel: &token,
+        permission: None,
+    };
+    transfer::upload(session, sftp, source, remote, true, &context).await?;
+    anyhow::ensure!(
+        tokio::fs::read(remote).await? == bytes,
+        "確定したupload内容が違います"
+    );
+    drop(tx);
+    drain.await?;
+    tokio::fs::write(local, b"local-original").await?;
+    let cancel = CancellationToken::new();
+    let (tx, mut rx) = mpsc::channel(1);
+    let policy = transfer::DownloadPolicy {
+        overwrite: true,
+        resume: false,
+    };
+    {
+        let download =
+            transfer::download(sftp, remote, local, policy, "cancel-download", &tx, &cancel);
+        tokio::pin!(download);
+        tokio::select! {
+            progress=rx.recv()=>{anyhow::ensure!(progress.is_some(),"取消試験の進捗がありません");cancel.cancel();anyhow::ensure!(download.await.is_err(),"download取消が効きません");},
+            result=&mut download=>{result?;anyhow::bail!("取消前に試験転送が完了しました");},
+        }
+    }
+    anyhow::ensure!(
+        tokio::fs::read(local).await? == b"local-original",
+        "取消でローカル原本を壊しました"
+    );
+    anyhow::ensure!(
+        transfer::download(
+            sftp,
+            remote,
+            local,
+            policy,
+            "failed-download",
+            &failed,
+            &token
+        )
+        .await
+        .is_err(),
+        "転送故障が伝わりません"
+    );
+    anyhow::ensure!(
+        tokio::fs::read(local).await? == b"local-original",
+        "故障でローカル原本を壊しました"
+    );
+    let (tx, mut rx) = mpsc::channel(1);
+    let download = transfer::download(
+        sftp,
+        remote,
+        local,
+        policy,
+        "conflict-download",
+        &tx,
+        &token,
+    );
+    tokio::pin!(download);
+    let mut changed = false;
+    loop {
+        tokio::select! {
+            progress=rx.recv()=>{
+                anyhow::ensure!(progress.is_some(),"競合試験の進捗がありません");
+                if !changed {tokio::fs::write(local,b"external-writer").await?;changed=true;}
+            },
+            result=&mut download=>{anyhow::ensure!(result.is_err(),"競合を拒否しませんでした");break;},
+        }
+    }
+    anyhow::ensure!(
+        tokio::fs::read(local).await? == b"external-writer",
+        "外部変更を上書きしました"
+    );
+    let (tx, mut rx) = mpsc::channel(128);
+    let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+    transfer::download(sftp, remote, local, policy, "atomic-download", &tx, &token).await?;
+    anyhow::ensure!(
+        tokio::fs::read(local).await? == bytes,
+        "確定したdownload内容が違います"
+    );
+    drop(tx);
+    drain.await?;
     Ok(())
 }
 

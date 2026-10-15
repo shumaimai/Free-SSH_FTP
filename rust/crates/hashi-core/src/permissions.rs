@@ -298,6 +298,18 @@ pub fn is_permission_error(error: &anyhow::Error) -> bool {
     error.chain().any(|error| error.downcast_ref::<std::io::Error>().is_some_and(|error|error.kind()==std::io::ErrorKind::PermissionDenied)
         || error.downcast_ref::<russh_sftp::client::error::Error>().is_some_and(|error|matches!(error,russh_sftp::client::error::Error::Status(status) if status.status_code==russh_sftp::protocol::StatusCode::PermissionDenied)))
 }
+/// 確定結果の通知を権限復元エラーで消さず、処理完了後の自動再試行も防ぐ。
+pub fn complete<T>(operation: Result<T>, restoration: Result<()>) -> Result<T> {
+    match (operation, restoration) {
+        (result, Ok(())) => result,
+        (Ok(_), Err(error)) => {
+            bail!("ファイル処理は完了しましたが、権限復元が未完了です。記録を保持: {error}")
+        }
+        (Err(operation), Err(restoration)) => {
+            bail!("ファイル処理: {operation} / 権限復元も未完了です。記録を保持: {restoration}")
+        }
+    }
+}
 pub async fn with_access<T, F, U>(
     manager: Option<&Arc<Manager>>,
     path: &str,
@@ -310,8 +322,7 @@ where
 {
     let mut batch = Batch::new(manager);
     let result = batch.run(path, bits, operation).await;
-    batch.finish().await?;
-    result
+    complete(result, batch.finish().await)
 }
 
 /// 再帰処理中は親の権限を保ち、取消/失敗でも一つの所有タスクで深い順に復元する。

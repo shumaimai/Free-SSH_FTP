@@ -415,7 +415,7 @@ ruff check .
 - Rustリモート編集はPOSIX rename未対応を変更前に拒否し、外部変更を照合する。権限緩和を無断で追加しない。
 
 - Rust SFTP一覧の要求ID/取消/件数・bytes上限を維持する。navの取消をxferへ波及させない。
-- Rust再帰転送はリンク追跡と転送先リンク上書きを拒否する。既存policyは追加時に固定し、取消で部分ファイルを勝手に削除しない。
+- Rust再帰転送はリンク追跡と転送先リンク上書きを拒否する。既存policyは追加時に固定し、resumeの部分ファイルを勝手に削除しない。通常転送のprivate tempのみcleanupする。
 - Rust一覧の全Stringを毎frame複製しない。dropは対象領域/layerを照合し一度だけ消費する。
 
 - Rust端末の結合文字セル上限/全角flag保持を維持する。paste/可視http(s) URL起動は明示操作だけ。
@@ -428,3 +428,9 @@ ruff check .
 - 別表記/親リンクはrealpath照合で拒否する。破損した確定記録を上書きせず、準備tempは復元対象と分ける。
 - 権限候補はSFTP所有ファイルのみ。sudo・旧Python journal引継ぎ・終了時完了待ちは互換表の未完了条件を維持する。
 - 有効なRust権限補助の一覧/転送/復旧取引はタブをまたいで直列化し、復元までoperation guardを保持する。低レベルacquireを画面側から直接使わない。
+
+- Rust通常転送は原本へ直接truncateせずprivate tempへ書き、サイズ/metadataと同期を確認して確定する。
+- remote uploadのfsync/POSIX rename対応は変更前に確認する。EXCL open成功を確認したtempだけcleanupする。
+- 確定済み/確定結果不明/ローカル失敗をリモートchmod再試行へ流さない。復元エラーで確定状態を消さない。
+- GUIの取消はtokenで伝え、確定ACKと権限復元を待つ。確定後の取消は元へ戻ったと断定しない。
+- uid/gid/modeを保持できないUnix転送は確定前に拒否。Windows readonlyは確定handleで読戻す。

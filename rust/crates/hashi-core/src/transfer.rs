@@ -1,3 +1,4 @@
+use crate::atomic_transfer::local_error;
 use anyhow::{bail, Context, Result};
 use russh_sftp::{
     client::SftpSession,
@@ -216,14 +217,20 @@ pub async fn download(
     progress: &mpsc::Sender<Progress>,
     cancel: &CancellationToken,
 ) -> Result<()> {
+    if !policy.resume {
+        return crate::atomic_transfer::download(
+            session, remote, local, policy, job, progress, cancel,
+        )
+        .await;
+    }
     let total = session.metadata(remote).await?.len();
-    let exists = tokio::fs::try_exists(local).await?;
+    let exists = tokio::fs::try_exists(local).await.map_err(local_error)?;
     if exists && !policy.overwrite && !policy.resume {
         bail!("既存ファイルの上書き確認が必要です");
     }
     let mut input = session.open(remote).await?;
     let offset = if exists && policy.resume {
-        tokio::fs::metadata(local).await?.len()
+        tokio::fs::metadata(local).await.map_err(local_error)?.len()
     } else {
         0
     };
@@ -232,14 +239,17 @@ pub async fn download(
     }
     // 同じ部分ファイルであることを確認し、別内容へ追記しない。
     if offset > 0 {
-        let mut previous = tokio::fs::File::open(local).await?;
+        let mut previous = tokio::fs::File::open(local).await.map_err(local_error)?;
         let mut expected = vec![0; 32768];
         let mut actual = vec![0; 32768];
         let mut checked = 0;
         while checked < offset {
             let count = (offset - checked).min(32768) as usize;
             tokio::select! { _=cancel.cancelled()=>bail!("再開確認を取り消しました"),result=input.read_exact(&mut actual[..count])=>{result?;} }
-            previous.read_exact(&mut expected[..count]).await?;
+            previous
+                .read_exact(&mut expected[..count])
+                .await
+                .map_err(local_error)?;
             if actual[..count] != expected[..count] {
                 bail!("再開元の内容が一致しません");
             }
@@ -256,7 +266,7 @@ pub async fn download(
     } else {
         options.create_new(true);
     }
-    let mut output = options.open(local).await?;
+    let mut output = options.open(local).await.map_err(local_error)?;
     let mut bytes = vec![0; 32768];
     let mut done = offset;
     loop {
@@ -264,64 +274,21 @@ pub async fn download(
         if count == 0 {
             break;
         }
-        output.write_all(&bytes[..count]).await?;
+        output
+            .write_all(&bytes[..count])
+            .await
+            .map_err(local_error)?;
         done += count as u64;
         notify(progress, job, done, total, cancel).await?;
     }
-    output.sync_all().await?;
+    output.sync_all().await.map_err(local_error)?;
     if done != total {
         bail!("転送したサイズが一致しません");
     }
     Ok(())
 }
 
-pub async fn upload(
-    session: &SftpSession,
-    local: &Path,
-    remote: &str,
-    overwrite: bool,
-    job: &str,
-    progress: &mpsc::Sender<Progress>,
-    cancel: &CancellationToken,
-) -> Result<()> {
-    match session.symlink_metadata(remote).await {
-        Ok(meta) => {
-            if !overwrite {
-                bail!("既存ファイルの上書き確認が必要です");
-            }
-            if meta.is_dir() {
-                bail!("ディレクトリへファイルを上書きできません");
-            }
-        }
-        Err(russh_sftp::client::error::Error::Status(status))
-            if status.status_code == StatusCode::NoSuchFile => {}
-        Err(error) => return Err(error.into()),
-    }
-    let mut input = tokio::fs::File::open(local).await?;
-    let total = input.metadata().await?.len();
-    let flags = if overwrite {
-        OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::TRUNCATE
-    } else {
-        OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::EXCLUDE
-    };
-    let mut output = session.open_with_flags(remote, flags).await?;
-    let mut bytes = vec![0; 32768];
-    let mut done = 0;
-    loop {
-        let count = tokio::select! { _=cancel.cancelled()=>bail!("転送を取り消しました"),result=input.read(&mut bytes)=>result? };
-        if count == 0 {
-            break;
-        }
-        tokio::select! { _=cancel.cancelled()=>bail!("転送を取り消しました"),result=output.write_all(&bytes[..count])=>result? };
-        done += count as u64;
-        notify(progress, job, done, total, cancel).await?;
-    }
-    output.flush().await?;
-    if done != total {
-        bail!("転送元のサイズが変わりました");
-    }
-    Ok(())
-}
+pub use crate::atomic_transfer::upload;
 
 pub async fn upload_resume(
     session: &SftpSession,
@@ -335,8 +302,8 @@ pub async fn upload_resume(
     if !metadata.is_regular() {
         bail!("通常ファイル以外は再開できません");
     }
-    let mut input = tokio::fs::File::open(local).await?;
-    let total = input.metadata().await?.len();
+    let mut input = tokio::fs::File::open(local).await.map_err(local_error)?;
+    let total = input.metadata().await.map_err(local_error)?.len();
     let offset = metadata.len();
     if offset > total {
         bail!("リモートの再開元がローカルより大きいです");
@@ -348,7 +315,10 @@ pub async fn upload_resume(
     while checked < offset {
         let size = (offset - checked).min(32768) as usize;
         tokio::select! {_=cancel.cancelled()=>bail!("再開確認を取り消しました"),result=previous.read_exact(&mut actual[..size])=>{result?;}}
-        input.read_exact(&mut expected[..size]).await?;
+        input
+            .read_exact(&mut expected[..size])
+            .await
+            .map_err(local_error)?;
         if expected[..size] != actual[..size] {
             bail!("再開元の内容が一致しません");
         }
@@ -363,7 +333,7 @@ pub async fn upload_resume(
     let mut bytes = vec![0; 32768];
     let mut done = offset;
     loop {
-        let size = tokio::select! {_=cancel.cancelled()=>bail!("転送を取り消しました"),size=input.read(&mut bytes)=>size?};
+        let size = tokio::select! {_=cancel.cancelled()=>bail!("転送を取り消しました"),size=input.read(&mut bytes)=>size.map_err(local_error)?};
         if size == 0 {
             break;
         }

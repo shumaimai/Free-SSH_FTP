@@ -542,7 +542,7 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - RustのSFTP一覧はraw READDIR中に件数/bytes上限を見て、要求IDごとに結果を照合する。
   旧一覧/検索を取消し、取消済みtokenを次の要求へ流用しない。転送は別の子tokenを持つ。
 - 再帰コピーはリンクを追わず、転送先リンクへの上書きを拒否する。既存policyはキュー追加時に固定。
-  取消は転送済み/部分ファイルを保持する。Windowsのdevice/ADS/予約名は保存前に拒否する。
+  取消は確定済みファイルとresumeの部分ファイルを保持する。Windowsのdevice/ADS/予約名は保存前に拒否する。
 - GUIは一覧の全Stringを毎frame複製せず、見える行を描画する。dropは領域/layerを照合して一度だけ消費する。
 
 - Rust端末は結合文字をセルごと32個に制限し、元の文字/全角flag/表示属性を保つ。
@@ -557,3 +557,9 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - 別表記/親リンクはrealpath照合で拒否する。破損した確定記録を上書きせず、準備tempは復元対象と分ける。
 - 権限候補はSFTP所有ファイルのみ。sudo・旧Python journal引継ぎ・終了時完了待ちは互換表の未完了条件を維持する。
 - 有効なRust権限補助の一覧/転送/復旧取引はタブをまたいで直列化し、復元までoperation guardを保持する。低レベルacquireを画面側から直接使わない。
+
+- Rust通常転送は原本へ直接truncateせずprivate tempへ書き、サイズ/metadataと同期を確認して確定する。
+- remote uploadのfsync/POSIX rename対応は変更前に確認する。EXCL open成功を確認したtempだけcleanupする。
+- 確定済み/確定結果不明/ローカル失敗をリモートchmod再試行へ流さない。復元エラーで確定状態を消さない。
+- GUIの取消はtokenで伝え、確定ACKと権限復元を待つ。確定後の取消は元へ戻ったと断定しない。
+- uid/gid/modeを保持できないUnix転送は確定前に拒否。Windows readonlyは確定handleで読戻す。

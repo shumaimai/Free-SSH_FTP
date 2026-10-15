@@ -86,6 +86,7 @@ pub struct TaskContext<'a> {
     pub permission: Option<&'a std::sync::Arc<crate::permissions::Manager>>,
 }
 pub async fn upload_tree(
+    ssh: &SshSession,
     sftp: &SftpSession,
     local: &Path,
     remote: &str,
@@ -93,11 +94,11 @@ pub async fn upload_tree(
     context: &TaskContext<'_>,
 ) -> Result<Report> {
     let mut access = crate::permissions::Batch::new(context.permission);
-    let result = upload_tree_inner(sftp, local, remote, policy, context, &mut access).await;
-    access.finish().await?;
-    result
+    let result = upload_tree_inner(ssh, sftp, local, remote, policy, context, &mut access).await;
+    crate::permissions::complete(result, access.finish().await)
 }
 async fn upload_tree_inner(
+    ssh: &SshSession,
     sftp: &SftpSession,
     local: &Path,
     remote: &str,
@@ -182,30 +183,17 @@ async fn upload_tree_inner(
                 report.files += 1;
                 continue;
             }
-            let target = if existing.is_some() {
-                remote.as_str()
-            } else {
-                Path::new(&remote)
-                    .parent()
-                    .and_then(|p| p.to_str())
-                    .context("親パスが不正です")?
-            };
             access
-                .run(
-                    target,
-                    if existing.is_some() { 0o222 } else { 0o333 },
-                    || {
-                        transfer::upload(
-                            sftp,
-                            &local,
-                            &remote,
-                            policy == Existing::Overwrite,
-                            job,
-                            progress,
-                            cancel,
-                        )
-                    },
-                )
+                .run(parent, 0o333, || {
+                    transfer::upload(
+                        ssh,
+                        sftp,
+                        &local,
+                        &remote,
+                        policy == Existing::Overwrite,
+                        context,
+                    )
+                })
                 .await?;
             report.files += 1;
         } else {
@@ -224,8 +212,7 @@ pub async fn download_tree(
 ) -> Result<Report> {
     let mut access = crate::permissions::Batch::new(context.permission);
     let result = download_tree_inner(ssh, sftp, remote, local, policy, context, &mut access).await;
-    access.finish().await?;
-    result
+    crate::permissions::complete(result, access.finish().await)
 }
 async fn download_tree_inner(
     ssh: &SshSession,

@@ -212,17 +212,50 @@ impl App {
             let progress = self.progress_tx.clone();
             let tx = self.file_tx.clone();
             self.runtime.spawn(async move {
-                let context=TaskContext {job:&id,progress:&progress,cancel:&cancel,permission:permissions.as_ref()};
-                let future=async {
+                let context = TaskContext {
+                    job: &id,
+                    progress: &progress,
+                    cancel: &cancel,
+                    permission: permissions.as_ref(),
+                };
+                let future = async {
                     match operation {
-                        Operation::Upload {local,remote}=>{let sftp=xfer.lock().await;transfer_tree::upload_tree(&sftp,&local,&remote,policy,&context).await.map(Outcome::Transfer)},
-                        Operation::Download {remote,local}=>{let sftp=xfer.lock().await;transfer_tree::download_tree(&session,&sftp,&remote,&local,policy,&context).await.map(Outcome::Transfer)},
-                        Operation::Delete {remote}=>{let sftp=nav.lock().await;transfer::delete_tree(&sftp,&remote,"delete",&cancel).await.map(|_|Outcome::Deleted)},
-                        Operation::Search {root,query}=>{let sftp=nav.lock().await;transfer_tree::search(&session,&sftp,&root,&query,&cancel).await.map(|entries|Outcome::Search {navigation,entries})},
+                        Operation::Upload { local, remote } => {
+                            let sftp = xfer.lock().await;
+                            transfer_tree::upload_tree(
+                                &session, &sftp, &local, &remote, policy, &context,
+                            )
+                            .await
+                            .map(Outcome::Transfer)
+                        }
+                        Operation::Download { remote, local } => {
+                            let sftp = xfer.lock().await;
+                            transfer_tree::download_tree(
+                                &session, &sftp, &remote, &local, policy, &context,
+                            )
+                            .await
+                            .map(Outcome::Transfer)
+                        }
+                        Operation::Delete { remote } => {
+                            let sftp = nav.lock().await;
+                            transfer::delete_tree(&sftp, &remote, "delete", &cancel)
+                                .await
+                                .map(|_| Outcome::Deleted)
+                        }
+                        Operation::Search { root, query } => {
+                            let sftp = nav.lock().await;
+                            transfer_tree::search(&session, &sftp, &root, &query, &cancel)
+                                .await
+                                .map(|entries| Outcome::Search {
+                                    navigation,
+                                    entries,
+                                })
+                        }
                     }
                 };
-                let result=tokio::select! {biased;_=cancel.cancelled()=>Err(anyhow::anyhow!("中止要求済み。上書き先を含む部分ファイルを保持。権限復元が未完了の場合は「権限補助」で復旧してください")),result=future=>result}.map_err(|e|e.to_string());
-                let _=tx.send(FileEvent::Finished {id,result}).await;
+                // tokenを各操作へ渡す。確定ACK/権限復元中のFutureを取消で捨てない。
+                let result = future.await.map_err(|e| e.to_string());
+                let _ = tx.send(FileEvent::Finished { id, result }).await;
             });
         }
     }
@@ -409,7 +442,7 @@ impl App {
         if self.browser.policy == Existing::Overwrite {
             ui.colored_label(
                 egui::Color32::YELLOW,
-                "上書きは直接書き換えます。取消・失敗で既存内容が部分データに置き換わります。",
+                "確定前の取消・失敗では元ファイルを保持します。確定開始後の通信失敗は結果不明になる場合があります。",
             );
         }
         let profile = self
@@ -614,7 +647,7 @@ impl App {
                     });
                     ui.separator();
                     ui.label("転送待ち行列");
-                    for job in &self.browser.jobs {
+                    for job in &mut self.browser.jobs {
                         ui.horizontal(|ui| {
                             let phase = match job.phase {
                                 Phase::Queued => "待機",
@@ -631,6 +664,8 @@ impl App {
                                 && ui.button("中止").clicked()
                             {
                                 job.cancel.cancel();
+                                job.message =
+                                    "中止を要求しました。確定応答と権限復元を待っています".into();
                             }
                         });
                     }

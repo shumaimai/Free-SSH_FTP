@@ -144,6 +144,7 @@ pub struct SshSession {
     agent_forwarding: bool,
     pub(crate) remote_routes: crate::forward::Routes,
     pub(crate) forward_limits: Arc<tokio::sync::Semaphore>,
+    pub(crate) transfer_commits: Arc<tokio::sync::Semaphore>,
 }
 
 struct ConnectingHops {
@@ -571,6 +572,7 @@ impl SshSession {
                     agent_forwarding: profile.agent_forwarding,
                     remote_routes,
                     forward_limits: Arc::new(tokio::sync::Semaphore::new(32)),
+                    transfer_commits: Arc::new(tokio::sync::Semaphore::new(2)),
                 });
             }
             hops.connections.push(connection);
