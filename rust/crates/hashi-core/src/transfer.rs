@@ -63,6 +63,7 @@ pub async fn list_bounded(
     path: &str,
     cancel: &CancellationToken,
 ) -> Result<Vec<Entry>> {
+    let _work = ssh.background.start()?;
     if path.len() > 16384
         || !(path.starts_with('/')
             || (path.as_bytes().get(1) == Some(&b':')
@@ -75,6 +76,7 @@ pub async fn list_bounded(
     let raw = tokio::select! {_=cancel.cancelled()=>bail!("一覧取得を取り消しました"),raw=ssh.raw_sftp()=>raw?};
     let handle = tokio::select! {_=cancel.cancelled()=>bail!("一覧取得を取り消しました"),handle=raw.opendir(path)=>handle?.handle};
     struct Directory {
+        work: crate::work::Work,
         raw: std::sync::Arc<russh_sftp::client::RawSftpSession>,
         handle: Option<String>,
     }
@@ -83,7 +85,7 @@ pub async fn list_bounded(
             if let Some(handle) = self.handle.take() {
                 let raw = self.raw.clone();
                 if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-                    runtime.spawn(async move {
+                    self.work.cleanup(&runtime, async move {
                         let _ = tokio::time::timeout(
                             std::time::Duration::from_secs(1),
                             raw.close(handle),
@@ -96,6 +98,7 @@ pub async fn list_bounded(
         }
     }
     let mut directory = Directory {
+        work: ssh.background.clone(),
         raw: raw.clone(),
         handle: Some(handle.clone()),
     };

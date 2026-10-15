@@ -254,9 +254,45 @@ pub async fn download(
 }
 
 struct RemoteTemp {
+    work: crate::work::Work,
     raw: Arc<RawSftpSession>,
     path: Option<String>,
     permit: Option<tokio::sync::OwnedSemaphorePermit>,
+}
+impl RemoteTemp {
+    async fn finish(mut self, result: Result<()>) -> Result<()> {
+        if let Some(path) = self.path.take() {
+            let cleanup = remove_temporary(&self.raw, &path).await;
+            if let Err(error) = cleanup {
+                let message = match result {
+                    Ok(()) => format!("転送後の一時ファイル削除は未確認 ({path}): {error}"),
+                    Err(operation) => {
+                        format!("{operation}; 一時ファイル削除も未確認 ({path}): {error}")
+                    }
+                };
+                // 削除失敗をchmodの自動再試行に変換しない。
+                return Err(outcome_error(message));
+            }
+        }
+        result
+    }
+}
+async fn remove_temporary(raw: &RawSftpSession, path: &str) -> Result<()> {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        raw.remove(path.to_owned()),
+    )
+    .await
+    {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(russh_sftp::client::error::Error::Status(status)))
+            if status.status_code == StatusCode::NoSuchFile =>
+        {
+            Ok(())
+        }
+        Ok(Err(error)) => Err(error.into()),
+        Err(error) => Err(error.into()),
+    }
 }
 impl Drop for RemoteTemp {
     fn drop(&mut self) {
@@ -264,12 +300,13 @@ impl Drop for RemoteTemp {
         let path = self.path.take();
         let permit = self.permit.take();
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-            runtime.spawn(async move {
+            let errors = self.work.clone();
+            self.work.cleanup(&runtime, async move {
                 let _permit = permit;
                 if let Some(path) = path {
-                    let _ =
-                        tokio::time::timeout(std::time::Duration::from_secs(2), raw.remove(path))
-                            .await;
+                    if let Err(error) = remove_temporary(&raw, &path).await {
+                        errors.report(format!("一時ファイル削除は未確認 ({path}): {error}"));
+                    }
                 }
                 let _ = raw.close_session();
             });
@@ -284,6 +321,7 @@ pub async fn upload(
     overwrite: bool,
     context: &TaskContext<'_>,
 ) -> Result<()> {
+    let _work = ssh.background.start()?;
     let source = local_version(local)
         .map_err(local_error)?
         .context("転送元がありません")?;
@@ -298,137 +336,155 @@ pub async fn upload(
     let channel = ssh.connection.channel_open_session().await?;
     channel.request_subsystem(true, "sftp").await?;
     let raw = Arc::new(RawSftpSession::new(channel.into_stream()));
-    let mut temporary = RemoteTemp {
+    let work = ssh.background.clone();
+    let mut temporary = Some(RemoteTemp {
+        work: work.clone(),
         raw: raw.clone(),
         path: None,
         permit: Some(permit),
-    };
-    let version = raw.init().await?;
-    if !version
-        .extensions
-        .get("fsync@openssh.com")
-        .is_some_and(|value| value == "1")
-    {
-        bail!("原本を保持する転送に必要なfsync拡張がありません");
-    }
-    if original.is_some()
-        && !version
+    });
+    let result = async {
+        let version = raw.init().await?;
+        if !version
             .extensions
-            .get("posix-rename@openssh.com")
-            .is_some_and(|v| v == "1")
-    {
-        bail!("原本を保持する上書きに必要なposix-rename拡張がありません");
-    }
-    let path = format!(
-        "{}/.hashi-transfer-{}.tmp",
-        parent.trim_end_matches('/'),
-        uuid::Uuid::new_v4()
-    );
-    let mut output = session
-        .open_with_flags_and_attributes(
-            &path,
-            OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::EXCLUDE,
-            FileAttributes {
-                permissions: Some(0o600),
-                ..Default::default()
-            },
-        )
-        .await?;
-    // EXCL openの成功を確認したファイルだけcleanupする。ACK不明/衝突時は削除しない。
-    temporary.path = Some(path.clone());
-    let mut input = tokio::fs::File::open(local).await.map_err(local_error)?;
-    let mut buffer = vec![0; 32768];
-    let mut done = 0;
-    loop {
-        let size = tokio::select! {biased;_=context.cancel.cancelled()=>bail!("確定前に転送を取り消しました。原本は保持しました"),size=input.read(&mut buffer)=>size.map_err(local_error)?};
-        if size == 0 {
-            break;
+            .get("fsync@openssh.com")
+            .is_some_and(|value| value == "1")
+        {
+            bail!("原本を保持する転送に必要なfsync拡張がありません");
         }
-        tokio::select! {biased;_=context.cancel.cancelled()=>bail!("確定前に転送を取り消しました。原本は保持しました"),result=output.write_all(&buffer[..size])=>result?};
-        done += size as u64;
-        progress(
-            context.progress,
-            context.job,
-            done,
-            source.0.size,
-            context.cancel,
-        )
-        .await?;
-    }
-    if done != source.0.size
-        || local_version(local)
-            .map_err(local_error)?
-            .as_ref()
-            .map(|v| &v.0)
-            != Some(&source.0)
-    {
-        bail!("転送元が途中で変わりました。原本を保持しました");
-    }
-    output.flush().await?;
-    if let Some(original) = &original {
-        output
-            .set_metadata(Metadata {
-                permissions: original.permissions,
-                uid: original.uid,
-                gid: original.gid,
-                ..Default::default()
-            })
+        if original.is_some()
+            && !version
+                .extensions
+                .get("posix-rename@openssh.com")
+                .is_some_and(|v| v == "1")
+        {
+            bail!("原本を保持する上書きに必要なposix-rename拡張がありません");
+        }
+        let path = format!(
+            "{}/.hashi-transfer-{}.tmp",
+            parent.trim_end_matches('/'),
+            uuid::Uuid::new_v4()
+        );
+        let mut output = session
+            .open_with_flags_and_attributes(
+                &path,
+                OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::EXCLUDE,
+                FileAttributes {
+                    permissions: Some(0o600),
+                    ..Default::default()
+                },
+            )
             .await?;
-        let readback = output.metadata().await?;
-        if (
-            readback.permissions.map(|v| v & 0o7777),
-            readback.uid,
-            readback.gid,
-        ) != (
-            original.permissions.map(|v| v & 0o7777),
-            original.uid,
-            original.gid,
-        ) {
-            bail!("元のmode/所有者を保てません。原本を保持しました");
-        }
-    }
-    output.sync_all().await?;
-    if output.metadata().await?.len() != done {
-        bail!("一時ファイルのサイズが違います。原本を保持しました");
-    }
-    output.close().await?;
-    let current = remote_metadata(session, remote).await?;
-    let unchanged = match (&original, &current) {
-        (None, None) => true,
-        (Some(a), Some(b)) => same_remote(a, b),
-        _ => false,
-    };
-    if !unchanged {
-        bail!("転送中に宛先が変わりました。原本を保持しました");
-    }
-    if context.cancel.is_cancelled() {
-        bail!("確定前に転送を取り消しました。原本は保持しました");
-    }
-    let remote = remote.to_owned();
-    // 確定要求とcleanupの所有者を同じタスクへ移す。ACK待ちの取消で要求を捨てない。
-    tokio::spawn(async move {
-        let _temporary = temporary;
-        if original.is_some() {
-            let mut encoded = vec![];
-            for text in [&path, &remote] {
-                encoded.extend_from_slice(&(text.len() as u32).to_be_bytes());
-                encoded.extend_from_slice(text.as_bytes());
+        // EXCL openの成功を確認したファイルだけcleanupする。ACK不明/衝突時は削除しない。
+        temporary.as_mut().expect("確定前の一時ファイル").path = Some(path.clone());
+        let mut input = tokio::fs::File::open(local).await.map_err(local_error)?;
+        let mut buffer = vec![0; 32768];
+        let mut done = 0;
+        loop {
+            let size = tokio::select! {biased;_=context.cancel.cancelled()=>bail!("確定前に転送を取り消しました。原本は保持しました"),size=input.read(&mut buffer)=>size.map_err(local_error)?};
+            if size == 0 {
+                break;
             }
-            match raw
-                .extended("posix-rename@openssh.com", encoded)
-                .await
-                .map_err(outcome_error)?
-            {
-                Packet::Status(status) if status.status_code == StatusCode::Ok => Ok(()),
-                _ => Err(outcome_error("上書き確定の成功を確認できません")),
-            }
-        } else {
-            raw.rename(path, remote).await.map_err(outcome_error)?;
-            Ok(())
+            tokio::select! {biased;_=context.cancel.cancelled()=>bail!("確定前に転送を取り消しました。原本は保持しました"),result=output.write_all(&buffer[..size])=>result?};
+            done += size as u64;
+            progress(
+                context.progress,
+                context.job,
+                done,
+                source.0.size,
+                context.cancel,
+            )
+            .await?;
         }
-    })
-    .await
-    .context("転送確定タスクが終了しました。結果は不明です")?
+        if done != source.0.size
+            || local_version(local)
+                .map_err(local_error)?
+                .as_ref()
+                .map(|v| &v.0)
+                != Some(&source.0)
+        {
+            bail!("転送元が途中で変わりました。原本を保持しました");
+        }
+        output.flush().await?;
+        if let Some(original) = &original {
+            output
+                .set_metadata(Metadata {
+                    permissions: original.permissions,
+                    uid: original.uid,
+                    gid: original.gid,
+                    ..Default::default()
+                })
+                .await?;
+            let readback = output.metadata().await?;
+            if (
+                readback.permissions.map(|v| v & 0o7777),
+                readback.uid,
+                readback.gid,
+            ) != (
+                original.permissions.map(|v| v & 0o7777),
+                original.uid,
+                original.gid,
+            ) {
+                bail!("元のmode/所有者を保てません。原本を保持しました");
+            }
+        }
+        output.sync_all().await?;
+        if output.metadata().await?.len() != done {
+            bail!("一時ファイルのサイズが違います。原本を保持しました");
+        }
+        output.close().await?;
+        let current = remote_metadata(session, remote).await?;
+        let unchanged = match (&original, &current) {
+            (None, None) => true,
+            (Some(a), Some(b)) => same_remote(a, b),
+            _ => false,
+        };
+        if !unchanged {
+            bail!("転送中に宛先が変わりました。原本を保持しました");
+        }
+        if context.cancel.is_cancelled() {
+            bail!("確定前に転送を取り消しました。原本は保持しました");
+        }
+        let remote = remote.to_owned();
+        // 確定要求とcleanupの所有者を同じタスクへ移す。ACK待ちの取消で要求を捨てない。
+        let mut temporary = temporary.take().expect("確定タスクへ所有権を渡す");
+        work.cleanup(&tokio::runtime::Handle::current(), async move {
+            let result = async {
+                if original.is_some() {
+                    let mut encoded = vec![];
+                    for text in [&path, &remote] {
+                        encoded.extend_from_slice(&(text.len() as u32).to_be_bytes());
+                        encoded.extend_from_slice(text.as_bytes());
+                    }
+                    match raw
+                        .extended("posix-rename@openssh.com", encoded)
+                        .await
+                        .map_err(outcome_error)?
+                    {
+                        Packet::Status(status) if status.status_code == StatusCode::Ok => Ok(()),
+                        _ => Err(outcome_error("上書き確定の成功を確認できません")),
+                    }
+                } else {
+                    raw.rename(path, remote).await.map_err(outcome_error)?;
+                    Ok(())
+                }
+            }
+            .await;
+            if result.is_ok() {
+                temporary.path = None;
+            }
+            temporary.finish(result).await
+        })
+        .await
+        .context("転送確定タスクが終了しました。結果は不明です")?
+    }
+    .await;
+    // token取消や通常の失敗でも親の権限を戻す前に削除を確認する。
+    if let Some(temporary) = temporary {
+        temporary.finish(result).await
+    } else {
+        result
+    }
 }
 
 #[cfg(test)]

@@ -555,7 +555,7 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - chmod前に記録/fsyncを完了し、ACK途中の取消でも所有タスクで復元する。mode読戻し一致まで記録を消さない。
 - nav/xferは対象/祖先の既存Grantへ参加する。復元は深い順で、子の未復元記録があれば親も延期する。
 - 別表記/親リンクはrealpath照合で拒否する。破損した確定記録を上書きせず、準備tempは復元対象と分ける。
-- 権限候補はSFTP所有ファイルのみ。sudo・旧Python journal引継ぎ・終了時完了待ちは互換表の未完了条件を維持する。
+- 権限候補はSFTP所有ファイルのみ。sudo・旧Python journal引継ぎは互換表の未完了条件を維持する。
 - 有効なRust権限補助の一覧/転送/復旧取引はタブをまたいで直列化し、復元までoperation guardを保持する。低レベルacquireを画面側から直接使わない。
 
 - Rust通常転送は原本へ直接truncateせずprivate tempへ書き、サイズ/metadataと同期を確認して確定する。
@@ -563,3 +563,9 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - 確定済み/確定結果不明/ローカル失敗をリモートchmod再試行へ流さない。復元エラーで確定状態を消さない。
 - GUIの取消はtokenで伝え、確定ACKと権限復元を待つ。確定後の取消は元へ戻ったと断定しない。
 - uid/gid/modeを保持できないUnix転送は確定前に拒否。Windows readonlyは確定handleで読戻す。
+
+- Rust終了は新規受付停止→取消token→操作/確定ACK/temp削除/権限復元待ち→接続/PTY終了の順を守る。
+- Workの受付close後も既存タスクが生むcleanupを追跡する。成功/失敗messageを送ってからprimaryを完了させる。
+- temp削除は親mode復元前にawaitし、削除失敗を画面へ返す。復旧journalを終了時に無条件で消さない。
+- 未保存bufferと処理中の編集を確認する。30秒後の明示終了は結果未確認を伝え、完了済みと扱わない。
+- PTY DropでGUI上のjoinを待たない。Unix離脱子・ConPTY停止不能・OS強制終了の限界を互換表に残す。

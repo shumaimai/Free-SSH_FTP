@@ -17,14 +17,15 @@ pub enum TerminalEvent {
 
 pub struct LocalTerminal {
     pub stamp: Stamp,
-    master: Box<dyn MasterPty + Send>,
+    master: Option<Box<dyn MasterPty + Send>>,
     input: mpsc::Sender<Vec<u8>>,
     writer_thread: Option<std::thread::JoinHandle<()>>,
-    child: Box<dyn Child + Send + Sync>,
+    reader_thread: Option<std::thread::JoinHandle<()>>,
+    child: Option<Box<dyn Child + Send + Sync>>,
     cancel: CancellationToken,
     closed: bool,
     #[cfg(windows)]
-    job: Job,
+    job: Option<Job>,
 }
 
 #[cfg(windows)]
@@ -134,7 +135,7 @@ impl LocalTerminal {
         });
         let stopped = cancel.clone();
         let id = stamp.clone();
-        std::thread::spawn(move || {
+        let reader_thread = std::thread::spawn(move || {
             let runtime = match tokio::runtime::Builder::new_current_thread().build() {
                 Ok(runtime) => runtime,
                 Err(_) => return,
@@ -161,14 +162,15 @@ impl LocalTerminal {
         });
         Ok(Self {
             stamp,
-            master: pair.master,
+            master: Some(pair.master),
             input,
             writer_thread: Some(writer_thread),
-            child,
+            reader_thread: Some(reader_thread),
+            child: Some(child),
             cancel,
             closed: false,
             #[cfg(windows)]
-            job,
+            job: Some(job),
         })
     }
     pub fn send(&mut self, bytes: &[u8]) -> Result<()> {
@@ -187,42 +189,136 @@ impl LocalTerminal {
         if columns == 0 || rows == 0 || columns > 1024 || rows > 512 {
             bail!("端末サイズが不正です");
         }
-        self.master.resize(PtySize {
-            cols: columns,
-            rows,
-            ..PtySize::default()
-        })?;
+        self.master
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("ローカル端末は終了しています"))?
+            .resize(PtySize {
+                cols: columns,
+                rows,
+                ..PtySize::default()
+            })?;
         Ok(())
     }
-    pub fn close(&mut self) -> Result<()> {
+    pub fn stop(&mut self) -> Result<()> {
         if self.closed {
             return Ok(());
         }
         self.cancel.cancel();
         #[cfg(unix)]
-        if let Some(pid) = self.child.process_id() {
+        if let Some(group) = self
+            .master
+            .as_ref()
+            .and_then(|master| master.process_group_leader())
+        {
+            unsafe {
+                libc::kill(-group, libc::SIGKILL);
+            }
+        }
+        #[cfg(unix)]
+        if let Some(pid) = self.child.as_ref().and_then(|child| child.process_id()) {
             unsafe {
                 libc::kill(-(pid as i32), libc::SIGKILL);
             }
         }
         #[cfg(windows)]
         unsafe {
-            if windows_sys::Win32::System::JobObjects::TerminateJobObject(self.job.0 as _, 1) == 0 {
+            if self.job.as_ref().is_some_and(|job| {
+                windows_sys::Win32::System::JobObjects::TerminateJobObject(job.0 as _, 1) == 0
+            }) {
                 return Err(std::io::Error::last_os_error().into());
             }
         }
-        let _ = self.child.kill();
-        self.child.wait()?;
+        if let Some(child) = self.child.as_mut() {
+            let _ = child.kill();
+        }
+        Ok(())
+    }
+    pub fn close(&mut self) -> Result<()> {
+        if self.closed {
+            return Ok(());
+        }
+        let stopped = self.stop();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        if let Some(child) = self.child.as_mut() {
+            while child.try_wait()?.is_none() {
+                if std::time::Instant::now() >= deadline {
+                    bail!("ローカル端末のプロセス終了を確認できません");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        }
+        // readerが排出し続けている間にConPTY/masterを閉じ、read/writeを起こしてからjoinする。
+        self.master.take();
+        for thread in [&self.writer_thread, &self.reader_thread]
+            .into_iter()
+            .flatten()
+        {
+            while !thread.is_finished() {
+                if std::time::Instant::now() >= deadline {
+                    bail!("ローカル端末の入出力ワーカーの終了を確認できません");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        }
+        let written = self.writer_thread.take().map(|thread| thread.join());
+        let read = self.reader_thread.take().map(|thread| thread.join());
         self.closed = true;
-        if let Some(thread) = self.writer_thread.take() {
-            let _ = thread.join();
+        stopped?;
+        if matches!(written, Some(Err(_))) || matches!(read, Some(Err(_))) {
+            bail!("ローカル端末の入出力ワーカーが異常終了しました");
         }
         Ok(())
     }
 }
 impl Drop for LocalTerminal {
     fn drop(&mut self) {
-        let _ = self.close();
+        self.cancel.cancel();
+        if self.closed {
+            return;
+        }
+        // 強制終了のGUIスレッドでPTY/pipeの終了を待たない。通常はclose()で回収済み。
+        let (master, mut child, writer, reader) = (
+            self.master.take(),
+            self.child.take(),
+            self.writer_thread.take(),
+            self.reader_thread.take(),
+        );
+        #[cfg(windows)]
+        let job = self.job.take();
+        std::thread::spawn(move || {
+            #[cfg(unix)]
+            if let Some(group) = master
+                .as_ref()
+                .and_then(|master| master.process_group_leader())
+            {
+                unsafe {
+                    libc::kill(-group, libc::SIGKILL);
+                }
+            }
+            if let Some(child) = child.as_mut() {
+                #[cfg(unix)]
+                if let Some(pid) = child.process_id() {
+                    unsafe {
+                        libc::kill(-(pid as i32), libc::SIGKILL);
+                    }
+                }
+                #[cfg(windows)]
+                if let Some(job) = &job {
+                    unsafe {
+                        windows_sys::Win32::System::JobObjects::TerminateJobObject(job.0 as _, 1);
+                    }
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            drop(master);
+            if let Some(writer) = writer {
+                let _ = writer.join();
+            }
+            if let Some(reader) = reader {
+                let _ = reader.join();
+            }
+        });
     }
 }
 pub type SharedLocalTerminal = Arc<Mutex<LocalTerminal>>;
@@ -230,6 +326,62 @@ pub type SharedLocalTerminal = Arc<Mutex<LocalTerminal>>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn escaped_pty_holder_has_bounded_close_and_nonblocking_drop() {
+        struct Escaped(i32);
+        impl Drop for Escaped {
+            fn drop(&mut self) {
+                unsafe {
+                    libc::kill(-self.0, libc::SIGKILL);
+                }
+            }
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let pid_file = directory.path().join("escaped.pid");
+        let (tx, _rx) = mpsc::channel(1);
+        let mut terminal = LocalTerminal::spawn(
+            "/bin/sh",
+            &[
+                "-c".into(),
+                "setsid /bin/sh -c 'trap \"\" HUP; echo $$ > \"$1\"; sleep 30' _ \"$1\" & wait"
+                    .into(),
+                "_".into(),
+                pid_file.to_string_lossy().into_owned(),
+            ],
+            None,
+            Stamp::default(),
+            tx,
+        )
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let pid = loop {
+            if let Ok(pid) = std::fs::read_to_string(&pid_file) {
+                if let Ok(pid) = pid.trim().parse() {
+                    break pid;
+                }
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "PTYを保持する子が起動しません"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        let _escaped = Escaped(pid);
+        let started = std::time::Instant::now();
+        assert!(
+            terminal.close().is_err(),
+            "回収できないreaderを成功扱いしない"
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(4));
+        let started = std::time::Instant::now();
+        drop(terminal);
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(500),
+            "Dropがjoinを待っています"
+        );
+    }
+
     #[tokio::test]
     async fn local_pty_echo_and_resize_close() {
         let (tx, mut rx) = mpsc::channel(16);

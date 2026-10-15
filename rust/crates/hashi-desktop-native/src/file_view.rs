@@ -84,21 +84,26 @@ pub(super) enum Outcome {
 
 impl App {
     pub(super) fn refresh_local(&mut self, path: PathBuf) {
+        if self.exiting {
+            return;
+        }
         self.browser.local_revision = Stamp::default();
         let revision = self.browser.local_revision.clone();
         let tx = self.file_tx.clone();
-        self.runtime.spawn(async move {
-            let result = transfer_tree::list_local(&path)
-                .await
-                .map_err(|e| e.to_string());
-            let _ = tx
-                .send(FileEvent::Local {
-                    revision,
-                    path,
-                    result,
-                })
-                .await;
-        });
+        self.work
+            .spawn(self.runtime.handle(), async move {
+                let result = transfer_tree::list_local(&path)
+                    .await
+                    .map_err(|e| e.to_string());
+                let _ = tx
+                    .send(FileEvent::Local {
+                        revision,
+                        path,
+                        result,
+                    })
+                    .await;
+            })
+            .expect("一覧の受付確認済み");
     }
     pub(super) fn process_files(&mut self) {
         let mut refresh = vec![];
@@ -147,6 +152,9 @@ impl App {
                                 }
                             }
                             Err(error) => {
+                                if self.exiting {
+                                    self.close_errors.push(format!("{}: {error}", job.label));
+                                }
                                 job.phase = if job.cancel.is_cancelled() {
                                     Phase::Cancelled
                                 } else {
@@ -196,6 +204,11 @@ impl App {
                 self.browser.jobs[index].phase = Phase::Cancelled;
                 continue;
             };
+            if tab.closing || tab.work.is_closed() {
+                self.browser.jobs[index].phase = Phase::Cancelled;
+                continue;
+            }
+            let work = tab.work.clone();
             let (Some(session), Some(xfer), Some(nav)) =
                 (tab.session.clone(), tab.xfer.clone(), tab.nav.clone())
             else {
@@ -211,7 +224,7 @@ impl App {
             let permissions = tab.permissions.clone();
             let progress = self.progress_tx.clone();
             let tx = self.file_tx.clone();
-            self.runtime.spawn(async move {
+            work.spawn(self.runtime.handle(), async move {
                 let context = TaskContext {
                     job: &id,
                     progress: &progress,
@@ -256,10 +269,14 @@ impl App {
                 // tokenを各操作へ渡す。確定ACK/権限復元中のFutureを取消で捨てない。
                 let result = future.await.map_err(|e| e.to_string());
                 let _ = tx.send(FileEvent::Finished { id, result }).await;
-            });
+            })
+            .expect("転送の受付確認済み");
         }
     }
     fn queue_file(&mut self, operation: Operation, label: String) {
+        if self.exiting {
+            return;
+        }
         if self.browser.jobs.len() >= 128 {
             self.browser
                 .jobs
@@ -272,13 +289,14 @@ impl App {
         let Some(tab) = self.tabs.get(self.active) else {
             return;
         };
-        if tab.session.is_none() || tab.cancel.is_cancelled() {
+        if tab.closing || tab.work.is_closed() || tab.session.is_none() || tab.cancel.is_cancelled()
+        {
             return;
         }
         let cancel = if matches!(operation, Operation::Search { .. }) {
             tab.navigation_cancel.child_token()
         } else {
-            tab.cancel.child_token()
+            tab.work_cancel.child_token()
         };
         let job = Job {
             id: Stamp::default().terminal_id,

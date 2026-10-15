@@ -3,12 +3,14 @@ mod editor_view;
 mod file_view;
 mod forward_view;
 mod permission_view;
+mod shutdown_view;
 use file_view::{Browser, FileEvent};
 mod style;
 mod terminal_view;
 use editor_view::{Editor, EditorEvent};
 use eframe::egui;
 use forward_view::{ActiveForward, ForwardEditor};
+use hashi_core::work::Work;
 use hashi_core::{
     interaction::{Challenge, Interaction, Reply, Request, Stamp},
     local::{LocalTerminal, TerminalEvent},
@@ -29,6 +31,13 @@ use tokio::{runtime::Runtime, sync::mpsc};
 use tokio_util::sync::CancellationToken;
 type Sftp = Arc<tokio::sync::Mutex<russh_sftp::client::SftpSession>>;
 enum Message {
+    Quiesced {
+        stamp: Stamp,
+    },
+    Closed {
+        stamp: Stamp,
+        errors: Vec<String>,
+    },
     PermissionsReady {
         stamp: Stamp,
         result: Result<Arc<hashi_core::permissions::Manager>, String>,
@@ -97,15 +106,27 @@ struct Tab {
     pending_size: Option<(u32, u32)>,
     permissions: Option<Arc<hashi_core::permissions::Manager>>,
     permissions_busy: bool,
+    work: Work,
+    transport: Work,
+    work_cancel: CancellationToken,
+    closing: bool,
+    remove_on_close: bool,
 }
 impl Tab {
     fn new(label: String) -> Self {
+        let cancel = CancellationToken::new();
+        let work_cancel = cancel.child_token();
         Self {
             stamp: Stamp::default(),
             label,
             terminal: Terminal::new(80, 24),
             status: "接続中".into(),
-            cancel: CancellationToken::new(),
+            cancel,
+            work_cancel,
+            work: Work::default(),
+            transport: Work::default(),
+            closing: false,
+            remove_on_close: false,
             session: None,
             nav: None,
             xfer: None,
@@ -132,7 +153,7 @@ impl Tab {
     }
     fn begin_navigation(&mut self) -> (Stamp, CancellationToken) {
         self.navigation_cancel.cancel();
-        self.navigation_cancel = self.cancel.child_token();
+        self.navigation_cancel = self.work_cancel.child_token();
         self.navigation = Stamp::default();
         (self.navigation.clone(), self.navigation_cancel.clone())
     }
@@ -146,6 +167,9 @@ impl Tab {
         true
     }
     fn send(&mut self, bytes: Vec<u8>) {
+        if self.closing || self.work.is_closed() {
+            return;
+        }
         if self.pending_bytes + bytes.len() > 1024 * 1024 {
             self.status = "端末入力の待ち行列が満杯です。送信を中止しました".into();
             return;
@@ -157,6 +181,9 @@ impl Tab {
         self.flush_input();
     }
     fn flush_input(&mut self) {
+        if self.closing || self.work.is_closed() {
+            return;
+        }
         if let (Some(size), Some(resize)) = (self.pending_size, self.resize.as_ref()) {
             if resize.try_send(size).is_ok() {
                 self.pending_size = None;
@@ -198,7 +225,13 @@ impl Tab {
     }
 }
 struct App {
-    runtime: Runtime,
+    runtime: shutdown_view::RuntimeOwner,
+    work: Work,
+    closing_work: Work,
+    exiting: bool,
+    exit_started: Option<std::time::Instant>,
+    confirm_started: Option<std::time::Instant>,
+    close_errors: Vec<String>,
     store: Arc<Store>,
     snapshot: Snapshot,
     profile: Profile,
@@ -268,7 +301,13 @@ impl App {
         let (local_tx, local_events) = mpsc::channel(128);
         let (progress_tx, progress) = mpsc::channel(128);
         let mut app = Self {
-            runtime: Runtime::new()?,
+            runtime: shutdown_view::RuntimeOwner::new()?,
+            work: Work::default(),
+            closing_work: Work::default(),
+            exiting: false,
+            exit_started: None,
+            confirm_started: None,
+            close_errors: vec![],
             store,
             snapshot,
             profile: Profile::default(),
@@ -307,6 +346,9 @@ impl App {
         Ok(app)
     }
     fn connect(&mut self) {
+        if self.exiting {
+            return;
+        }
         let mut tab = Tab::new(if self.profile.name.is_empty() {
             self.profile.host.clone()
         } else {
@@ -321,17 +363,48 @@ impl App {
         let known = self.snapshot.known_hosts.clone();
         let interaction = self.interaction.clone();
         let tx = self.tx.clone();
-        self.runtime.spawn(async move{let result=async{
-            let session=Arc::new(SshSession::connect(&profile,stamp.clone(),known,interaction,cancel.clone()).await?);
-            let nav=Arc::new(tokio::sync::Mutex::new(session.sftp().await?));let xfer=Arc::new(tokio::sync::Mutex::new(session.sftp().await?));
-            let channel=session.shell(80,24).await?;let(mut reader,writer)=channel.split();let(input,mut input_rx)=mpsc::channel::<Vec<u8>>(32);let(resize,mut resize_rx)=mpsc::channel::<(u32,u32)>(8);
-            tx.send(Message::Connected{stamp:stamp.clone(),session:session.clone(),nav,xfer,input,resize}).await?;
-            loop{tokio::select!{_=cancel.cancelled()=>{let _=writer.close().await;let _=session.close().await;break;},bytes=input_rx.recv()=>match bytes{Some(bytes)=>writer.data_bytes(bytes).await?,None=>break},size=resize_rx.recv()=>if let Some((columns,rows))=size{writer.window_change(columns,rows,0,0).await?;},message=reader.wait()=>match message{Some(russh::ChannelMsg::Data{data})|Some(russh::ChannelMsg::ExtendedData{data,..})=>{tokio::select!{_=cancel.cancelled()=>break,result=tx.send(Message::Data{stamp:stamp.clone(),bytes:data.to_vec()})=>{result?;}}},Some(russh::ChannelMsg::Close)|None=>break,_=>{}}}}
-            anyhow::Ok(())}.await;let message=match result{Ok(())=>"切断されました".into(),Err(error)=>error.to_string()};let _=tx.send(Message::Error{stamp,message}).await;});
+        tab.transport.spawn(self.runtime.handle(),async move {
+            let result=async {
+                let session=Arc::new(SshSession::connect(&profile,stamp.clone(),known,interaction,cancel.clone()).await?);
+                let setup=async {
+                    let nav=Arc::new(tokio::sync::Mutex::new(session.sftp().await?));
+                    let xfer=Arc::new(tokio::sync::Mutex::new(session.sftp().await?));
+                    let channel=session.shell(80,24).await?;
+                    anyhow::Ok((nav,xfer,channel))
+                };
+                let initialized=tokio::select! {biased;_=cancel.cancelled()=>Err(anyhow::anyhow!("接続の開始を中止しました")),result=tokio::time::timeout(Duration::from_secs(30),setup)=>result.map_err(|_|anyhow::anyhow!("接続の初期化がタイムアウトしました")).and_then(|result|result)};
+                let (nav,xfer,channel)=match initialized {
+                    Ok(value)=>value,
+                    Err(error)=>{let _=tokio::time::timeout(Duration::from_secs(5),session.close()).await;return Err(error);}
+                };
+                let(mut reader,writer)=channel.split();
+                let(input,mut input_rx)=mpsc::channel::<Vec<u8>>(32);
+                let(resize,mut resize_rx)=mpsc::channel::<(u32,u32)>(8);
+                tx.send(Message::Connected {stamp:stamp.clone(),session:session.clone(),nav,xfer,input,resize}).await?;
+                loop {
+                    tokio::select! {biased;
+                        _=cancel.cancelled()=>{let _=tokio::time::timeout(Duration::from_secs(1),writer.close()).await;break;},
+                        bytes=input_rx.recv()=>match bytes {Some(bytes)=>tokio::select! {_=cancel.cancelled()=>break,result=writer.data_bytes(bytes)=>result?},None=>break},
+                        size=resize_rx.recv()=>if let Some((columns,rows))=size {tokio::select! {_=cancel.cancelled()=>break,result=writer.window_change(columns,rows,0,0)=>result?};},
+                        message=reader.wait()=>match message {
+                            Some(russh::ChannelMsg::Data {data})|Some(russh::ChannelMsg::ExtendedData {data,..})=>{tokio::select! {_=cancel.cancelled()=>break,result=tx.send(Message::Data {stamp:stamp.clone(),bytes:data.to_vec()})=>{result?;}}},
+                            Some(russh::ChannelMsg::Close)|None=>break,
+                            _=>{},
+                        }
+                    }
+                }
+                anyhow::Ok(())
+            }.await;
+            let message=match result {Ok(())=>"端末の接続が終了しました".into(),Err(error)=>error.to_string()};
+            let _=tx.send(Message::Error {stamp,message}).await;
+        }).expect("新しい接続の受付");
         self.active = self.tabs.len();
         self.tabs.push(tab);
     }
     fn local(&mut self) {
+        if self.exiting {
+            return;
+        }
         let mut tab = Tab::new("CMD".into());
         match LocalTerminal::spawn(
             if cfg!(windows) { "cmd.exe" } else { "/bin/sh" },
@@ -388,7 +461,9 @@ impl App {
                 break;
             };
             let stamp = match &event {
-                Message::PermissionsReady { stamp, .. }
+                Message::Quiesced { stamp }
+                | Message::Closed { stamp, .. }
+                | Message::PermissionsReady { stamp, .. }
                 | Message::ForwardReady { stamp, .. }
                 | Message::Connected { stamp, .. }
                 | Message::Data { stamp, .. }
@@ -401,6 +476,8 @@ impl App {
                 continue;
             };
             match event {
+                Message::Quiesced { .. } => self.finish_close(index),
+                Message::Closed { errors, .. } => self.closed_tab(index, errors),
                 Message::PermissionsReady { result, .. } => {
                     self.tabs[index].permissions_busy = false;
                     match result {
@@ -412,9 +489,8 @@ impl App {
                     }
                 }
                 Message::ForwardReady { handle, .. } => {
-                    if !self.tabs[index].cancel.is_cancelled() {
-                        self.tabs[index].forwards.push(handle);
-                    }
+                    // Quiescedより前に届く開始済みhandleも、終了処理でstopを待つ。
+                    self.tabs[index].forwards.push(handle);
                 }
                 Message::Connected {
                     session,
@@ -432,7 +508,9 @@ impl App {
                     tab.resize = Some(resize);
                     tab.status = "接続済み".into();
                     let initial = self.tabs[index].path.clone();
-                    self.browse(index, initial);
+                    if !self.tabs[index].closing {
+                        self.browse(index, initial);
+                    }
                 }
                 Message::Data { bytes, .. } => {
                     let tab = &mut self.tabs[index];
@@ -441,7 +519,12 @@ impl App {
                         tab.send(reply);
                     }
                 }
-                Message::Error { message, .. } => self.tabs[index].status = message,
+                Message::Error { message, .. } => {
+                    self.tabs[index].status = message;
+                    if !self.tabs[index].closing {
+                        self.begin_close(index, false);
+                    }
+                }
                 Message::DirectoryError {
                     navigation,
                     message,
@@ -495,6 +578,10 @@ impl App {
         let Some(tab) = self.tabs.get_mut(index) else {
             return;
         };
+        if self.exiting || tab.closing || tab.work.is_closed() {
+            return;
+        }
+        let work = tab.work.clone();
         let Some(nav) = tab.nav.clone() else {
             return;
         };
@@ -505,7 +592,7 @@ impl App {
         let permissions = tab.permissions.clone();
         let stamp = tab.stamp.clone();
         let tx = self.tx.clone();
-        self.runtime.spawn(async move {
+        let _ = work.spawn(self.runtime.handle(), async move {
             let nav = nav.lock().await;
             let result = async {
                 let path = nav.canonicalize(path).await?;
@@ -536,6 +623,9 @@ impl App {
         });
     }
     fn save_profile(&mut self) {
+        if self.exiting {
+            return;
+        }
         let profile = self.profile.clone();
         let index = self.edit_index;
         match self.store.transact(|snapshot| {
@@ -650,6 +740,9 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.reset_file_drop();
+        if self.exiting {
+            ui.disable();
+        }
         egui::Panel::top("header").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("Hashi Rust プレビュー");
@@ -760,9 +853,7 @@ impl eframe::App for App {
                 }
             });
             if let Some(index) = closed {
-                let tab = self.tabs.remove(index);
-                tab.cancel.cancel();
-                self.active = self.active.min(self.tabs.len().saturating_sub(1));
+                self.begin_close(index, true);
             }
             let Some(tab) = self.tabs.get(self.active) else {
                 ui.label("接続先を選択するか、ローカルCMDを開いてください。");
@@ -770,7 +861,7 @@ impl eframe::App for App {
             };
             let status = tab.status.clone();
 
-            let has_sftp = tab.nav.is_some();
+            let has_sftp = tab.nav.is_some() && !tab.closing && !tab.work.is_closed();
             ui.label(status);
             if has_sftp {
                 egui::Panel::right("files")
@@ -779,23 +870,36 @@ impl eframe::App for App {
             }
             egui::CentralPanel::default().show(ui, |ui| {
                 if let Some(tab) = self.tabs.get_mut(self.active) {
-                    terminal_view::show(ui, tab);
+                    if tab.closing {
+                        ui.label("処理の終了を待っています");
+                    } else {
+                        terminal_view::show(ui, tab);
+                    }
                 }
             });
         });
-        self.auth_dialog(&ctx);
-        self.forward_dialog(&ctx);
-        self.permission_dialog(&ctx);
-        self.editor_windows(&ctx);
-        self.file_windows(&ctx);
-        self.dropped_files(&ctx);
+        if !self.exiting {
+            self.auth_dialog(&ctx);
+            self.forward_dialog(&ctx);
+            self.permission_dialog(&ctx);
+            self.editor_windows(&ctx);
+            self.file_windows(&ctx);
+            self.dropped_files(&ctx);
+        }
+        self.shutdown_ui(&ctx);
     }
 }
 impl Drop for App {
     fn drop(&mut self) {
         self.cancel_files();
         for tab in &self.tabs {
+            tab.work_cancel.cancel();
             tab.cancel.cancel();
+            if let Some(local) = &tab.local {
+                if let Ok(mut terminal) = local.try_lock() {
+                    let _ = terminal.stop();
+                }
+            }
         }
     }
 }

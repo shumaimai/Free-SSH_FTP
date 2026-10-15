@@ -341,6 +341,59 @@ async fn main() -> Result<()> {
             "新規作成した内容が違います"
         );
         tokio::fs::remove_dir_all(new_directory).await?;
+        // 親000の取消ではtemp削除を終えてから親modeを戻す。
+        let cancelled_directory = req.directory.join("permission-cancel");
+        tokio::fs::create_dir(&cancelled_directory).await?;
+        let cancelled_destination = cancelled_directory.join("original");
+        tokio::fs::write(&cancelled_destination, b"keep-original").await?;
+        tokio::fs::write(&upload_source, vec![b'x'; 1024 * 1024]).await?;
+        std::fs::set_permissions(&cancelled_directory, std::fs::Permissions::from_mode(0o0))?;
+        let token = CancellationToken::new();
+        let (updates, mut receiver) = mpsc::channel(1);
+        let cancellation_context = hashi_core::transfer_tree::TaskContext {
+            job: "permission-cancel",
+            progress: &updates,
+            cancel: &token,
+            permission: Some(&manager),
+        };
+        let destination = cancelled_destination.to_string_lossy();
+        {
+            let upload = hashi_core::transfer_tree::upload_tree(
+                &session,
+                &xfer,
+                &upload_source,
+                &destination,
+                hashi_core::transfer_tree::Existing::Overwrite,
+                &cancellation_context,
+            );
+            tokio::pin!(upload);
+            tokio::select! {
+                progress=receiver.recv()=>{
+                    anyhow::ensure!(progress.is_some(), "取消試験の進捗がありません");
+                    token.cancel();
+                    anyhow::ensure!(upload.await.is_err(), "取消が結果へ反映されません");
+                },
+                result=&mut upload=>{result?; anyhow::bail!("取消前に転送が終わりました");},
+            }
+        }
+        anyhow::ensure!(
+            std::fs::metadata(&cancelled_directory)?
+                .permissions()
+                .mode()
+                & 0o777
+                == 0,
+            "取消後の親権限が復元されません"
+        );
+        std::fs::set_permissions(&cancelled_directory, std::fs::Permissions::from_mode(0o700))?;
+        anyhow::ensure!(
+            std::fs::read_dir(&cancelled_directory)?.count() == 1,
+            "親権限復元後に未削除のtempが残りました"
+        );
+        anyhow::ensure!(
+            tokio::fs::read(&cancelled_destination).await? == b"keep-original",
+            "取消で既存ファイルが変わりました"
+        );
+        tokio::fs::remove_dir_all(cancelled_directory).await?;
         let result = hashi_core::transfer_tree::download_tree(
             &session,
             &xfer,
@@ -384,11 +437,27 @@ async fn main() -> Result<()> {
         );
         drop(progress);
         task.await?;
+        anyhow::ensure!(
+            manager.shutdown().await? == 0,
+            "終了後に復元記録が残りました"
+        );
         tokio::fs::remove_dir_all(tree).await?;
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
         tokio::fs::remove_file(path).await?;
     }
     verify_forwards(session.clone()).await?;
+    session.background.close();
+    session.background.wait().await;
+    anyhow::ensure!(
+        session.background.take_errors().is_empty(),
+        "後始末に失敗しました"
+    );
+    anyhow::ensure!(
+        transfer::list_bounded(&session, &directory, &cancel)
+            .await
+            .is_err(),
+        "終了後に新しい一覧処理を受け付けました"
+    );
     session.close().await?;
     println!("ssh-sftp-verified");
     Ok(())

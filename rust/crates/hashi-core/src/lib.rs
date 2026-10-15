@@ -11,3 +11,4 @@ pub mod ssh;
 pub mod ssh_config;
 pub mod transfer;
 pub mod transfer_tree;
+pub mod work;

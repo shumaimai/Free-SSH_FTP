@@ -135,6 +135,7 @@ impl client::Handler for Handler {
 }
 
 pub struct SshSession {
+    pub background: crate::work::Work,
     pub stamp: Stamp,
     pub scope: Scope,
     pub connection: client::Handle<Handler>,
@@ -563,6 +564,7 @@ impl SshSession {
             if index == last {
                 hops.finished = true;
                 return Ok(Self {
+                    background: crate::work::Work::default(),
                     stamp,
                     scope,
                     connection,
