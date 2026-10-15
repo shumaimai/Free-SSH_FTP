@@ -1,4 +1,5 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+mod ai_view;
 mod editor_view;
 mod external_view;
 mod file_view;
@@ -295,6 +296,7 @@ struct App {
     available_update: Option<hashi_core::update::Update>,
     keygen: keygen_view::KeygenWindow,
     external: external_view::External,
+    ai: ai_view::AiWindow,
 }
 impl App {
     fn new(
@@ -373,6 +375,7 @@ impl App {
             available_update: None,
             keygen: Default::default(),
             external: Default::default(),
+            ai: Default::default(),
             allow_close: false,
             browser: Browser::default(),
             file_events,
@@ -851,6 +854,9 @@ impl eframe::App for App {
                 if ui.button("権限補助").clicked() {
                     self.permission_open = true;
                 }
+                if ui.button("AI相談").clicked() {
+                    self.ai.open = true;
+                }
                 if ui.button("外部操作").clicked() {
                     self.external.open = true;
                 }
@@ -988,6 +994,7 @@ impl eframe::App for App {
             self.settings_dialog(&ctx);
             self.keygen_dialog(&ctx);
             self.external_dialog(&ctx);
+            self.ai_dialog(&ctx);
             self.editor_windows(&ctx);
             self.file_windows(&ctx);
             self.dropped_files(&ctx);

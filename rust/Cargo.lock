@@ -1678,6 +1678,8 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-util",
+ "ureq",
+ "url",
 ]
 
 [[package]]
@@ -1713,6 +1715,7 @@ version = "0.1.0-alpha.0"
 dependencies = [
  "anyhow",
  "eframe",
+ "hashi-ai",
  "hashi-core",
  "hashi-mcp",
  "hashi-storage",
@@ -1722,9 +1725,11 @@ dependencies = [
  "russh-sftp",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tokio",
  "tokio-util",
  "url",
+ "uuid",
  "webbrowser",
 ]
 

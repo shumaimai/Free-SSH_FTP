@@ -11,6 +11,6 @@ serde_json.workspace = true
 anyhow = "1"
 regex = "1"
 tokio-util = { version = "0.7", features = ["rt"] }
-
-[dev-dependencies]
 tokio = { version = "1", features = ["full"] }
+ureq = { version = "=3.4.2", default-features = false, features = ["rustls", "platform-verifier", "win-system-proxy"] }
+url = "2"

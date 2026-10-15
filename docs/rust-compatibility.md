@@ -22,7 +22,7 @@ Issue #170の完了条件をこの表で省略しない。候補に存在する�
 | 権限・サーバー設定 | 明示的な一覧/転送の権限補助、chmod前fsync journal、対象/祖先の参照数、深い順・mode確認後の復元、終了時の復元待ち、再接続後の復旧UI | sudo、旧Python journalの復元/引継ぎUI、全終了故障行列、sshd/netplan rollback |
 | SSH鍵生成・公開鍵登録 | Ed25519/ECDSA(256/384/521)/RSA(2048/3072/4096)、パスフレーズ（bcrypt-pbkdf）、全種別OpenSSH形式、no-clobber/明示上書き、Unix 0600と新規フォルダ0700、Windowsの~/.ssh外警告、SFTPで~/.ssh/authorized_keysへ末尾追記・重複防止 | Windows実機のACL、RSA 4096の体感時間、Python版はRSA/ECDSAを従来PEMで書く差（Python版はOpenSSH形式も読める） |
 | P2P・Google Drive同期 | 暗号v1契約のみ | X25519/SAS、通信、Google Drive現行backend、秘密同期と衝突処理 |
-| AI/API/OAuth | AI秘密形式、プロバイダー中立のツール定義/秘密除去/観測JSON | 3種API、会話/観測、OAuth全検証・更新単一所有者・再認証 |
+| AI/API/OAuth | AI秘密形式、プロバイダー中立のツール定義/秘密除去/観測JSON、APIキー方式（OpenAI Responses・Anthropic Messages・互換Chat Completions・Command Code、モデル一覧、toolsなし接続確認、URL検証・リダイレクト禁止・SSE上限）、会話（最大8往復・取消・観測データの送信前確認/編集）、AI専用暗号化ストアへのキー保存、`ai_api_kind`/`ai_api_profiles` | ChatGPT OAuth（独立サインイン・アカウント選択・更新単一所有者）、実API（OpenAI/Anthropic/Command Code）での確認、OSの資格情報ストア |
 | CommandBroker/MCP/公式CLI | 端末台帳（ID・接続世代・共有可否・ANSI除去した出力/画面）、Broker（読むだけ/操作ごとに確認/自動実行、15分、停止で取消、actor+要求IDの重複防止、本文なし監査）、SSH専用exec/ローカル別プロセスの独立実行、`hashi-ai`の6ツール・秘密除去・観測JSON、`hashi-mcp`の認証付きloopback IPC（本人限定フォルダ・instance/token照合・notification実行禁止・切断で取消）と`HashiMCP-RustPreview` console stdio、GUIの共有/承認/MCP設定画面 | 未改変公式Claude CLIの導入/起動/MCP連携、Windows実機のicacls/ConPTY、AI会話画面 |
 | 更新・配布 | Rust候補のWindows CI artifact。preview更新通知（Release一覧から`rust-preview-v`タグ・prerelease・公式URLだけを選ぶ）、Python版の更新通知はPythonタグ形式だけを通知、`rust-preview-v*`専用workflow（prerelease・make_latest:false・版照合・ライセンス同梱） | 実タグでのworkflow初回実行、stable `rust-v`のworkflow、署名/SmartScreen、MCP別EXEの同梱、戻し手順 |
 
@@ -157,3 +157,12 @@ MCPの接続情報は本人限定の一時フォルダ（Unix 0700、Windowsはi
 アプリ終了/MCP停止で削除する。stdioヘルパーはstdoutへJSON-RPCだけを書き、同時4件まで並列化する。
 GUIの実描画（Xvfb）で、CMD共有→MCP開始→実stdioヘルパーからlist_sessions/send_input→承認ダイアログ→
 CMDでの実行→read_outputまでと、通常終了で接続情報が消えることを確認した。Windows実機は未確認。
+
+AI相談はPython版と同じく、接続設定の保存値を`ai_api_kind`/`ai_api_profiles`に置き、APIキーはAI専用の暗号化ストア
+（`ai-secrets.dat`、キー名`api:{種別}:{正規化URLのSHA-256}`）へ保存する。SSH資格情報・設定JSONへ混ぜない。
+接続確認ではtoolsを送らない。相談専用（端末ツールなし）ではtoolsを送らず、返されたツール要求も実行しない。
+完了イベントのない応答（Responsesのcompleted、Messagesのmessage_stop+stop_reason、Chatのfinish_reason）の
+ツールは実行しない。HTTPSだけ（loopbackのHTTPは可）、認証付き通信のリダイレクトを拒否し、POSTを自動再送しない。
+共有対象がある送信では、送信前に観測データを確認・編集できる。共有対象と実行モードは「外部操作」画面の選択を使う。
+GUI実描画で、ローカルの互換API偽サーバーを相手に、モデル一覧→接続確認→保存→送信内容の確認→
+AIのsend_input要求がBroker経由でCMDへ届き、ツール結果を返して最終応答を表示するまでを確認した。実サービスは未確認。

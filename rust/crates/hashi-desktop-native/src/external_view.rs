@@ -12,8 +12,8 @@ pub(super) struct External {
     pub(super) broker: Arc<Broker>,
     approvals: mpsc::Receiver<ApprovalRequest>,
     pending: VecDeque<ApprovalRequest>,
-    mode: Mode,
-    selected: Vec<Stamp>,
+    pub(super) mode: Mode,
+    pub(super) selected: Vec<Stamp>,
     mcp: Option<Arc<hashi_mcp::McpBridge>>,
     mcp_starting: Option<tokio::sync::oneshot::Receiver<Result<Arc<hashi_mcp::McpBridge>, String>>>,
     mcp_config: String,
@@ -97,7 +97,8 @@ impl App {
             }
             tab.binding.dirty = false;
             if let Some((id, generation)) = &tab.binding.id {
-                let screen = tab.terminal.visible_text().join("\n");
+                // 末尾の空行はAIへ送る観測データを増やすだけなので除く。
+                let screen = tab.terminal.visible_text().join("\n").trim_end().to_owned();
                 let text = std::mem::take(&mut tab.binding.pending);
                 self.external
                     .registry
@@ -135,6 +136,7 @@ impl App {
         }
     }
     pub(super) fn stop_external(&mut self) {
+        self.ai_stop();
         self.external.broker.stop();
         if let Some(bridge) = self.external.mcp.take() {
             bridge.close();
