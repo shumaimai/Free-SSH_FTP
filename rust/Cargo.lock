@@ -2441,8 +2441,10 @@ version = "0.1.0-alpha.0"
 dependencies = [
  "anyhow",
  "hashi-core",
+ "hashi-storage",
  "regex",
  "serde_json",
+ "sha2 0.10.9",
  "tokio",
  "tokio-util",
  "ureq",
@@ -2505,6 +2507,7 @@ name = "hashi-desktop-tauri"
 version = "0.1.0-alpha.0"
 dependencies = [
  "anyhow",
+ "hashi-ai",
  "hashi-core",
  "hashi-storage",
  "hashi-terminal",
@@ -2517,6 +2520,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "uuid",
+ "webbrowser",
 ]
 
 [[package]]

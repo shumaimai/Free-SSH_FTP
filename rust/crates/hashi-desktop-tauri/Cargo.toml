@@ -17,6 +17,7 @@ tauri-build = { version = "=2.7.3", features = [] }
 hashi-core = { path = "../hashi-core" }
 hashi-storage = { path = "../hashi-storage" }
 hashi-terminal = { path = "../hashi-terminal" }
+hashi-ai = { path = "../hashi-ai" }
 tauri = { version = "=2.12.4", features = [] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
@@ -25,4 +26,5 @@ serde_json.workspace = true
 anyhow = "1"
 russh = { version = "=0.64.1", default-features = false, features = ["ring", "rsa", "flate2"] }
 rfd = "0.17"
+webbrowser = "1"
 uuid = { version = "1", features = ["v4"] }

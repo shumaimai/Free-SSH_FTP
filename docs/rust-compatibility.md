@@ -8,7 +8,7 @@ Issue #170の完了条件をこの表で省略しない。候補に存在する�
 | 旧版との保存先分離・実行中マーカー | shared/exclusive OSロック、PID+開始時刻、記録失敗は警告してPython起動、旧journalの検出 | マーカー非対応旧版停止の取り込みUI確認、Darwin照会 |
 | Profile/Settings/known_hosts/export | 全旧フィールド、atomic state、v1、追加のみmerge | 全設定UI、旧データ取り込み・ロールバックUI |
 | SSH/AI秘密・クラウド暗号 | 分離ファイル、scrypt/Fernet、WinVaultの2種類のTargetNameとPython互換Enterprise永続化 | OSストア/暗号化ファイルの選択UI、実Python keyring双方互換 |
-| Web画面（Tauri 2 + WebView2） | `hashi-desktop-tauri`。Fluent UIのホーム（接続カード）・編集窓・上部タブ・xterm.js端末（ローカルCMD/SSH）・ホスト鍵/秘密入力の確認窓、終了時の接続/PTY回収 | ファイル/AIドック、スニペット・設定・権限補助・ポート転送・鍵生成・エディタ・MCP承認の移植（現在はegui版）、Windows実機・IME・拡大表示、WebView2の有無の案内 |
+| Web画面（Tauri 2 + WebView2） | `hashi-desktop-tauri`。Fluent UIのホーム（接続カード）・編集窓・上部タブ・xterm.js端末（ローカルCMD/SSH）・ホスト鍵/秘密入力の確認窓、外観設定（テーマ・アクセント色・フォント・端末配色）、AIドック（接続・会話・端末共有・送信前確認・外部操作の承認）、終了時の接続/PTY回収 | ファイルドック、スニペット・設定・権限補助・ポート転送・鍵生成・エディタ・MCPの移植（現在はegui版）、Windows実機・IME・拡大表示、WebView2の有無の案内 |
 | 日本語ネイティブGUI（egui版） | eframe/egui、NotoSansJP、新しい画面構成（ホームの接続カード、接続の編集窓、上部タブ、右の「ファイル/AI」ドック、ツールメニュー）、受付停止→処理/復元待ち→接続終了 | テーマ・DPI、IME実機、全終了故障行列。旧Python版の画面構成は意図して再現しない（機能の対応だけを本表で追う） |
 | SSH認証・ホスト鍵 | key/password/agent、RSA SHA-2、公開鍵blob指紋、対象付き認証応答 | 全鍵形式・SHA-1専用サーバー等の暗号行列、Windows agent実環境、パスフレーズ再入力行列 |
 | ProxyJump | SSH configのHost解決、複数hop、鍵→agent→passwordの別認証、接続失敗時のhop回収 | Match/Includeの対応、全失敗行列、実運用の多段接続 |
@@ -195,3 +195,13 @@ SSH・転送・権限補助・AI・保存などの核はRustのまま共有し�
 - 画面の確認は、WebView2と同じChromium系でモックのバックエンドを描画して行う（`VITE_MOCK`。製品のビルドには入らない）。
   実バックエンドはXvfb + WebKitGTKで、ローカルCMDの実行、実sshdへの鍵認証、ホスト鍵確認、シェル操作を確認した。
   Windows実機（WebView2、IME、拡大表示）は未確認。
+- 外観設定（テーマ・アクセント色7種・画面フォント5種・端末フォント5種/文字サイズ・端末配色5種）は固定の候補のidだけを`appearance`へ保存する。
+  Rust側が候補と範囲（10〜24px）を検証し、画面から来た文字列をそのまま保存しない。フォントはその機械にあるものだけが使われる。
+- AIドックは右側。サービス選択（OpenAI / Claude / 自分のPC / その他）→キー→「接続する」の1操作で、モデル一覧・応答確認・保存まで行う。
+  選択・接続の規則は`hashi_ai::connect`でegui版と共有し、設定は同じ`ai_connection`。APIキーは画面へ返さず、保存済みかどうかだけを伝える。
+  キーの取得ページはサービスごとの固定URLだけをRust側で開く（画面からURLを受け取らない）。接続先URLを書き換えると入力済みのキーを消す。
+  共有する端末と実行モード（読むだけ/操作は確認/自動で操作）は会話欄の上で選び、送信のたびにBrokerへ設定する。共有対象があると、
+  観測データを送る前に確認・編集させる。外部操作の承認はRust側の要求を画面へ流し、閉じる操作は拒否として扱う。
+  端末は接続できてから台帳へ登録し、受信出力と表示中の画面を150msごとにまとめて台帳へ写す。終了時はAI処理・共有・承認待ちを先に止める。
+  Xvfb + 実バックエンドで、偽のOpenAI互換サーバーを相手に、接続→再起動後の自動復元→送信前確認→承認→PTYでの実行→最終応答を確認した。
+  実サービス（OpenAI/Claude）とWindows実機は未確認。

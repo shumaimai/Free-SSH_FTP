@@ -2,6 +2,7 @@
 //! Hashi Rust版のWeb画面（Tauri 2 + WebView2）。核はhashi-core/hashi-storage/hashi-terminalを使い、
 //! 画面（frontend/）とはcommandとeventだけで話す。画面側へ渡すのは表示に要るものだけで、
 //! 秘密・認証要求の照合・信頼情報の保存は常にこちら（Rust側）で行う。
+mod ai;
 mod app;
 mod session;
 
@@ -19,6 +20,14 @@ fn main() {
         .manage(state)
         .setup(|app| {
             app::start_challenge_pump(app.handle().clone());
+            ai::start_pumps(app.handle().clone());
+            let handle = app.handle().clone();
+            // 保存キーの復号は重いので、画面の起動を待たせない。
+            tauri::async_runtime::spawn_blocking(move || {
+                ai::restore(&handle);
+                // 画面は先に起動しているので、読み戻しの終了を知らせる。
+                let _ = tauri::Emitter::emit(&handle, "ai-restored", ());
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -29,6 +38,20 @@ fn main() {
             app::appearance_get,
             app::appearance_set,
             app::challenge_reply,
+            ai::ai_services,
+            ai::ai_protocols,
+            ai::ai_open_key_page,
+            ai::ai_status,
+            ai::ai_has_key,
+            ai::ai_forget,
+            ai::ai_connect,
+            ai::ai_switch_model,
+            ai::ai_clear,
+            ai::ai_stop,
+            ai::ai_send,
+            ai::ai_confirm,
+            ai::ai_cancel_preview,
+            ai::approval_reply,
             session::session_open_local,
             session::session_connect,
             session::session_input,

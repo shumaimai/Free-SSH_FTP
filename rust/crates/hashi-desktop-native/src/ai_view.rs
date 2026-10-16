@@ -30,92 +30,7 @@ struct ChatMsg {
     text: String,
 }
 
-/// 利用者が選ぶ接続先。種別とAPI形式は内部で決め、画面には出さない。
-struct Service {
-    id: &'static str,
-    label: &'static str,
-    kind: &'static str,
-    base: &'static str,
-    needs_key: bool,
-    key_page: &'static str,
-    blurb: &'static str,
-}
-const SERVICES: [Service; 4] = [
-    Service {
-        id: "openai",
-        label: "OpenAI",
-        kind: "openai",
-        base: "https://api.openai.com/v1",
-        needs_key: true,
-        key_page: "https://platform.openai.com/api-keys",
-        blurb: "ChatGPTのAPI。利用料はOpenAIの料金に従います。",
-    },
-    Service {
-        id: "anthropic",
-        label: "Claude",
-        kind: "anthropic",
-        base: "https://api.anthropic.com/v1",
-        needs_key: true,
-        key_page: "https://console.anthropic.com/settings/keys",
-        blurb: "AnthropicのAPI。利用料はAnthropicの料金に従います。",
-    },
-    Service {
-        id: "local",
-        label: "自分のPC",
-        kind: "compatible",
-        base: "http://127.0.0.1:1234/v1",
-        needs_key: false,
-        key_page: "",
-        blurb: "LM StudioやOllamaなど、このPCで動くAI。キーは要りません（Ollamaは http://127.0.0.1:11434/v1）。",
-    },
-    Service {
-        id: "custom",
-        label: "その他",
-        kind: "compatible",
-        base: "",
-        needs_key: true,
-        key_page: "",
-        blurb: "OpenAI互換のAPIを出している他社サービス。接続先URLを入力してください。",
-    },
-];
-const PROTOCOLS: [(&str, &str); 4] = [
-    ("auto", "自動"),
-    ("chat", "Chat Completions"),
-    ("responses", "Responses"),
-    ("messages", "Anthropic Messages"),
-];
-
-/// 公式でない接続先の種別。Command CodeのURLだけは専用の扱いにする。
-fn kind_for(service: &Service, base: &str) -> &'static str {
-    if service.kind == "compatible" {
-        if let Ok(base) = hashi_ai::http::normalize_api_base(base) {
-            if base == hashi_ai::api::default_base("commandcode") {
-                return "commandcode";
-            }
-        }
-    }
-    service.kind
-}
-
-/// 一覧から最初に使うモデル。各社の主力に当たりやすい名前を優先し、なければ先頭。
-fn default_model(kind: &str, models: &[String]) -> Option<String> {
-    let preferred: &[&str] = match kind {
-        "openai" => &["gpt-5", "gpt-4.1", "gpt-4o"],
-        "anthropic" => &["claude-sonnet", "claude-opus", "claude"],
-        _ => &[],
-    };
-    for prefix in preferred {
-        if let Some(model) = models
-            .iter()
-            .filter(|m| m.starts_with(prefix) && !m.contains("mini") && !m.contains("nano"))
-            .min_by_key(|m| m.len())
-        {
-            return Some(model.clone());
-        }
-    }
-    models.first().cloned()
-}
-
+use hashi_ai::connect::{key_id, kind_for, Outcome, Service, PROTOCOLS, SERVICES};
 pub(super) struct AiWindow {
     service: usize,
     base: String,
@@ -173,18 +88,6 @@ impl Default for AiWindow {
     }
 }
 
-fn key_id(kind: &str, base: &str) -> Result<String, String> {
-    use sha2::Digest;
-    let base = hashi_ai::http::normalize_api_base(base).map_err(|e| e.to_string())?;
-    let digest = sha2::Sha256::digest(base.as_bytes());
-    Ok(format!(
-        "api:{kind}:{}",
-        digest
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>()
-    ))
-}
 fn secrets() -> Result<EncryptedSecrets, String> {
     EncryptedSecrets::new(Channel::Preview, Namespace::Ai).map_err(|e| e.to_string())
 }
@@ -195,10 +98,7 @@ impl AiWindow {
     }
     /// 接続先のURL。公式サービスは固定、それ以外は入力値。
     fn effective_base(&self) -> String {
-        match self.service().id {
-            "local" | "custom" if !self.base.trim().is_empty() => self.base.trim().to_owned(),
-            _ => self.service().base.to_owned(),
-        }
+        hashi_ai::connect::effective_base(self.service(), &self.base)
     }
     fn say(&mut self, text: impl Into<String>, failed: bool) {
         self.status = text.into();
@@ -279,31 +179,14 @@ impl App {
     }
     fn ai_build(&self, model: &str) -> Result<ApiProvider, String> {
         let ai = &self.ai;
-        let service = ai.service();
-        let base = ai.effective_base();
-        let base = hashi_ai::http::normalize_api_base(&base).map_err(|e| e.to_string())?;
-        let kind = kind_for(service, &base);
-        if service.needs_key && ai.key.trim().is_empty() {
-            return Err("APIキーを入力してください。".into());
-        }
-        let protocol = if matches!(kind, "compatible" | "commandcode") {
-            PROTOCOLS[ai.protocol].0
-        } else {
-            "auto"
-        };
-        ApiProvider::new(
-            kind,
-            if model.is_empty() {
-                "model-list"
-            } else {
-                model
-            },
-            ai.key.trim(),
-            Some(&base),
+        hashi_ai::connect::build(
+            ai.service(),
+            &ai.base,
+            &ai.key,
+            model,
+            PROTOCOLS[ai.protocol].0,
             ai.use_tools,
-            protocol,
         )
-        .map_err(|e| e.to_string())
     }
     /// 「接続する」。モデル一覧の取得、応答の確認、設定とキーの保存を1回で行う。
     fn ai_connect(&mut self) {
@@ -318,71 +201,17 @@ impl App {
         };
         let persist = self.ai.persist && self.ai.service().needs_key;
         self.ai.need_model = false;
-        self.ai_start("接続しています…", move || {
-            let cancel = CancellationToken::new();
-            let listed = probe.models(&cancel).map(|models| {
-                models
-                    .iter()
-                    .filter_map(|m| m["id"].as_str().map(str::to_owned))
-                    .collect::<Vec<_>>()
-            });
-            let models = listed.as_ref().cloned().unwrap_or_default();
-            let model = if !typed.is_empty() {
-                typed
-            } else {
-                match (&listed, default_model(&probe.kind, &models)) {
-                    (Ok(_), Some(model)) => model,
-                    (Ok(_), None) => {
-                        return Ok(Done::NeedModel(
-                            "使えるモデルが見つかりません。モデル名を入力してください。".into(),
-                            models,
-                        ))
-                    }
-                    (Err(error), _) => {
-                        // キーや接続先の誤りは、モデル名の入力を求めず原因をそのまま返す。
-                        let message = error.to_string();
-                        return if message.contains("HTTP 401") || message.contains("HTTP 403") {
-                            Err(message)
-                        } else {
-                            Ok(Done::NeedModel(
-                                format!("モデル一覧を取得できませんでした（{message}）。モデル名を入力して、もう一度「接続する」を押してください。"),
-                                models,
-                            ))
-                        };
-                    }
-                }
-            };
-            let provider = ApiProvider::new(
-                &probe.kind,
-                &model,
-                probe.key(),
-                Some(&probe.base),
-                probe.use_tools,
-                &probe.protocol,
-            )
-            .map_err(|e| e.to_string())?;
-            // 接続確認ではtoolsを送らない。
-            let mut check = provider.clone();
-            check.use_tools = false;
-            check
-                .respond(
-                    &[json!({"role": "user", "content": "OKとだけ答えてください。"})],
-                    "接続確認です。端末操作をせず短く回答してください。",
-                    &[],
-                    &cancel,
-                    &mut |_| {},
-                )
-                .map_err(|e| e.to_string())?;
-            secrets()?
-                .set(
-                    &key_id,
-                    persist
-                        .then(|| provider.key().to_owned())
-                        .as_deref()
-                        .filter(|v| !v.is_empty()),
-                )
-                .map_err(|_| "APIキーを保存できませんでした。もう一度お試しください。".to_owned())?;
-            Ok(Done::Connected(Arc::new(provider), models))
+        self.ai_start("接続しています…", move || match hashi_ai::connect::connect(
+            probe,
+            &typed,
+            &key_id,
+            persist,
+            &secrets()?,
+        )? {
+            Outcome::Connected(provider, models) => {
+                Ok(Done::Connected(Arc::from(provider), models))
+            }
+            Outcome::NeedModel(message, models) => Ok(Done::NeedModel(message, models)),
         });
     }
     fn ai_save_connection(&mut self, provider: &ApiProvider) -> bool {
@@ -1078,55 +907,4 @@ fn bubble(ui: &mut egui::Ui, message: &ChatMsg) {
         }
     }
     ui.add_space(4.0);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn names(items: &[&str]) -> Vec<String> {
-        items.iter().map(|s| s.to_string()).collect()
-    }
-
-    #[test]
-    fn default_model_prefers_main_models_over_small_variants() {
-        let models = names(&["gpt-4o-mini", "gpt-5-mini", "gpt-5", "gpt-5-2025", "o3"]);
-        assert_eq!(default_model("openai", &models).as_deref(), Some("gpt-5"));
-        let claude = names(&["claude-haiku-4", "claude-sonnet-4-5", "claude-opus-4"]);
-        assert_eq!(
-            default_model("anthropic", &claude).as_deref(),
-            Some("claude-sonnet-4-5")
-        );
-        assert_eq!(
-            default_model("compatible", &names(&["local-model", "b"])).as_deref(),
-            Some("local-model")
-        );
-        assert_eq!(default_model("openai", &[]), None);
-    }
-
-    #[test]
-    fn only_command_code_url_changes_the_kind_of_a_custom_service() {
-        let custom = &SERVICES[3];
-        assert_eq!(kind_for(custom, "https://example.com/v1"), "compatible");
-        assert_eq!(
-            kind_for(custom, "https://api.commandcode.ai/v1"),
-            "commandcode"
-        );
-        assert_eq!(
-            kind_for(&SERVICES[0], "https://api.commandcode.ai/v1"),
-            "openai"
-        );
-        assert_eq!(kind_for(custom, "not a url"), "compatible");
-    }
-
-    #[test]
-    fn official_services_ignore_a_typed_base_url() {
-        let mut ai = AiWindow {
-            base: "https://evil.example.com/v1".into(),
-            ..AiWindow::default()
-        };
-        assert_eq!(ai.effective_base(), "https://api.openai.com/v1");
-        ai.service = 3;
-        assert_eq!(ai.effective_base(), "https://evil.example.com/v1");
-    }
 }

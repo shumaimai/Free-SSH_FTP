@@ -1,6 +1,10 @@
 // 画面の確認・試験用の偽のバックエンド。VITE_MOCK付きのビルドにだけ入り、製品には入らない。
 import type { Api } from './api';
 import type {
+  AiConnectResult,
+  AiServiceInfo,
+  AiStatus,
+  ApprovalRequest,
   Challenge,
   ChallengeAnswer,
   DataSink,
@@ -28,6 +32,29 @@ export function mockApi(): Api {
       proxy_jump: 'ops@bastion.example.com',
     },
   ];
+  const services: AiServiceInfo[] = [
+    { id: 'openai', label: 'OpenAI', needsKey: true, hasKeyPage: true, blurb: 'ChatGPTのAPI。利用料はOpenAIの料金に従います。', defaultBase: 'https://api.openai.com/v1' },
+    { id: 'anthropic', label: 'Claude', needsKey: true, hasKeyPage: true, blurb: 'AnthropicのAPI。利用料はAnthropicの料金に従います。', defaultBase: 'https://api.anthropic.com/v1' },
+    { id: 'local', label: '自分のPC', needsKey: false, hasKeyPage: false, blurb: 'LM StudioやOllamaなど、このPCで動くAI。キーは要りません。', defaultBase: 'http://127.0.0.1:1234/v1' },
+    { id: 'custom', label: 'その他', needsKey: true, hasKeyPage: false, blurb: 'OpenAI互換のAPIを出している他社サービス。接続先URLを入力してください。', defaultBase: '' },
+  ];
+  const ai: AiStatus = { connected: false, service: null, model: null, models: [], saved: null };
+  const deltaHandlers = new Set<(t: string) => void>();
+  const doneHandlers = new Set<(e: { error: string | null; text: string }) => void>();
+  const approvalHandlers = new Set<(r: ApprovalRequest) => void>();
+  let pendingQuestion = '';
+  const stream = (question: string) => {
+    const answer = `「${question}」ですね。\n\n端末の出力を確認しました。次のコマンドで状況を調べられます。\n\n\`\`\`bash\ndf -h\n\`\`\`\n\n容量が逼迫していれば、不要なログを削除してください。`;
+    const chunks = answer.match(/[\s\S]{1,6}/g) ?? [];
+    let i = 0;
+    const timer = setInterval(() => {
+      if (i < chunks.length) deltaHandlers.forEach((h) => h(chunks[i++]));
+      else {
+        clearInterval(timer);
+        doneHandlers.forEach((h) => h({ error: null, text: answer }));
+      }
+    }, 40);
+  };
   const challengeHandlers = new Set<(c: Challenge) => void>();
   const stateHandlers = new Set<(e: SessionStateEvent) => void>();
   const sinks = new Map<string, DataSink>();
@@ -59,6 +86,49 @@ export function mockApi(): Api {
     appearanceSet: async (a) => {
       stored = a;
     },
+    aiServices: async () => services,
+    aiProtocols: async () => [['auto', '自動'], ['chat', 'Chat Completions'], ['responses', 'Responses'], ['messages', 'Anthropic Messages']],
+    aiOpenKeyPage: async () => {},
+    aiStatus: async () => ({ ...ai }),
+    aiHasKey: async (service) => service === 'anthropic',
+    aiForget: async () => {},
+    aiConnect: async (args): Promise<AiConnectResult> => {
+      await new Promise((r) => setTimeout(r, 500));
+      if (args.key === 'bad') throw new Error('AI接続エラー HTTP 401: この接続先のAPIキーを確認してください');
+      const models = ['gpt-5', 'gpt-5-mini', 'gpt-4.1'];
+      Object.assign(ai, { connected: true, service: args.service, model: args.model || models[0], models });
+      return { kind: 'connected', message: '', model: ai.model, models };
+    },
+    aiSwitchModel: async (model) => {
+      ai.model = model;
+    },
+    aiClear: async () => {},
+    aiStop: async () => {},
+    aiSend: async (question, targets) => {
+      pendingQuestion = question;
+      if (targets.length > 0) {
+        return { preview: JSON.stringify({ terminal_observations: [{ label: 'CMD', screen: '$ df -h\nFilesystem 98% /', trust: 'untrusted_observation' }] }, null, 2) };
+      }
+      stream(question);
+      return { preview: null };
+    },
+    aiConfirm: async () => stream(pendingQuestion),
+    aiCancelPreview: async () => {},
+    approvalReply: async () => {},
+    onAiDelta: async (h) => {
+      deltaHandlers.add(h);
+      return () => deltaHandlers.delete(h);
+    },
+    onAiDone: async (h) => {
+      doneHandlers.add(h);
+      return () => doneHandlers.delete(h);
+    },
+    onAiRestored: async () => () => {},
+    onApproval: async (h) => {
+      approvalHandlers.add(h);
+      return () => approvalHandlers.delete(h);
+    },
+    onApprovalClosed: async () => () => {},
     pickKeyFile: async () => 'C:\\Users\\me\\.ssh\\id_ed25519',
     challengeReply: async (challengeId, answer: ChallengeAnswer) => {
       if (!pendingChallenge || pendingChallenge.id !== challengeId) return;

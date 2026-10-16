@@ -2,6 +2,7 @@
 //! 同じ出力をhashi-terminalのモデルへも流す（AI観測・ログ用。画面の描画には使わない）。
 use crate::app::AppState;
 use hashi_core::{
+    broker::{Kind, OutputCapture, Registration, Registry},
     interaction::Stamp,
     local::{LocalTerminal, TerminalEvent},
     ssh::SshSession,
@@ -21,6 +22,17 @@ use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 const MAX_INPUT: usize = 1024 * 1024;
 
+/// AI/MCPの端末台帳への登録（台帳のid・世代）。
+type Binding = Arc<Mutex<Option<(String, u64)>>>;
+
+/// 受信出力を台帳へ写す前の溜め。描画ごとに台帳を更新しないよう、一定間隔でまとめて渡す。
+#[derive(Default)]
+struct Pending {
+    capture: OutputCapture,
+    text: String,
+    dirty: bool,
+}
+
 pub struct Session {
     pub id: String,
     pub label: String,
@@ -30,6 +42,8 @@ pub struct Session {
     local: Option<Arc<Mutex<LocalTerminal>>>,
     model: Arc<Mutex<Terminal>>,
     tracker: TaskTracker,
+    binding: Binding,
+    pending: Arc<Mutex<Pending>>,
 }
 
 #[derive(Serialize, Clone)]
@@ -70,14 +84,17 @@ impl Session {
                 local: None,
                 model: Arc::new(Mutex::new(Terminal::new(cols as usize, rows as usize))),
                 tracker: TaskTracker::new(),
+                binding: Arc::new(Mutex::new(None)),
+                pending: Arc::new(Mutex::new(Pending::default())),
             },
             stamp,
         )
     }
 
     /// 取消 → 端末/接続の終了 → 受信タスクの回収。待ちには上限を置く。
-    pub async fn close(&self) {
+    pub async fn close(&self, registry: &Registry) {
         self.cancel.cancel();
+        unbind(registry, &self.binding);
         if let Some(local) = self.local.clone() {
             let _ = tokio::time::timeout(
                 Duration::from_secs(5),
@@ -92,6 +109,106 @@ impl Session {
         self.tracker.close();
         let _ = tokio::time::timeout(Duration::from_secs(8), self.tracker.wait()).await;
     }
+}
+
+/// 台帳へ登録する。再接続で同じidを再登録すると世代が上がる。
+fn bind(
+    registry: &Registry,
+    binding: &Binding,
+    label: &str,
+    kind: Kind,
+    input: mpsc::Sender<Vec<u8>>,
+    ssh: Option<Arc<SshSession>>,
+) {
+    let previous = binding
+        .lock()
+        .ok()
+        .and_then(|b| b.as_ref().map(|(id, _)| id.clone()));
+    let id = registry.register(
+        previous,
+        Registration {
+            label: label.to_owned(),
+            kind,
+            shell: match kind {
+                Kind::Ssh => "unknown".into(),
+                Kind::Local if cfg!(windows) => "cmd".into(),
+                Kind::Local => "sh".into(),
+            },
+            cwd: None,
+            shareable: true,
+            input,
+            ssh,
+        },
+    );
+    if let Ok(mut slot) = binding.lock() {
+        *slot = Some(id);
+    }
+}
+
+fn unbind(registry: &Registry, binding: &Binding) {
+    if let Some((id, generation)) = binding.lock().ok().and_then(|mut b| b.take()) {
+        registry.disconnect(&id, generation);
+        registry.remove(&id);
+    }
+}
+
+/// 受信出力をAI観測用に溜める。
+fn capture(pending: &Mutex<Pending>, bytes: &[u8]) {
+    if let Ok(mut pending) = pending.lock() {
+        let text = pending.capture.push(bytes);
+        pending.text.push_str(&text);
+        pending.dirty = true;
+    }
+}
+
+/// 溜めた出力と表示中の画面を、一定間隔で台帳へ写す。
+fn spawn_flusher(session: &Session, registry: Arc<Registry>) {
+    let (binding, pending, model, cancel) = (
+        session.binding.clone(),
+        session.pending.clone(),
+        session.model.clone(),
+        session.cancel.clone(),
+    );
+    session.tracker.spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_millis(150));
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => break,
+                _ = tick.tick() => {}
+            }
+            let text = {
+                let Ok(mut pending) = pending.lock() else {
+                    continue;
+                };
+                if !pending.dirty {
+                    continue;
+                }
+                pending.dirty = false;
+                std::mem::take(&mut pending.text)
+            };
+            let Some((id, generation)) = binding.lock().ok().and_then(|b| b.clone()) else {
+                continue;
+            };
+            // 末尾の空行はAIへ送る観測データを増やすだけなので除く。
+            let screen = model
+                .lock()
+                .map(|model| model.visible_text().join("\n").trim_end().to_owned())
+                .unwrap_or_default();
+            registry.update_output(&id, generation, &text, &screen);
+        }
+    });
+}
+
+/// 画面が選んだ端末（セッションid）を、台帳のid・世代へ変える。接続中・終了済みは除く。
+pub fn bindings_for(state: &AppState, targets: &[String]) -> Vec<(String, u64)> {
+    let Ok(sessions) = state.sessions.lock() else {
+        return vec![];
+    };
+    targets
+        .iter()
+        .filter_map(|id| sessions.get(id))
+        .filter_map(|session| session.binding.lock().ok().and_then(|b| b.clone()))
+        .collect()
 }
 
 fn send_bytes(channel: &Channel<InvokeResponseBody>, bytes: Vec<u8>) -> bool {
@@ -139,11 +256,22 @@ pub async fn session_open_local(
     session.input = local.input_sender();
     session.local = Some(Arc::new(Mutex::new(local)));
     let session = register(&state, session)?;
+    let registry = state.ai.registry.clone();
+    bind(
+        &registry,
+        &session.binding,
+        &session.label,
+        Kind::Local,
+        session.input.clone(),
+        None,
+    );
+    spawn_flusher(&session, registry.clone());
     let (id, model, cancel) = (
         session.id.clone(),
         session.model.clone(),
         session.cancel.clone(),
     );
+    let (pending, binding) = (session.pending.clone(), session.binding.clone());
     let task_app = app.clone();
     session.tracker.spawn(async move {
         let app = task_app;
@@ -155,11 +283,13 @@ pub async fn session_open_local(
                         if let Ok(mut model) = model.lock() {
                             model.feed(&bytes);
                         }
+                        capture(&pending, &bytes);
                         if !send_bytes(&on_data, bytes) {
                             break;
                         }
                     }
                     Some(TerminalEvent::Closed { .. }) | None => {
+                        unbind(&registry, &binding);
                         emit_state(&app, &id, "closed", "ローカル端末が終了しました");
                         break;
                     }
@@ -203,11 +333,19 @@ pub async fn session_connect(
     let (mut session, stamp) = Session::new(label, cols, rows, input);
     session.resize = Some(resize);
     let session = register(&state, session)?;
+    let registry = state.ai.registry.clone();
+    spawn_flusher(&session, registry.clone());
     let (id, model, cancel) = (
         session.id.clone(),
         session.model.clone(),
         session.cancel.clone(),
     );
+    let (pending, binding, input_for_binding) = (
+        session.pending.clone(),
+        session.binding.clone(),
+        session.input.clone(),
+    );
+    let label_for_binding = session.label.clone();
     let interaction = state.interaction.clone();
     emit_state(&app, &id, "connecting", "接続中");
     let task_app = app.clone();
@@ -232,6 +370,15 @@ pub async fn session_connect(
                     return Err(error);
                 }
             };
+            // 接続できてから台帳へ登録する（独立実行は同じSSH接続の別チャネルを使う）。
+            bind(
+                &registry,
+                &binding,
+                &label_for_binding,
+                Kind::Ssh,
+                input_for_binding,
+                Some(ssh.clone()),
+            );
             emit_state(&app, &id, "connected", "接続済み");
             let (mut reader, writer) = channel.split();
             let outcome: anyhow::Result<()> = async {
@@ -262,6 +409,7 @@ pub async fn session_connect(
                                 if let Ok(mut model) = model.lock() {
                                     model.feed(&bytes);
                                 }
+                                capture(&pending, &bytes);
                                 if !send_bytes(&on_data, bytes) {
                                     break;
                                 }
@@ -274,10 +422,12 @@ pub async fn session_connect(
                 Ok(())
             }
             .await;
+            unbind(&registry, &binding);
             let _ = tokio::time::timeout(Duration::from_secs(5), ssh.close()).await;
             outcome
         }
         .await;
+        unbind(&registry, &binding);
         match result {
             Ok(()) => emit_state(&app, &id, "closed", "端末の接続が終了しました"),
             Err(error) => emit_state(&app, &id, "error", error.to_string()),
@@ -355,7 +505,7 @@ pub async fn session_close(app: AppHandle, id: String) -> Result<(), String> {
         .map_err(|_| "セッション台帳が不正です")?
         .remove(&id);
     if let Some(session) = session {
-        session.close().await;
+        session.close(&state.ai.registry).await;
         emit_state(&app, &id, "closed", "閉じました");
     }
     Ok(())

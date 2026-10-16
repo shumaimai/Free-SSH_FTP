@@ -1,5 +1,5 @@
 //! アプリ全体の状態とcommand。保存データ・認証要求の台帳・セッション一覧を持つ。
-use crate::session::Session;
+use crate::{ai::AiState, session::Session};
 use hashi_core::interaction::{Challenge, Interaction, Reply, Request};
 use hashi_storage::{
     config::{Profile, Snapshot, Store},
@@ -25,6 +25,7 @@ pub struct AppState {
     /// 画面へ出した認証要求。応答の照合に使う対象はこちらが持ち、画面からは受け取らない。
     challenges: Mutex<HashMap<String, Request>>,
     pub sessions: Mutex<HashMap<String, Arc<Session>>>,
+    pub ai: AiState,
     exiting: AtomicBool,
 }
 
@@ -49,6 +50,7 @@ impl AppState {
             requests: Mutex::new(Some(requests)),
             challenges: Mutex::new(HashMap::new()),
             sessions: Mutex::new(HashMap::new()),
+            ai: AiState::new(),
             exiting: AtomicBool::new(false),
         })
     }
@@ -59,7 +61,7 @@ impl AppState {
     pub fn is_exiting(&self) -> bool {
         self.exiting.load(Ordering::SeqCst)
     }
-    fn writable(&self) -> Result<(), String> {
+    pub fn writable(&self) -> Result<(), String> {
         match &self.startup_error {
             Some(error) => Err(error.clone()),
             None => Ok(()),
@@ -269,13 +271,15 @@ pub fn appearance_set(state: State<'_, AppState>, appearance: Appearance) -> Res
 /// 全セッションを閉じる。接続の終了待ちには上限を置く。
 pub async fn shutdown(app: &AppHandle) {
     let state = app.state::<AppState>();
+    // AI処理・共有・承認待ちを先に止めてから、端末と接続を終える。
+    state.ai.stop_all();
     let sessions: Vec<Arc<Session>> = state
         .sessions
         .lock()
         .map(|mut sessions| sessions.drain().map(|(_, session)| session).collect())
         .unwrap_or_default();
     for session in sessions {
-        session.close().await;
+        session.close(&state.ai.registry).await;
     }
 }
 

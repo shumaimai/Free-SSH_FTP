@@ -11,17 +11,20 @@ import {
   Tab,
   TabList,
   Text,
+  ToggleButton,
   tokens,
 } from '@fluentui/react-components';
-import { Dismiss12Regular, Home20Regular, Settings20Regular, WindowConsole20Regular, PlugConnected20Regular } from '@fluentui/react-icons';
+import { Chat20Regular, Dismiss12Regular, Home20Regular, Settings20Regular, WindowConsole20Regular, PlugConnected20Regular } from '@fluentui/react-icons';
 import type { Api } from './api';
-import type { Challenge, ChallengeAnswer, Profile, SessionInfo, SessionState } from './types';
+import type { ApprovalRequest, Challenge, ChallengeAnswer, Profile, SessionInfo, SessionState } from './types';
 import { emptyProfile } from './types';
 import { Home } from './Home';
 import { ProfileDialog } from './ProfileDialog';
 import { ChallengeDialog } from './ChallengeDialog';
 import { TerminalView } from './TerminalView';
 import { SettingsDialog } from './SettingsDialog';
+import { AiDock } from './AiDock';
+import { ApprovalDialog } from './ApprovalDialog';
 import { DEFAULT_APPEARANCE, UI_FONTS, fluentTheme, sanitize, type Appearance } from './appearance';
 
 const useStyles = makeStyles({
@@ -53,7 +56,18 @@ const useStyles = makeStyles({
     borderRadius: tokens.borderRadiusSmall,
     ':hover': { backgroundColor: tokens.colorNeutralBackground1Hover },
   },
-  main: { position: 'relative', minHeight: 0, backgroundColor: tokens.colorNeutralBackground2 },
+  work: { display: 'flex', minHeight: 0 },
+  main: { position: 'relative', minHeight: 0, minWidth: 0, flex: 1, backgroundColor: tokens.colorNeutralBackground2 },
+  dock: {
+    width: '400px',
+    flexShrink: 0,
+    padding: '12px',
+    boxSizing: 'border-box',
+    backgroundColor: tokens.colorNeutralBackground3,
+    borderLeft: `1px solid ${tokens.colorNeutralStroke2}`,
+    minHeight: 0,
+    overflow: 'hidden',
+  },
   pane: { position: 'absolute', inset: 0 },
   paneHidden: { visibility: 'hidden', pointerEvents: 'none' },
   status: {
@@ -93,6 +107,8 @@ export function App({ api }: { api: Api }) {
   const systemDark = useDark();
   const [appearance, setAppearance] = useState<Appearance>(DEFAULT_APPEARANCE);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [dockOpen, setDockOpen] = useState(false);
+  const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const dark = appearance.mode === 'dark' || (appearance.mode === 'system' && systemDark);
   const theme = useMemo(() => {
     const base = fluentTheme(dark, appearance.accent);
@@ -122,6 +138,8 @@ export function App({ api }: { api: Api }) {
       setStartupError(r.error);
     });
     const subscriptions: Array<Promise<() => void>> = [
+      api.onApproval((r) => setApprovals((old) => [...old, r])),
+      api.onApprovalClosed((id) => setApprovals((old) => old.filter((r) => r.id !== id))),
       api.onChallenge((c) => setChallenges((old) => [...old, c])),
       api.onSessionState((e) => {
         setStates((old) => ({ ...old, [e.id]: { state: e.state, message: e.message } }));
@@ -196,6 +214,14 @@ export function App({ api }: { api: Api }) {
     }
   };
 
+  // 接続できている端末だけを、AIへ見せる候補にする。
+  const shareTargets = useMemo(
+    () =>
+      tabs
+        .filter((t) => t.sessionId && states[t.sessionId]?.state === 'connected')
+        .map((t) => ({ sessionId: t.sessionId as string, label: t.label })),
+    [tabs, states],
+  );
   const activeTab = tabs.find((t) => t.key === active);
   const activeState = activeTab?.sessionId ? states[activeTab.sessionId] : undefined;
   const dotColor = (tab: TabInfo) => {
@@ -253,6 +279,14 @@ export function App({ api }: { api: Api }) {
             ))}
           </TabList>
           <div className={styles.grow} />
+          <ToggleButton
+            appearance="subtle"
+            checked={dockOpen}
+            icon={<Chat20Regular />}
+            onClick={() => setDockOpen((open) => !open)}
+          >
+            AI
+          </ToggleButton>
           <Button
             appearance="subtle"
             aria-label="外観の設定"
@@ -260,6 +294,7 @@ export function App({ api }: { api: Api }) {
             onClick={() => setSettingsOpen(true)}
           />
         </div>
+        <div className={styles.work}>
         <div className={styles.main}>
           {startupError && (
             <div className={styles.banner}>
@@ -316,6 +351,12 @@ export function App({ api }: { api: Api }) {
             </div>
           ))}
         </div>
+        {dockOpen && (
+          <aside className={styles.dock}>
+            <AiDock api={api} targets={shareTargets} />
+          </aside>
+        )}
+        </div>
         <div className={styles.status}>
           <Caption1>{activeState?.message || notice}</Caption1>
           <div className={styles.grow} />
@@ -348,6 +389,15 @@ export function App({ api }: { api: Api }) {
         dark={dark}
         onChange={changeAppearance}
         onClose={() => setSettingsOpen(false)}
+      />
+      <ApprovalDialog
+        request={approvals[0] ?? null}
+        onAnswer={(allow) => {
+          const current = approvals[0];
+          if (!current) return;
+          setApprovals((old) => old.slice(1));
+          void api.approvalReply(current.id, allow).catch((e) => setNotice(String(e)));
+        }}
       />
       <ChallengeDialog challenge={challenges[0] ?? null} error={challengeError} onAnswer={(a) => void answer(a)} />
     </FluentProvider>

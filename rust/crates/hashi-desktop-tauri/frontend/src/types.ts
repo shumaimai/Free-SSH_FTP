@@ -65,3 +65,50 @@ export interface SessionInfo {
 }
 
 export type DataSink = (bytes: Uint8Array) => void;
+
+// ---- AI ----
+export interface AiServiceInfo {
+  id: string;
+  label: string;
+  needsKey: boolean;
+  hasKeyPage: boolean;
+  blurb: string;
+  defaultBase: string;
+}
+
+export interface AiStatus {
+  connected: boolean;
+  service: string | null;
+  model: string | null;
+  models: string[];
+  saved: { service?: string; base?: string; model?: string; protocol?: string; use_tools?: boolean } | null;
+}
+
+export interface AiConnectArgs {
+  service: string;
+  base: string;
+  key: string;
+  model: string;
+  protocol: string;
+  useTools: boolean;
+  persist: boolean;
+}
+
+export interface AiConnectResult {
+  kind: 'connected' | 'need_model';
+  message: string;
+  model: string | null;
+  models: string[];
+}
+
+export type ShareMode = 'consult' | 'confirm' | 'auto';
+
+export interface ApprovalRequest {
+  id: string;
+  actor: string;
+  action: 'send_input' | 'run_command' | 'interrupt';
+  label: string;
+  generation: number;
+  cwd: string | null;
+  text: string;
+}
