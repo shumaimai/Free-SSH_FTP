@@ -1,6 +1,7 @@
 // 画面の確認・試験用の偽のバックエンド。VITE_MOCK付きのビルドにだけ入り、製品には入らない。
 import type { Api } from './api';
 import type {
+  AppSettings,
   ForwardInfo,
   Snippet,
   FileEntry,
@@ -97,6 +98,7 @@ export function mockApi(): Api {
     { name: 'サービス再起動', body: 'sudo systemctl restart {{service}}', send_enter: false },
   ];
   let forwards: ForwardInfo[] = [];
+  let appSettings: AppSettings = { updateCheck: true, sessionLog: false, sessionLogDir: '' };
   const challengeHandlers = new Set<(c: Challenge) => void>();
   const stateHandlers = new Set<(e: SessionStateEvent) => void>();
   const sinks = new Map<string, DataSink>();
@@ -238,6 +240,15 @@ export function mockApi(): Api {
       forwards = forwards.filter((f) => f.id !== forwardId);
       return forwards;
     },
+    settingsGet: async () => appSettings,
+    settingsSet: async (v) => {
+      appSettings = v;
+    },
+    settingsPickLogDir: async () => 'D:\\logs',
+    updateStatus: async () => null,
+    updateOpenPage: async () => {},
+    onUpdateAvailable: async () => () => {},
+    onSessionLogError: async () => () => {},
     pickKeyFile: async () => 'C:\\Users\\me\\.ssh\\id_ed25519',
     challengeReply: async (challengeId, answer: ChallengeAnswer) => {
       if (!pendingChallenge || pendingChallenge.id !== challengeId) return;

@@ -1,6 +1,8 @@
 // 画面とRust側の境界。本番はTauriのcommand/eventだけを使い、試験用(VITE_MOCK)は偽の実装へ差し替える。
 import type { Appearance } from './appearance';
 import type {
+  AppSettings,
+  UpdateInfo,
   ForwardInfo,
   KeygenArgs,
   KeygenDefaults,
@@ -83,6 +85,13 @@ export interface Api {
   forwardList(id: string): Promise<ForwardInfo[]>;
   forwardStart(id: string, kind: string, bind: string, port: number, host: string, targetPort: number): Promise<ForwardInfo[]>;
   forwardStop(id: string, forwardId: string): Promise<ForwardInfo[]>;
+  settingsGet(): Promise<AppSettings>;
+  settingsSet(settings: AppSettings): Promise<void>;
+  settingsPickLogDir(): Promise<string | null>;
+  updateStatus(): Promise<UpdateInfo | null>;
+  updateOpenPage(): Promise<void>;
+  onUpdateAvailable(handler: (info: UpdateInfo) => void): Promise<() => void>;
+  onSessionLogError(handler: (event: { id: string; message: string }) => void): Promise<() => void>;
   onChallenge(handler: (challenge: Challenge) => void): Promise<() => void>;
   onSessionState(handler: (event: SessionStateEvent) => void): Promise<() => void>;
 }
@@ -160,6 +169,14 @@ async function tauriApi(): Promise<Api> {
     forwardStart: (id, kind, bind, port, host, targetPort) =>
       invoke('forward_start', { id, kind, bind, port, host, targetPort }),
     forwardStop: (id, forwardId) => invoke('forward_stop', { id, forwardId }),
+    settingsGet: () => invoke('settings_get'),
+    settingsSet: (settings) => invoke('settings_set', { settings }),
+    settingsPickLogDir: () => invoke('settings_pick_log_dir'),
+    updateStatus: () => invoke('update_status'),
+    updateOpenPage: () => invoke('update_open_page'),
+    onUpdateAvailable: (handler) => listen<UpdateInfo>('update-available', (e) => handler(e.payload)),
+    onSessionLogError: (handler) =>
+      listen<{ id: string; message: string }>('session-log-error', (e) => handler(e.payload)),
     onChallenge: (handler) => listen<Challenge>('challenge', (e) => handler(e.payload)),
     onSessionState: (handler) =>
       listen<SessionStateEvent>('session-state', (e) => handler(e.payload)),

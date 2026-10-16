@@ -3,6 +3,7 @@
 use crate::{app::AppState, files::Files, forwards};
 use hashi_core::{
     broker::{Kind, OutputCapture, Registration, Registry},
+    session_log::SessionLog,
     interaction::Stamp,
     local::{LocalTerminal, TerminalEvent},
     ssh::SshSession,
@@ -47,6 +48,8 @@ pub struct Session {
     pending: Arc<Mutex<Pending>>,
     files: Mutex<Option<Arc<Files>>>,
     ssh: Mutex<Option<Arc<SshSession>>>,
+    /// SSH端末の受信行の保存（CMDは記録しない）。
+    log: Arc<Mutex<Option<SessionLog>>>,
     pub forwards: tokio::sync::Mutex<Vec<forwards::Entry>>,
 }
 
@@ -92,6 +95,7 @@ impl Session {
                 pending: Arc::new(Mutex::new(Pending::default())),
                 files: Mutex::new(None),
                 ssh: Mutex::new(None),
+                log: Arc::new(Mutex::new(None)),
                 forwards: tokio::sync::Mutex::new(vec![]),
             },
             stamp,
@@ -107,6 +111,29 @@ impl Session {
             .await
             .map_err(|_| "端末入力の送信待ちがあふれました".to_owned())?
             .map_err(|_| "端末は終了しています".to_owned())
+    }
+
+    /// 残りの行を書き、ログを閉じる。閉じるまでの待ちには上限を置く。
+    pub async fn finish_log(&self) -> Option<String> {
+        let mut log = self.log.lock().ok()?.take()?;
+        let (mut lines, dropped) = {
+            let mut model = self.model.lock().ok()?;
+            let (mut lines, dropped) = model.take_log_lines();
+            lines.extend(model.pending_log_line());
+            model.set_line_log(false);
+            (lines, dropped)
+        };
+        if dropped > 0 {
+            lines.push(format!("[Hashi: {dropped}行を記録できませんでした]"));
+        }
+        let result = tokio::task::spawn_blocking(move || {
+            let written = log.write_lines(lines);
+            let closed = log.close(Duration::from_secs(5));
+            written.and(closed)
+        })
+        .await
+        .unwrap_or_else(|_| Err("ログの終了処理が中断されました".into()));
+        result.err().map(|error| format!("セッションログ: {error}"))
     }
 
     pub fn ssh(&self) -> Option<Arc<SshSession>> {
@@ -138,6 +165,7 @@ impl Session {
         unbind(registry, &self.binding);
         // 接続を閉じる前に、ポート転送と進行中の転送（確定ACK・復元を含む）を終わらせる。
         self.shutdown_extras().await;
+        let _ = self.finish_log().await;
         self.cancel.cancel();
         if let Some(local) = self.local.clone() {
             let _ = tokio::time::timeout(
@@ -206,12 +234,14 @@ fn capture(pending: &Mutex<Pending>, bytes: &[u8]) {
 }
 
 /// 溜めた出力と表示中の画面を、一定間隔で台帳へ写す。
-fn spawn_flusher(session: &Session, registry: Arc<Registry>) {
-    let (binding, pending, model, cancel) = (
+fn spawn_flusher(session: &Session, registry: Arc<Registry>, app: AppHandle) {
+    let (binding, pending, model, cancel, log, id) = (
         session.binding.clone(),
         session.pending.clone(),
         session.model.clone(),
         session.cancel.clone(),
+        session.log.clone(),
+        session.id.clone(),
     );
     session.tracker.spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_millis(150));
@@ -220,6 +250,7 @@ fn spawn_flusher(session: &Session, registry: Arc<Registry>) {
                 _ = cancel.cancelled() => break,
                 _ = tick.tick() => {}
             }
+            drain_log(&model, &log, &app, &id);
             let text = {
                 let Ok(mut pending) = pending.lock() else {
                     continue;
@@ -241,6 +272,37 @@ fn spawn_flusher(session: &Session, registry: Arc<Registry>) {
             registry.update_output(&id, generation, &text, &screen);
         }
     });
+}
+
+/// 確定した受信行をログへ渡す。書けなくなったら、このセッションのログだけを止めて知らせる。
+fn drain_log(
+    model: &Mutex<Terminal>,
+    log: &Mutex<Option<SessionLog>>,
+    app: &AppHandle,
+    id: &str,
+) {
+    let Ok(mut slot) = log.lock() else { return };
+    let Some(active) = slot.as_mut() else { return };
+    let (mut lines, dropped) = match model.lock() {
+        Ok(mut model) => model.take_log_lines(),
+        Err(_) => return,
+    };
+    if dropped > 0 {
+        lines.push(format!("[Hashi: {dropped}行を記録できませんでした]"));
+    }
+    if lines.is_empty() {
+        return;
+    }
+    if let Err(error) = active.write_lines(lines) {
+        *slot = None;
+        if let Ok(mut model) = model.lock() {
+            model.set_line_log(false);
+        }
+        let _ = app.emit(
+            "session-log-error",
+            json!({"id": id, "message": format!("セッションログを止めました: {error}")}),
+        );
+    }
 }
 
 /// 画面が選んだ端末（セッションid）を、台帳のid・世代へ変える。接続中・終了済みは除く。
@@ -309,7 +371,7 @@ pub async fn session_open_local(
         session.input.clone(),
         None,
     );
-    spawn_flusher(&session, registry.clone());
+    spawn_flusher(&session, registry.clone(), app.clone());
     let (id, model, cancel) = (
         session.id.clone(),
         session.model.clone(),
@@ -378,7 +440,7 @@ pub async fn session_connect(
     session.resize = Some(resize);
     let session = register(&state, session)?;
     let registry = state.ai.registry.clone();
-    spawn_flusher(&session, registry.clone());
+    spawn_flusher(&session, registry.clone(), app.clone());
     let (id, model, cancel) = (
         session.id.clone(),
         session.model.clone(),
@@ -455,7 +517,31 @@ pub async fn session_connect(
                 input_for_binding,
                 Some(ssh.clone()),
             );
-            emit_state(&app, &id, "connected", "接続済み");
+            let mut connected_message = "接続済み".to_owned();
+            {
+                let settings = crate::settings::read(&app.state::<AppState>());
+                if settings.session_log {
+                    let (custom, default) = crate::settings::log_directory(&settings);
+                    match SessionLog::open(custom.as_deref(), &default, &label_for_binding) {
+                        Ok(opened) => {
+                            connected_message = format!("接続済み・ログ: {}", opened.path().display());
+                            if let Ok(mut model) = model.lock() {
+                                model.set_line_log(true);
+                            }
+                            if let Ok(mut slot) = session_ref.log.lock() {
+                                *slot = Some(opened);
+                            }
+                        }
+                        Err(error) => {
+                            let _ = app.emit(
+                                "session-log-error",
+                                json!({"id": id, "message": format!("セッションログを開始できません: {error:#}")}),
+                            );
+                        }
+                    }
+                }
+            }
+            emit_state(&app, &id, "connected", connected_message);
             let (mut reader, writer) = channel.split();
             let outcome: anyhow::Result<()> = async {
                 loop {
@@ -501,6 +587,7 @@ pub async fn session_connect(
             unbind(&registry, &binding);
             // 接続を閉じる前に、ポート転送と進行中の転送を終わらせる。
             session_ref.shutdown_extras().await;
+            let _ = session_ref.finish_log().await;
             let _ = tokio::time::timeout(Duration::from_secs(5), ssh.close()).await;
             outcome
         }

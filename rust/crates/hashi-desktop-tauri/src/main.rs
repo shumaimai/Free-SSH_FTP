@@ -8,6 +8,7 @@ mod files;
 mod forwards;
 mod keygen;
 mod session;
+mod settings;
 mod snippets;
 
 use tauri::{Manager, WindowEvent};
@@ -26,6 +27,7 @@ fn main() {
             app::start_challenge_pump(app.handle().clone());
             ai::start_pumps(app.handle().clone());
             files::start_pumps(app.handle().clone());
+            settings::start_update_check(app.handle().clone());
             let handle = app.handle().clone();
             // 保存キーの復号は重いので、画面の起動を待たせない。
             tauri::async_runtime::spawn_blocking(move || {
@@ -68,6 +70,11 @@ fn main() {
             files::files_delete,
             files::files_bookmarks,
             files::files_bookmark_add,
+            settings::settings_get,
+            settings::settings_set,
+            settings::settings_pick_log_dir,
+            settings::update_status,
+            settings::update_open_page,
             keygen::keygen_defaults,
             keygen::keygen_path_exists,
             keygen::keygen_pick_path,

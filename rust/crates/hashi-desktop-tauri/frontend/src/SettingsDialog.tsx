@@ -1,6 +1,13 @@
+import { useEffect, useState } from 'react';
 import {
   Button,
   Caption1,
+  Checkbox,
+  Input,
+  Tab,
+  TabList,
+  MessageBar,
+  MessageBarBody,
   Dialog,
   DialogActions,
   DialogBody,
@@ -17,6 +24,8 @@ import {
   tokens,
 } from '@fluentui/react-components';
 import { Checkmark16Filled } from '@fluentui/react-icons';
+import type { Api } from './api';
+import type { AppSettings } from './types';
 import {
   ACCENTS,
   DEFAULT_APPEARANCE,
@@ -56,6 +65,7 @@ const useStyles = makeStyles({
 });
 
 interface Props {
+  api: Api;
   open: boolean;
   value: Appearance;
   dark: boolean;
@@ -63,8 +73,22 @@ interface Props {
   onClose(): void;
 }
 
-export function SettingsDialog({ open, value, dark, onChange, onClose }: Props) {
+export function SettingsDialog({ api, open, value, dark, onChange, onClose }: Props) {
   const styles = useStyles();
+  const [tab, setTab] = useState<'look' | 'general'>('look');
+  const [general, setGeneral] = useState<AppSettings | null>(null);
+  const [generalError, setGeneralError] = useState<string | null>(null);
+  useEffect(() => {
+    if (open) {
+      setTab('look');
+      setGeneralError(null);
+      void api.settingsGet().then(setGeneral);
+    }
+  }, [open, api]);
+  const saveGeneral = (next: AppSettings) => {
+    setGeneral(next);
+    void api.settingsSet(next).then(() => setGeneralError(null)).catch((e) => setGeneralError(String(e)));
+  };
   const set = <K extends keyof Appearance>(key: K, v: Appearance[K]) => onChange({ ...value, [key]: v });
   const term = termTheme(value.termScheme, dark, value.accent);
   const font = TERM_FONTS.find((f) => f.id === value.termFont)?.stack;
@@ -72,8 +96,53 @@ export function SettingsDialog({ open, value, dark, onChange, onClose }: Props) 
     <Dialog open={open} onOpenChange={(_, d) => !d.open && onClose()}>
       <DialogSurface aria-describedby={undefined} style={{ maxWidth: 560 }}>
         <DialogBody>
-          <DialogTitle>外観</DialogTitle>
+          <DialogTitle>設定</DialogTitle>
           <DialogContent className={styles.body}>
+          <TabList selectedValue={tab} onTabSelect={(_, d) => setTab(d.value as 'look' | 'general')}>
+            <Tab value="look">外観</Tab>
+            <Tab value="general">全般</Tab>
+          </TabList>
+          {tab === 'general' && general && (
+            <>
+              <Checkbox
+                checked={general.updateCheck}
+                onChange={(_, d) => saveGeneral({ ...general, updateCheck: d.checked === true })}
+                label="起動時に新しいプレビュー版を確認する"
+              />
+              <Caption1>旧Python版のリリースとは別に、rust-preview-v のタグだけを確認します（次の起動から）。</Caption1>
+              <Checkbox
+                checked={general.sessionLog}
+                onChange={(_, d) => saveGeneral({ ...general, sessionLog: d.checked === true })}
+                label="SSH端末の受信出力を自動保存する（PuTTYのloggingに相当）"
+              />
+              <Field label="保存先（空なら設定フォルダ/logs）">
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <Input
+                    style={{ flex: 1 }}
+                    disabled={!general.sessionLog}
+                    value={general.sessionLogDir}
+                    onChange={(_, d) => saveGeneral({ ...general, sessionLogDir: d.value })}
+                  />
+                  <Button
+                    disabled={!general.sessionLog}
+                    onClick={async () => {
+                      const dir = await api.settingsPickLogDir();
+                      if (dir) saveGeneral({ ...general, sessionLogDir: dir });
+                    }}
+                  >
+                    参照
+                  </Button>
+                </div>
+              </Field>
+              <Caption1>改行で確定した行だけを記録します。vimなどの全画面表示は記録しません。新しい接続から適用します。</Caption1>
+              {generalError && (
+                <MessageBar intent="error">
+                  <MessageBarBody>{generalError}</MessageBarBody>
+                </MessageBar>
+              )}
+            </>
+          )}
+          <div className={styles.body} style={{ display: tab === 'look' ? undefined : 'none' }}>
             <Field label="テーマ">
               <RadioGroup layout="horizontal" value={value.mode} onChange={(_, d) => set('mode', d.value as ThemeMode)}>
                 {MODES.map((m) => (
@@ -154,6 +223,7 @@ export function SettingsDialog({ open, value, dark, onChange, onClose }: Props) 
               {'\n'}日本語の表示例 — 橋
             </div>
             <Caption1>選ぶとすぐに反映され、次回の起動でも使われます。画面のフォントは、この機械に入っているものだけが使われます。</Caption1>
+          </div>
           </DialogContent>
           <DialogActions>
             <Button onClick={() => onChange(DEFAULT_APPEARANCE)}>既定に戻す</Button>

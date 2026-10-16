@@ -180,3 +180,15 @@ export interface ForwardInfo {
   id: string;
   label: string;
 }
+
+// ---- 設定・更新 ----
+export interface AppSettings {
+  updateCheck: boolean;
+  sessionLog: boolean;
+  sessionLogDir: string;
+}
+
+export interface UpdateInfo {
+  tag: string;
+  url: string;
+}

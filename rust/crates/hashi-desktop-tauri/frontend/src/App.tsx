@@ -21,7 +21,7 @@ import {
 } from '@fluentui/react-components';
 import { Dismiss12Regular, Key20Regular, PanelRight20Regular, PlugConnected20Filled, Wrench20Regular, Home20Regular, Settings20Regular, WindowConsole20Regular, PlugConnected20Regular } from '@fluentui/react-icons';
 import type { Api } from './api';
-import type { ApprovalRequest, Challenge, ChallengeAnswer, Profile, SessionInfo, SessionState } from './types';
+import type { UpdateInfo, ApprovalRequest, Challenge, ChallengeAnswer, Profile, SessionInfo, SessionState } from './types';
 import { emptyProfile } from './types';
 import { Home } from './Home';
 import { ProfileDialog } from './ProfileDialog';
@@ -119,6 +119,7 @@ export function App({ api }: { api: Api }) {
   const [appearance, setAppearance] = useState<Appearance>(DEFAULT_APPEARANCE);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [dockOpen, setDockOpen] = useState(false);
+  const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [keygenOpen, setKeygenOpen] = useState(false);
   const [forwardOpen, setForwardOpen] = useState(false);
   const [dockTab, setDockTab] = useState<'files' | 'ai'>('files');
@@ -153,7 +154,10 @@ export function App({ api }: { api: Api }) {
       setProfiles(r.profiles);
       setStartupError(r.error);
     });
+    void api.updateStatus().then((u) => u && setUpdate(u));
     const subscriptions: Array<Promise<() => void>> = [
+      api.onUpdateAvailable(setUpdate),
+      api.onSessionLogError((e) => setNotice(e.message)),
       api.onFilesState((e) => {
         setFilesState((old) => ({ ...old, [e.id]: { available: e.available, message: e.message } }));
         // 最初にファイルが使えるようになったとき、一度だけパネルを開く。
@@ -309,6 +313,15 @@ export function App({ api }: { api: Api }) {
             ))}
           </TabList>
           <div className={styles.grow} />
+          {update && (
+            <Button
+              appearance="subtle"
+              onClick={() => void api.updateOpenPage().catch((e) => setNotice(String(e)))}
+              title="リリースページを開く"
+            >
+              新しいプレビュー版 {update.tag}
+            </Button>
+          )}
           <Menu>
             <MenuTrigger disableButtonEnhancement>
               <Button appearance="subtle" icon={<Wrench20Regular />}>
@@ -461,6 +474,7 @@ export function App({ api }: { api: Api }) {
         onPickKey={() => api.pickKeyFile()}
       />
       <SettingsDialog
+        api={api}
         open={settingsOpen}
         value={appearance}
         dark={dark}

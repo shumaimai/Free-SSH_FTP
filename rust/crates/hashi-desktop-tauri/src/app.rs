@@ -1,5 +1,5 @@
 //! アプリ全体の状態とcommand。保存データ・認証要求の台帳・セッション一覧を持つ。
-use crate::{ai::AiState, files::FileJobs, session::Session};
+use crate::{ai::AiState, files::FileJobs, session::Session, settings::UpdateInfo};
 use hashi_core::interaction::{Challenge, Interaction, Reply, Request};
 use hashi_storage::{
     config::{Profile, Snapshot, Store},
@@ -27,6 +27,7 @@ pub struct AppState {
     pub sessions: Mutex<HashMap<String, Arc<Session>>>,
     pub ai: AiState,
     pub files: FileJobs,
+    pub update: Mutex<Option<UpdateInfo>>,
     exiting: AtomicBool,
 }
 
@@ -53,6 +54,7 @@ impl AppState {
             sessions: Mutex::new(HashMap::new()),
             ai: AiState::new(),
             files: FileJobs::new(),
+            update: Mutex::new(None),
             exiting: AtomicBool::new(false),
         })
     }
