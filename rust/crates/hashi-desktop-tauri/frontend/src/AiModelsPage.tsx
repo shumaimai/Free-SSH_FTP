@@ -7,11 +7,9 @@ import {
   AccordionItem,
   AccordionPanel,
   Badge,
-  Body1,
   Button,
   Caption1,
   Checkbox,
-  Divider,
   Field,
   Input,
   Link,
@@ -24,7 +22,6 @@ import {
   Subtitle2,
   Text,
   Title2,
-  ToggleButton,
   tokens,
 } from '@fluentui/react-components';
 import { Add20Regular, Checkmark20Regular } from '@fluentui/react-icons';
@@ -55,7 +52,7 @@ const useStyles = makeStyles({
   panel: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '12px',
+    gap: '10px',
     minHeight: 0,
     overflowY: 'auto',
     padding: '16px 20px',
@@ -68,7 +65,6 @@ const useStyles = makeStyles({
   grow: { flex: 1, minWidth: 0 },
   actions: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' },
   note: { color: tokens.colorNeutralForeground3 },
-  danger: { color: tokens.colorPaletteRedForeground1 },
   empty: { padding: '24px', textAlign: 'center' },
 });
 
@@ -249,16 +245,13 @@ export function AiModelsPage({ api }: Props) {
     <div className={styles.page}>
       <div className={styles.head}>
         <Title2>AIモデルの管理</Title2>
-        <Caption1 className={styles.note}>
-          使いたいAIモデルを登録・変更・削除します。AIドックでは、ここに登録したモデルを選ぶだけで使えます。APIキーはこのPCの専用の暗号化ファイルにだけ保存します。
-        </Caption1>
+        <Caption1 className={styles.note}>APIキーはこのPCの専用の暗号化ファイルにだけ保存します。</Caption1>
       </div>
       <div className={styles.body}>
         <div className={styles.list}>
           <Button appearance="primary" icon={<Add20Regular />} onClick={() => select('new')}>
             AIモデルを追加
           </Button>
-          {entries.length === 0 && <Caption1 className={styles.note}>まだ登録がありません。右のフォームから追加できます。</Caption1>}
           {entries.map((e) => (
             <button
               key={e.id}
@@ -278,7 +271,6 @@ export function AiModelsPage({ api }: Props) {
                     キー未登録
                   </Badge>
                 )}
-                <Caption1 className={styles.note}>{e.base || services.find((s) => s.id === e.service)?.label}</Caption1>
               </div>
             </button>
           ))}
@@ -289,23 +281,16 @@ export function AiModelsPage({ api }: Props) {
             <Spinner size="small" label="読み込み中" />
           ) : (
             <>
-              <Subtitle2>{selection === 'new' ? '新しいAIモデルを登録' : '登録内容の変更'}</Subtitle2>
-              <Field label="1  サービス">
-                <div className={styles.wrap}>
+              <Subtitle2>{selection === 'new' ? '新しいAIモデル' : '登録内容'}</Subtitle2>
+              <Field label="サービス" hint={service?.blurb}>
+                <Select value={draft.service} disabled={busy !== ''} onChange={(_, d) => pickService(d.value)}>
                   {services.map((s) => (
-                    <ToggleButton
-                      key={s.id}
-                      appearance={draft.service === s.id ? 'primary' : 'outline'}
-                      checked={draft.service === s.id}
-                      disabled={busy !== ''}
-                      onClick={() => pickService(s.id)}
-                    >
+                    <option key={s.id} value={s.id}>
                       {s.label}
-                    </ToggleButton>
+                    </option>
                   ))}
-                </div>
+                </Select>
               </Field>
-              {service && <Caption1 className={styles.note}>{service.blurb}</Caption1>}
               {isUrl && (
                 <Field label="接続先URL">
                   <Input
@@ -317,12 +302,8 @@ export function AiModelsPage({ api }: Props) {
               )}
               {service?.needsKey && (
                 <Field
-                  label="2  APIキー"
-                  hint={
-                    savedKey
-                      ? '保存済みのキーを使います。変えるときだけ貼り付けてください（同じサービス・URLの他のモデルと共有します）。'
-                      : undefined
-                  }
+                  label="APIキー"
+                  hint={savedKey ? '保存済みのキーを使います。変えるときだけ貼り付けてください。' : undefined}
                 >
                   <div className={styles.row}>
                     <Input
@@ -341,7 +322,7 @@ export function AiModelsPage({ api }: Props) {
                   </div>
                 </Field>
               )}
-              <Field label="モデル名（空なら使うときに自動で選びます）">
+              <Field label="モデル名" hint="空のままなら、使うときに自動で選びます。">
                 <div className={styles.row}>
                   <Input
                     className={styles.grow}
@@ -359,38 +340,39 @@ export function AiModelsPage({ api }: Props) {
                       ))}
                     </Select>
                   )}
-                  <Button disabled={busy !== '' || !canCall} onClick={() => void fetchModels()}>
-                    {busy === 'models' ? '取得中…' : 'モデル一覧を取得'}
+                  <Button size="small" disabled={busy !== '' || !canCall} onClick={() => void fetchModels()}>
+                    {busy === 'models' ? '取得中…' : '一覧を取得'}
                   </Button>
                 </div>
               </Field>
-              <Field label="表示名（任意）">
-                <Input value={draft.name} placeholder="例: 仕事用 / 安いモデル" onChange={(_, d) => set('name', d.value)} />
-              </Field>
-              {isUrl && (
-                <Accordion collapsible>
-                  <AccordionItem value="adv">
-                    <AccordionHeader>詳細設定</AccordionHeader>
-                    <AccordionPanel>
-                      <Field label="通信の形式">
-                        <Select value={draft.protocol} onChange={(_, d) => set('protocol', d.value)}>
-                          {protocols.map(([id, label]) => (
-                            <option key={id} value={id}>
-                              {label}
-                            </option>
-                          ))}
-                        </Select>
-                      </Field>
-                      <Checkbox
-                        checked={draft.useTools}
-                        onChange={(_, d) => set('useTools', d.checked === true)}
-                        label="このAIは関数呼び出し（ツール）に対応している"
-                      />
-                      <Caption1 className={styles.note}>対応していないAIでは外してください。端末の閲覧だけになります。</Caption1>
-                    </AccordionPanel>
-                  </AccordionItem>
-                </Accordion>
-              )}
+              <Accordion collapsible>
+                <AccordionItem value="adv">
+                  <AccordionHeader size="small">詳細</AccordionHeader>
+                  <AccordionPanel>
+                    <Field label="表示名">
+                      <Input value={draft.name} placeholder="例: 仕事用 / 安いモデル" onChange={(_, d) => set('name', d.value)} />
+                    </Field>
+                    {isUrl && (
+                      <>
+                        <Field label="通信の形式">
+                          <Select value={draft.protocol} onChange={(_, d) => set('protocol', d.value)}>
+                            {protocols.map(([id, label]) => (
+                              <option key={id} value={id}>
+                                {label}
+                              </option>
+                            ))}
+                          </Select>
+                        </Field>
+                        <Checkbox
+                          checked={draft.useTools}
+                          onChange={(_, d) => set('useTools', d.checked === true)}
+                          label="関数呼び出し（ツール）に対応している"
+                        />
+                      </>
+                    )}
+                  </AccordionPanel>
+                </AccordionItem>
+              </Accordion>
 
               <div className={styles.actions}>
                 <Button appearance="primary" disabled={busy !== '' || !canSave} onClick={() => void save()}>
@@ -407,7 +389,6 @@ export function AiModelsPage({ api }: Props) {
                 {busy !== '' && <Spinner size="tiny" />}
                 {dirty && selection !== 'new' && <Caption1 className={styles.note}>未保存の変更があります</Caption1>}
               </div>
-              <Caption1 className={styles.note}>「接続を確認」は短い質問を1回送ります（利用料は提供元の料金に従います）。保存だけでは通信しません。</Caption1>
               {message && (
                 <MessageBar intent={message.error ? 'error' : 'success'}>
                   <MessageBarBody>{message.text}</MessageBarBody>
@@ -415,35 +396,35 @@ export function AiModelsPage({ api }: Props) {
               )}
 
               {current && (
-                <>
-                  <Divider style={{ marginTop: 12 }} />
-                  <Subtitle2 className={styles.danger}>削除</Subtitle2>
-                  <div className={styles.actions}>
-                    <Button
-                      appearance="outline"
-                      disabled={busy !== ''}
-                      onClick={() => (armed === 'model' ? void remove(current.id) : setArmed('model'))}
-                    >
-                      {armed === 'model' ? 'もう一度押すと、この登録を削除' : 'この登録を削除'}
-                    </Button>
-                    <Caption1 className={styles.note}>登録だけを消します。保存したキーは残ります。</Caption1>
-                  </div>
-                  {service?.needsKey && savedKey && (
-                    <div className={styles.actions}>
-                      <Button
-                        appearance="outline"
-                        disabled={busy !== ''}
-                        onClick={() => (armed === 'key' ? void forgetKey() : setArmed('key'))}
-                      >
-                        {armed === 'key' ? 'もう一度押すと、保存したキーを削除' : '保存したキーを削除'}
-                      </Button>
-                      <Caption1 className={styles.note}>同じサービス・URLのすべての登録でキーが使えなくなります。</Caption1>
-                    </div>
-                  )}
-                </>
-              )}
-              {selection === 'new' && entries.length === 0 && (
-                <Body1 className={styles.note}>最初の1件は、保存すると自動で使用中になります。</Body1>
+                <Accordion collapsible>
+                  <AccordionItem value="delete">
+                    <AccordionHeader size="small">削除</AccordionHeader>
+                    <AccordionPanel>
+                      <div className={styles.actions}>
+                        <Button
+                          appearance="outline"
+                          disabled={busy !== ''}
+                          onClick={() => (armed === 'model' ? void remove(current.id) : setArmed('model'))}
+                        >
+                          {armed === 'model' ? 'もう一度押すと削除' : 'この登録を削除'}
+                        </Button>
+                        <Caption1 className={styles.note}>キーは残ります。</Caption1>
+                      </div>
+                      {service?.needsKey && savedKey && (
+                        <div className={styles.actions} style={{ marginTop: 8 }}>
+                          <Button
+                            appearance="outline"
+                            disabled={busy !== ''}
+                            onClick={() => (armed === 'key' ? void forgetKey() : setArmed('key'))}
+                          >
+                            {armed === 'key' ? 'もう一度押すと削除' : '保存したキーを削除'}
+                          </Button>
+                          <Caption1 className={styles.note}>同じサービス・URLの全登録で使えなくなります。</Caption1>
+                        </div>
+                      )}
+                    </AccordionPanel>
+                  </AccordionItem>
+                </Accordion>
               )}
             </>
           )}

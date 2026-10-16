@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Body1,
   Button,
   Caption1,
   Dialog,
@@ -18,6 +17,7 @@ import {
   Subtitle2,
   Textarea,
   ToggleButton,
+  Tooltip,
   tokens,
 } from '@fluentui/react-components';
 import { Bot20Regular, ChatAdd20Regular, Send20Filled, Stop20Regular } from '@fluentui/react-icons';
@@ -26,20 +26,16 @@ import type { AiModelsList, AiStatus, ShareMode } from './types';
 
 const useStyles = makeStyles({
   root: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, gap: '10px' },
-  header: { display: 'flex', flexDirection: 'column', gap: '4px' },
+  header: { display: 'flex', flexDirection: 'column', gap: '6px' },
   scroll: { flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px', paddingRight: '4px' },
   setup: { display: 'flex', flexDirection: 'column', gap: '12px', overflowY: 'auto', height: '100%' },
   row: { display: 'flex', alignItems: 'center', gap: '8px' },
   wrap: { display: 'flex', flexWrap: 'wrap', gap: '6px' },
   grow: { flex: 1, minWidth: 0 },
   share: {
-    padding: '10px 12px',
-    borderRadius: tokens.borderRadiusLarge,
-    backgroundColor: tokens.colorNeutralBackground1,
-    border: `1px solid ${tokens.colorNeutralStroke2}`,
     display: 'flex',
     flexDirection: 'column',
-    gap: '8px',
+    gap: '6px',
   },
   bubbleUser: {
     alignSelf: 'flex-end',
@@ -71,7 +67,7 @@ const useStyles = makeStyles({
   },
   error: { color: tokens.colorPaletteRedForeground1, whiteSpace: 'pre-wrap' },
   note: { color: tokens.colorNeutralForeground3 },
-  examples: { display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-start' },
+  inputRow: { display: 'flex', alignItems: 'flex-end', gap: '6px' },
   mono: { fontFamily: 'Consolas, "Cascadia Mono", monospace', fontSize: '13px' },
 });
 
@@ -252,10 +248,7 @@ export function AiDock({ api, targets, onManage }: Props) {
   if (models.entries.length === 0) {
     return (
       <div className={styles.setup}>
-        <Subtitle2>AIをつなぐ</Subtitle2>
-        <Caption1>
-          使いたいAIモデルを登録すると、ここで相談できます。登録・変更・削除は「AIモデルの管理」で行います。
-        </Caption1>
+        <Subtitle2>AIモデルが未登録です</Subtitle2>
         <Button appearance="primary" style={{ alignSelf: 'flex-start' }} onClick={onManage}>
           AIモデルを登録する
         </Button>
@@ -267,33 +260,32 @@ export function AiDock({ api, targets, onManage }: Props) {
   const sharing = selected.length > 0;
   const header = (
     <div className={styles.header}>
-      <Select
-        aria-label="使うAIモデル"
-        value={models.active ?? ''}
-        disabled={switching || running}
-        onChange={(_, d) => void choose(d.value)}
-      >
-        {!models.active && <option value="">AIモデルを選んでください</option>}
-        {models.entries.map((e) => (
-          <option key={e.id} value={e.id}>
-            {e.label}
-          </option>
-        ))}
-      </Select>
       <div className={styles.row}>
-        <Button size="small" appearance="subtle" icon={<Bot20Regular />} onClick={onManage}>
-          AIモデルの管理
-        </Button>
-        <div className={styles.grow} />
-        <Button
-          size="small"
-          appearance="subtle"
-          icon={<ChatAdd20Regular />}
-          disabled={running || !status.connected}
-          onClick={() => void api.aiClear().then(() => setMessages([]))}
+        <Select
+          className={styles.grow}
+          aria-label="使うAIモデル"
+          value={models.active ?? ''}
+          disabled={switching || running}
+          onChange={(_, d) => void choose(d.value)}
         >
-          新しい会話
-        </Button>
+          {!models.active && <option value="">AIモデルを選んでください</option>}
+          {models.entries.map((e) => (
+            <option key={e.id} value={e.id}>
+              {e.label}
+            </option>
+          ))}
+        </Select>
+        <Tooltip content="AIモデルの管理" relationship="label">
+          <Button appearance="subtle" icon={<Bot20Regular />} onClick={onManage} />
+        </Tooltip>
+        <Tooltip content="新しい会話" relationship="label">
+          <Button
+            appearance="subtle"
+            icon={<ChatAdd20Regular />}
+            disabled={running || !status.connected}
+            onClick={() => void api.aiClear().then(() => setMessages([]))}
+          />
+        </Tooltip>
       </div>
       {switching && <Spinner size="tiny" label="切り替え中" />}
       {problem && (
@@ -312,53 +304,47 @@ export function AiDock({ api, targets, onManage }: Props) {
     return (
       <div className={styles.root}>
         {header}
-        <Body1 className={styles.note}>使うAIモデルを上で選ぶと、ここで相談できます。</Body1>
+        <Caption1 className={styles.note}>使うAIモデルを選んでください。</Caption1>
       </div>
     );
   }
   return (
     <div className={styles.root}>
       {header}
-      <div className={styles.share}>
-        <Caption1>AIに見せる端末</Caption1>
-        <div className={styles.wrap}>
-          {targets.length === 0 && <Caption1 className={styles.note}>（なし）端末を開くと選べます</Caption1>}
-          {targets.map((t) => (
-            <ToggleButton
-              key={t.sessionId}
-              size="small"
-              appearance={selected.includes(t.sessionId) ? 'primary' : 'outline'}
-              checked={selected.includes(t.sessionId)}
-              onClick={() =>
-                setSelected((old) => (old.includes(t.sessionId) ? old.filter((x) => x !== t.sessionId) : [...old, t.sessionId]))
-              }
-            >
-              {t.label}
-            </ToggleButton>
-          ))}
-        </div>
-        <div className={styles.wrap}>
-          {(Object.keys(MODE_LABEL) as ShareMode[]).map((m) => (
-            <ToggleButton key={m} size="small" appearance={mode === m ? 'primary' : 'outline'} disabled={!sharing} checked={mode === m} onClick={() => setMode(m)}>
-              {MODE_LABEL[m]}
-            </ToggleButton>
-          ))}
-        </div>
-        <Caption1 className={mergeClasses(styles.note, sharing && mode === 'auto' && styles.error)}>
-          {sharing ? MODE_HELP[mode] : '端末は見せていません。質問だけがAIに届きます。'}
-        </Caption1>
-      </div>
-      <div className={styles.scroll} ref={scrollRef}>
-        {messages.length === 0 && (
-          <div className={styles.examples}>
-            <Body1 className={styles.note}>何でも質問できます。上で端末を選ぶと、その画面を見せて相談できます。</Body1>
-            {['この画面のエラーの原因を教えて', 'いまの出力を短く要約して', '次に打つコマンドを提案して'].map((example) => (
-              <Button key={example} size="small" onClick={() => setQuestion(example)}>
-                {example}
-              </Button>
+      {targets.length > 0 && (
+        <div className={styles.share}>
+          <div className={styles.wrap}>
+            <Caption1 className={styles.note}>見せる端末</Caption1>
+            {targets.map((t) => (
+              <ToggleButton
+                key={t.sessionId}
+                size="small"
+                appearance={selected.includes(t.sessionId) ? 'primary' : 'outline'}
+                checked={selected.includes(t.sessionId)}
+                onClick={() =>
+                  setSelected((old) => (old.includes(t.sessionId) ? old.filter((x) => x !== t.sessionId) : [...old, t.sessionId]))
+                }
+              >
+                {t.label}
+              </ToggleButton>
             ))}
           </div>
-        )}
+          {sharing && (
+            <>
+              <div className={styles.wrap}>
+                {(Object.keys(MODE_LABEL) as ShareMode[]).map((m) => (
+                  <ToggleButton key={m} size="small" appearance={mode === m ? 'primary' : 'outline'} checked={mode === m} onClick={() => setMode(m)}>
+                    {MODE_LABEL[m]}
+                  </ToggleButton>
+                ))}
+              </div>
+              <Caption1 className={mergeClasses(styles.note, mode === 'auto' && styles.error)}>{MODE_HELP[mode]}</Caption1>
+            </>
+          )}
+        </div>
+      )}
+      <div className={styles.scroll} ref={scrollRef}>
+        {messages.length === 0 && <Caption1 className={styles.note}>質問を入力してください。</Caption1>}
         {messages.map((m, i) =>
           m.role === 'user' ? (
             <div key={i} className={styles.bubbleUser}>
@@ -380,31 +366,29 @@ export function AiDock({ api, targets, onManage }: Props) {
           </div>
         )}
       </div>
-      <Textarea
-        resize="none"
-        rows={3}
-        value={question}
-        placeholder="質問や、端末への依頼を入力（Ctrl+Enterで送信）"
-        onChange={(_, d) => setQuestion(d.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.nativeEvent.isComposing) {
-            e.preventDefault();
-            void send();
-          }
-        }}
-      />
-      <div className={styles.row}>
+      <div className={styles.inputRow}>
+        <Textarea
+          className={styles.grow}
+          resize="none"
+          rows={2}
+          value={question}
+          placeholder="質問を入力（Ctrl+Enterで送信）"
+          onChange={(_, d) => setQuestion(d.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              void send();
+            }
+          }}
+        />
         {running ? (
-          <>
-            <Button appearance="outline" icon={<Stop20Regular />} onClick={stop}>
-              停止
-            </Button>
-            <Spinner size="tiny" />
-          </>
+          <Tooltip content="停止" relationship="label">
+            <Button appearance="outline" icon={<Stop20Regular />} onClick={stop} />
+          </Tooltip>
         ) : (
-          <Button appearance="primary" icon={<Send20Filled />} disabled={!question.trim()} onClick={() => void send()}>
-            送信
-          </Button>
+          <Tooltip content="送信" relationship="label">
+            <Button appearance="primary" icon={<Send20Filled />} disabled={!question.trim()} onClick={() => void send()} />
+          </Tooltip>
         )}
       </div>
       <PreviewDialog
