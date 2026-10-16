@@ -463,7 +463,15 @@ pub async fn session_connect(
         let app = task_app;
         let result: anyhow::Result<()> = async {
             let ssh = Arc::new(
-                SshSession::connect(&profile, stamp, known, interaction, cancel.clone()).await?,
+                SshSession::connect_saved(
+                    &profile,
+                    stamp,
+                    known,
+                    interaction,
+                    cancel.clone(),
+                    crate::import::ProfileSecrets::for_profile(&profile),
+                )
+                .await?,
             );
             let setup = ssh.shell(cols as u32, rows as u32);
             let channel = tokio::select! {

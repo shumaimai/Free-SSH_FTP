@@ -41,9 +41,12 @@ interface Props {
   onDelete(): void;
   onClose(): void;
   onPickKey(): Promise<string | null>;
+  /** この接続先に保存されている秘密の種類（値は持たない）。 */
+  savedSecrets: string[];
+  onForgetSecrets(): Promise<void>;
 }
 
-export function ProfileDialog({ open, initial, existing, error, onSave, onDelete, onClose, onPickKey }: Props) {
+export function ProfileDialog({ open, initial, existing, error, onSave, onDelete, onClose, onPickKey, savedSecrets, onForgetSecrets }: Props) {
   const styles = useStyles();
   const [p, setP] = useState<Profile>(initial);
   const [armed, setArmed] = useState(false);
@@ -110,7 +113,21 @@ export function ProfileDialog({ open, initial, existing, error, onSave, onDelete
                 </Button>
               </div>
             )}
-            {p.auth_method === 'password' && <Caption1>パスワードは接続するときに入力します。</Caption1>}
+            {p.auth_method === 'password' && (
+              <Caption1>
+                {savedSecrets.includes('password') ? '保存済みのパスワードを使います。拒否されたときは入力を求めます。' : 'パスワードは接続するときに入力します。'}
+              </Caption1>
+            )}
+            {existing && savedSecrets.length > 0 && (
+              <div className={styles.keyRow}>
+                <Caption1 className={styles.grow}>
+                  保存済み: {savedSecrets.map((k) => (k === 'password' ? 'パスワード' : 'パスフレーズ')).join('・')}
+                </Caption1>
+                <Button size="small" appearance="subtle" onClick={() => void onForgetSecrets()}>
+                  保存済みの秘密を削除
+                </Button>
+              </div>
+            )}
             {p.auth_method === 'agent' && <Caption1>起動中のSSH agentを使います。</Caption1>}
             <Accordion collapsible>
               <AccordionItem value="more">

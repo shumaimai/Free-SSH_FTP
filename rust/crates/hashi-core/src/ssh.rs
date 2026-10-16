@@ -174,6 +174,11 @@ impl Drop for ConnectingHops {
     }
 }
 
+/// 保存済みの秘密を引く窓口。踏み台には使わない（接続先の秘密を流用しない）。
+pub trait SavedSecrets: Send + Sync {
+    fn get(&self, host: &str, port: u16, username: &str, kind: &str) -> Option<String>;
+}
+
 #[derive(Clone)]
 pub struct Target {
     pub host: String,
@@ -298,12 +303,27 @@ async fn authenticate_once(
     scope: &Scope,
     interaction: &Interaction,
     cancel: &CancellationToken,
+    saved: Option<&Arc<dyn SavedSecrets>>,
 ) -> Result<()> {
+    // 保存済みの秘密は最終の接続先だけ。拒否されたら1回で諦めて入力画面へ進む。
+    let saved = saved.filter(|_| scope.hop.is_none());
+    let lookup = |kind: &str| {
+        saved.and_then(|saved| saved.get(&target.host, target.port, &target.username, kind))
+    };
     let accepted = match target.auth_method.as_str() {
         "password" => {
             let mut accepted = false;
-            for _ in 0..3 {
-                let password = secret(target, scope, "password", interaction, cancel).await?;
+            let mut saved_password = lookup("password");
+            let mut prompts = 0;
+            loop {
+                let password = match saved_password.take() {
+                    Some(password) => password,
+                    None if prompts < 3 => {
+                        prompts += 1;
+                        secret(target, scope, "password", interaction, cancel).await?
+                    }
+                    None => break,
+                };
                 if connection
                     .authenticate_password(&target.username, password)
                     .await?
@@ -331,10 +351,17 @@ async fn authenticate_once(
             let key = match russh::keys::load_secret_key(&path, None) {
                 Ok(key) => key,
                 Err(_) => {
-                    let passphrase =
-                        secret(target, scope, "passphrase", interaction, cancel).await?;
-                    russh::keys::load_secret_key(&path, Some(&passphrase))
-                        .context("秘密鍵を復号できません")?
+                    let from_saved = lookup("passphrase")
+                        .and_then(|saved| russh::keys::load_secret_key(&path, Some(&saved)).ok());
+                    match from_saved {
+                        Some(key) => key,
+                        None => {
+                            let passphrase =
+                                secret(target, scope, "passphrase", interaction, cancel).await?;
+                            russh::keys::load_secret_key(&path, Some(&passphrase))
+                                .context("秘密鍵を復号できません")?
+                        }
+                    }
                 }
             };
             let hash = connection
@@ -389,15 +416,16 @@ async fn authenticate(
     scope: &Scope,
     interaction: &Interaction,
     cancel: &CancellationToken,
+    saved: Option<&Arc<dyn SavedSecrets>>,
 ) -> Result<()> {
     if scope.hop.is_none() {
-        return authenticate_once(connection, target, scope, interaction, cancel).await;
+        return authenticate_once(connection, target, scope, interaction, cancel, saved).await;
     }
     // 踏み台の設定鍵→agent→専用のpassword。接続先の秘密を使い回さない。
     if !target.key_path.is_empty() {
         let mut key = target.clone();
         key.auth_method = "key".into();
-        if authenticate_once(connection, &key, scope, interaction, cancel)
+        if authenticate_once(connection, &key, scope, interaction, cancel, saved)
             .await
             .is_ok()
         {
@@ -409,7 +437,7 @@ async fn authenticate(
     }
     let mut agent = target.clone();
     agent.auth_method = "agent".into();
-    if authenticate_once(connection, &agent, scope, interaction, cancel)
+    if authenticate_once(connection, &agent, scope, interaction, cancel, saved)
         .await
         .is_ok()
     {
@@ -420,7 +448,7 @@ async fn authenticate(
     }
     let mut password = target.clone();
     password.auth_method = "password".into();
-    authenticate_once(connection, &password, scope, interaction, cancel).await
+    authenticate_once(connection, &password, scope, interaction, cancel, saved).await
 }
 
 pub async fn connect_agent(
@@ -454,8 +482,28 @@ impl SshSession {
         interaction: Interaction,
         cancel: CancellationToken,
     ) -> Result<Self> {
+        Self::connect_saved(profile, stamp, known, interaction, cancel, None).await
+    }
+    /// 保存済みの秘密を先に試す接続。拒否・不一致なら通常どおり入力を求める。
+    pub async fn connect_saved(
+        profile: &Profile,
+        stamp: Stamp,
+        known: KnownHosts,
+        interaction: Interaction,
+        cancel: CancellationToken,
+        saved: Option<Arc<dyn SavedSecrets>>,
+    ) -> Result<Self> {
         let path = ssh_config::default_path();
-        Self::connect_with_config(profile, stamp, known, interaction, cancel, path.as_deref()).await
+        Self::connect_with_config(
+            profile,
+            stamp,
+            known,
+            interaction,
+            cancel,
+            path.as_deref(),
+            saved,
+        )
+        .await
     }
     pub async fn connect_with_config(
         profile: &Profile,
@@ -464,6 +512,7 @@ impl SshSession {
         interaction: Interaction,
         cancel: CancellationToken,
         path: Option<&std::path::Path>,
+        saved: Option<Arc<dyn SavedSecrets>>,
     ) -> Result<Self> {
         let profile = match path {
             Some(path) => ssh_config::resolve_at(profile, path)?,
@@ -557,8 +606,15 @@ impl SshSession {
                 } else {
                     client::connect(config, (&*target.host, target.port), handler).await?
                 };
-                if let Err(error) =
-                    authenticate(&mut connection, target, &scope, &interaction, &cancel).await
+                if let Err(error) = authenticate(
+                    &mut connection,
+                    target,
+                    &scope,
+                    &interaction,
+                    &cancel,
+                    saved.as_ref(),
+                )
+                .await
                 {
                     let _ = tokio::time::timeout(
                         Duration::from_secs(1),

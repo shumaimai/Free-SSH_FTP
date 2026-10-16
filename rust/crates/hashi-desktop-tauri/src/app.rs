@@ -1,5 +1,6 @@
 //! アプリ全体の状態とcommand。保存データ・認証要求の台帳・セッション一覧を持つ。
 use crate::external::External;
+use crate::import::Imports;
 use crate::local::LocalPane;
 use crate::{
     ai::AiState, editor::Editors, files::FileJobs, session::Session, settings::UpdateInfo,
@@ -34,6 +35,7 @@ pub struct AppState {
     pub editors: Editors,
     pub external: External,
     pub local: LocalPane,
+    pub imports: Imports,
     pub update: Mutex<Option<UpdateInfo>>,
     exiting: AtomicBool,
 }
@@ -64,6 +66,7 @@ impl AppState {
             editors: Editors::default(),
             external: External::default(),
             local: LocalPane::default(),
+            imports: Imports::default(),
             update: Mutex::new(None),
             exiting: AtomicBool::new(false),
         })
@@ -146,13 +149,27 @@ pub fn profile_save(
 
 #[tauri::command]
 pub fn profile_delete(state: State<'_, AppState>, index: usize) -> Result<Vec<Profile>, String> {
-    state.update_profiles(|profiles| {
+    let mut removed_id: Option<(String, bool)> = None;
+    let updated = state.update_profiles(|profiles| {
         if index >= profiles.len() {
             return Err(std::io::Error::other("接続設定がありません"));
         }
-        profiles.remove(index);
+        let removed = profiles.remove(index);
+        removed_id = Some((
+            removed.id(),
+            profiles.iter().any(|p| p.id() == removed.id()),
+        ));
         Ok(())
-    })
+    })?;
+    // 同じ接続先の設定がほかに残っていなければ、保存済みの秘密も消す。
+    if let Some((id, still_used)) = removed_id {
+        if !still_used {
+            if let Err(error) = crate::import::forget_id(&id) {
+                eprintln!("保存済みの秘密を削除できませんでした: {error}");
+            }
+        }
+    }
+    Ok(updated)
 }
 
 /// 秘密鍵の選択。OSのファイル選択を使い、選ばれたパスだけを返す（中身は読まない）。

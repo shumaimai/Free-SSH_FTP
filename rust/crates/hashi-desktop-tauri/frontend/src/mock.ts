@@ -17,8 +17,29 @@ import type {
   SessionInfo,
   SessionStateEvent,
   OpenedDoc,
+  ImportPreview,
 } from './types';
 import { emptyProfile } from './types';
+
+function mockImport(source: 'legacy' | 'bundle', unlocked: boolean): ImportPreview {
+  const secret = source === 'legacy' || unlocked;
+  return {
+    token: 'mock-token',
+    source,
+    needs_passphrase: source === 'bundle',
+    unlocked,
+    profiles: [
+      { index: 0, label: '本番サーバー', id: 'deploy@prod.example.com:22', auth_method: 'key', proxy_jump: false, exists: false, password: false, passphrase: secret },
+      { index: 1, label: '開発VPS', id: 'dev@192.0.2.10:2222', auth_method: 'password', proxy_jump: true, exists: false, password: secret, passphrase: false },
+      { index: 2, label: '自宅NAS', id: 'admin@nas.local:22', auth_method: 'password', proxy_jump: false, exists: true, password: secret, passphrase: false },
+    ],
+    hosts_new: 2,
+    hosts_same: 1,
+    hosts_conflict: 1,
+    snippets_new: source === 'legacy' ? 3 : null,
+    notes: source === 'legacy' ? ['sudoパスワードはこのアプリが使わないため取り込みません'] : [],
+  };
+}
 
 function mockDoc(sessionId: string | null, path: string): OpenedDoc {
   const name = path.split('/').pop() ?? path;
@@ -277,6 +298,32 @@ export function mockApi(): Api {
       mcpOn = false;
       return extStatus();
     },
+    importLegacyInspect: async (legacyStopped) => {
+      if (!legacyStopped) throw new Error('旧Python版をすべて終了したことの確認が必要です');
+      return mockImport('legacy', true);
+    },
+    importBundlePick: async () => mockImport('bundle', false),
+    importBundleUnlock: async (_token, passphrase) => {
+      if (passphrase !== 'pass') throw new Error('パスフレーズが違うか、秘密情報が壊れています');
+      return mockImport('bundle', true);
+    },
+    importCancel: async () => {},
+    importApply: async (options) => [
+      {
+        added: options.selected.length,
+        updated: 0,
+        skipped: 0,
+        hosts_added: options.known_hosts ? 2 : 0,
+        host_conflicts: options.known_hosts ? ['nas.local:22'] : [],
+        snippets_added: options.snippets ? 3 : 0,
+        secrets_saved: options.secrets ? 2 : 0,
+        secrets_failed: 0,
+        notes: [],
+      },
+      profiles,
+    ],
+    secretsStatus: async () => ({ saved: ['password'], backend: 'Windows資格情報マネージャ' }),
+    secretsForget: async () => {},
     permissionsStatus: async () => ({ enabled: permEnabled, busy: false, note: permEnabled ? '旧版の残存マーカー0件、復旧記録の確認先1件（未復元0件）。旧記録は変更していません。' : null }),
     permissionsEnable: async () => {
       permEnabled = true;

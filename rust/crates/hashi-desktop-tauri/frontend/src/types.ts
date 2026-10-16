@@ -244,3 +244,55 @@ export interface SavedDoc {
   sessionId: string | null;
   size: number;
 }
+
+/** 旧版から取り込む候補の1件。秘密の値は画面へ来ない（有無だけ）。 */
+export interface ImportProfile {
+  index: number;
+  label: string;
+  id: string;
+  auth_method: Profile['auth_method'];
+  proxy_jump: boolean;
+  exists: boolean;
+  password: boolean;
+  passphrase: boolean;
+}
+
+export interface ImportPreview {
+  token: string;
+  source: 'legacy' | 'bundle';
+  needs_passphrase: boolean;
+  unlocked: boolean;
+  profiles: ImportProfile[];
+  hosts_new: number;
+  hosts_same: number;
+  hosts_conflict: number;
+  snippets_new: number | null;
+  notes: string[];
+}
+
+export interface ImportOptions {
+  token: string;
+  selected: number[];
+  overwrite: boolean;
+  known_hosts: boolean;
+  snippets: boolean;
+  secrets: boolean;
+}
+
+export interface ImportResult {
+  added: number;
+  updated: number;
+  skipped: number;
+  hosts_added: number;
+  host_conflicts: string[];
+  snippets_added: number;
+  secrets_saved: number;
+  secrets_failed: number;
+  notes: string[];
+}
+
+/** 接続先に保存されている秘密の種類（値は返らない）。 */
+export interface SecretsStatus {
+  saved: string[];
+  backend: string;
+}

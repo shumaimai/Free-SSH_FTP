@@ -39,6 +39,7 @@ import { FileDock } from './FileDock';
 import { SnippetBar } from './SnippetBar';
 import { EditorPane } from './EditorView';
 import { KeygenDialog } from './KeygenDialog';
+import { ImportDialog } from './ImportDialog';
 import { ForwardDialog } from './ForwardDialog';
 import { ExternalDialog } from './ExternalDialog';
 import { ApprovalDialog } from './ApprovalDialog';
@@ -132,6 +133,8 @@ export function App({ api }: { api: Api }) {
   const [dockOpen, setDockOpen] = useState(false);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [keygenOpen, setKeygenOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [savedSecrets, setSavedSecrets] = useState<string[]>([]);
   const [forwardOpen, setForwardOpen] = useState(false);
   const [externalOpen, setExternalOpen] = useState(false);
   const [twoPane, setTwoPane] = useState(false);
@@ -433,9 +436,14 @@ export function App({ api }: { api: Api }) {
               profiles={profiles}
               disabled={startupError !== null}
               onConnect={(index) => openTab({ kind: 'ssh', index, label: profiles[index].name || profiles[index].host })}
-              onEdit={(index) => setDialog({ index, profile: profiles[index], error: null })}
+              onEdit={(index) => {
+                setSavedSecrets([]);
+                void api.secretsStatus(index).then((s) => setSavedSecrets(s.saved), () => setSavedSecrets([]));
+                setDialog({ index, profile: profiles[index], error: null });
+              }}
               onNew={() => setDialog({ index: null, profile: emptyProfile(), error: null })}
               onLocal={() => openTab({ kind: 'local', label: 'CMD' })}
+              onImport={() => setImportOpen(true)}
             />
           </div>
           {tabs.map((tab) => (
@@ -563,6 +571,26 @@ export function App({ api }: { api: Api }) {
         }}
         onClose={() => setDialog(null)}
         onPickKey={() => api.pickKeyFile()}
+        savedSecrets={savedSecrets}
+        onForgetSecrets={async () => {
+          if (dialog?.index === null || dialog?.index === undefined) return;
+          try {
+            await api.secretsForget(dialog.index);
+            setSavedSecrets([]);
+            setNotice('保存済みの秘密を削除しました');
+          } catch (error) {
+            setDialog({ ...dialog, error: String(error) });
+          }
+        }}
+      />
+      <ImportDialog
+        api={api}
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onDone={(list, summary) => {
+          setProfiles(list);
+          setNotice(summary);
+        }}
       />
       <SettingsDialog
         api={api}

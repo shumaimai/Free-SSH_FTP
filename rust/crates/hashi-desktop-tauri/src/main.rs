@@ -8,6 +8,7 @@ mod editor;
 mod external;
 mod files;
 mod forwards;
+mod import;
 mod keygen;
 mod local;
 mod session;
@@ -44,6 +45,13 @@ fn main() {
             app::profiles_list,
             app::profile_save,
             app::profile_delete,
+            import::import_legacy_inspect,
+            import::import_bundle_pick,
+            import::import_bundle_unlock,
+            import::import_cancel,
+            import::import_apply,
+            import::secrets_status,
+            import::secrets_forget,
             app::pick_key_file,
             app::appearance_get,
             app::appearance_set,

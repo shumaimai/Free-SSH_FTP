@@ -30,6 +30,10 @@ import type {
   PermissionStatus,
   ExternalStatus,
   LocalListing,
+  ImportPreview,
+  ImportOptions,
+  ImportResult,
+  SecretsStatus,
 } from './types';
 
 export interface Api {
@@ -108,6 +112,13 @@ export interface Api {
   snippetsSave(list: Snippet[]): Promise<Snippet[]>;
   snippetVariables(body: string): Promise<string[]>;
   snippetSend(id: string, index: number, values: Record<string, string>): Promise<void>;
+  importLegacyInspect(legacyStopped: boolean): Promise<ImportPreview>;
+  importBundlePick(): Promise<ImportPreview | null>;
+  importBundleUnlock(token: string, passphrase: string): Promise<ImportPreview>;
+  importCancel(): Promise<void>;
+  importApply(options: ImportOptions): Promise<[ImportResult, Profile[]]>;
+  secretsStatus(index: number): Promise<SecretsStatus>;
+  secretsForget(index: number): Promise<void>;
   keygenDefaults(): Promise<KeygenDefaults>;
   keygenPathExists(path: string): Promise<boolean>;
   keygenPickPath(): Promise<string | null>;
@@ -218,6 +229,13 @@ async function tauriApi(): Promise<Api> {
     snippetsSave: (list) => invoke('snippets_save', { list }),
     snippetVariables: (body) => invoke('snippet_variables', { body }),
     snippetSend: (id, index, values) => invoke('snippet_send', { id, index, values }),
+    importLegacyInspect: (legacyStopped) => invoke('import_legacy_inspect', { legacyStopped }),
+    importBundlePick: () => invoke('import_bundle_pick'),
+    importBundleUnlock: (token, passphrase) => invoke('import_bundle_unlock', { token, passphrase }),
+    importCancel: () => invoke('import_cancel'),
+    importApply: (options) => invoke('import_apply', { options }),
+    secretsStatus: (index) => invoke('secrets_status', { index }),
+    secretsForget: (index) => invoke('secrets_forget', { index }),
     keygenDefaults: () => invoke('keygen_defaults'),
     keygenPathExists: (path) => invoke('keygen_path_exists', { path }),
     keygenPickPath: () => invoke('keygen_pick_path'),

@@ -12,7 +12,7 @@ import {
   Subtitle1,
   Title2,
 } from '@fluentui/react-components';
-import { Add24Regular, DocumentEdit20Regular, Settings20Regular, Window24Regular } from '@fluentui/react-icons';
+import { Add24Regular, ArrowImport20Regular, DocumentEdit20Regular, Settings20Regular, Window24Regular } from '@fluentui/react-icons';
 import type { Profile } from './types';
 
 const useStyles = makeStyles({
@@ -47,9 +47,10 @@ interface Props {
   onEdit(index: number): void;
   onNew(): void;
   onLocal(): void;
+  onImport(): void;
 }
 
-export function Home({ profiles, disabled, onConnect, onEdit, onNew, onLocal }: Props) {
+export function Home({ profiles, disabled, onConnect, onEdit, onNew, onLocal, onImport }: Props) {
   const styles = useStyles();
   const [query, setQuery] = useState('');
   const shown = useMemo(() => matching(profiles, query), [profiles, query]);
@@ -73,12 +74,15 @@ export function Home({ profiles, disabled, onConnect, onEdit, onNew, onLocal }: 
         <Button icon={<Window24Regular />} onClick={onLocal}>
           ローカル端末
         </Button>
+        <Button icon={<ArrowImport20Regular />} disabled={disabled} onClick={onImport}>
+          旧版から取り込む
+        </Button>
       </div>
       {profiles.length === 0 ? (
         <Card className={styles.empty}>
           <Subtitle1>まだ接続先がありません</Subtitle1>
           <Body1>
-            ホスト名と利用者名を入れるだけで登録できます。パスワードや秘密鍵は接続するときに入力します。
+            ホスト名と利用者名を入れるだけで登録できます。パスワードや秘密鍵は接続するときに入力します。旧版（Python）をお使いだった場合は、「旧版から取り込む」で接続先や保存済みのパスワードを引き継げます。
           </Body1>
         </Card>
       ) : shown.length === 0 ? (

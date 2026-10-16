@@ -53,6 +53,7 @@ async fn main() -> Result<()> {
             interaction,
             cancel.clone(),
             req.ssh_config.as_deref(),
+            None,
         )
         .await?,
     );
