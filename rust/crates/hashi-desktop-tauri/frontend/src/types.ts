@@ -193,6 +193,12 @@ export interface UpdateInfo {
   url: string;
 }
 
+export interface PermissionStatus {
+  enabled: boolean;
+  busy: boolean;
+  note: string | null;
+}
+
 /** エディタに開いた文書。保存先はRust側が持ち、画面は表示と編集内容だけを扱う。 */
 export interface OpenedDoc {
   id: string;

@@ -315,7 +315,10 @@ pub async fn shutdown(app: &AppHandle) {
         .map(|mut sessions| sessions.drain().map(|(_, session)| session).collect())
         .unwrap_or_default();
     for session in sessions {
-        session.close(&state.ai.registry).await;
+        for warning in session.close(&state.ai.registry).await {
+            // 画面は閉じる途中なので、復旧記録が残ることだけ標準エラーへ出す。
+            eprintln!("Hashi: {warning}");
+        }
     }
 }
 

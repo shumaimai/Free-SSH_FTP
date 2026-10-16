@@ -4,6 +4,7 @@
 use crate::{app::AppState, session::Session};
 use hashi_core::{
     interaction::Stamp,
+    permissions::{self, Manager as PermManager},
     ssh::SshSession,
     transfer::{self, Entry, Mode, Progress},
     transfer_tree::{self, Existing, TaskContext},
@@ -35,6 +36,9 @@ pub struct Files {
     navigation: Mutex<CancellationToken>,
     initial_path: String,
     bookmark_key: String,
+    /// 権限補助（利用者が接続ごとに有効にしたときだけ入る）。
+    permissions: Mutex<Option<Arc<PermManager>>>,
+    permissions_busy: std::sync::atomic::AtomicBool,
 }
 
 impl Files {
@@ -55,17 +59,42 @@ impl Files {
             navigation: Mutex::new(CancellationToken::new()),
             initial_path,
             bookmark_key,
+            permissions: Mutex::new(None),
+            permissions_busy: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
+    pub fn permissions(&self) -> Option<Arc<PermManager>> {
+        self.permissions.lock().ok().and_then(|p| p.clone())
+    }
+
     /// 新しい受付を閉じ、進行中の操作（確定ACK・復元を含む）の終了を待つ。待ちには上限を置く。
-    pub async fn shutdown(&self) {
+    /// 権限補助の復元が済んでいない場合などは、利用者へ伝える警告を返す（復旧記録は残す）。
+    pub async fn shutdown(&self) -> Vec<String> {
         self.work_cancel.cancel();
         if let Ok(token) = self.navigation.lock() {
             token.cancel();
         }
         self.work.close();
-        let _ = tokio::time::timeout(Duration::from_secs(30), self.work.wait()).await;
+        let mut warnings = vec![];
+        if tokio::time::timeout(Duration::from_secs(30), self.work.wait())
+            .await
+            .is_err()
+        {
+            warnings.push("ファイル操作の終了を30秒待ちましたが完了を確認できません".to_owned());
+        }
+        if let Some(manager) = self.permissions() {
+            match manager.shutdown().await {
+                Ok(0) => {}
+                Ok(pending) => warnings.push(format!(
+                    "{pending}件の権限復元が未完了です。復旧記録を保持しています（次回、この接続で復元できます）"
+                )),
+                Err(error) => warnings.push(format!(
+                    "権限復元の確認が未完了です。復旧記録を保持: {error}"
+                )),
+            }
+        }
+        warnings
     }
 
     /// 公開鍵を接続先のauthorized_keysへ追記する（hashi-coreの規則）。登録済みならfalse。
@@ -269,7 +298,11 @@ pub async fn files_list(
     let result = async {
         let nav = files.nav.lock().await;
         let path = nav.canonicalize(target).await?;
-        let entries = transfer::list_bounded(&files.ssh, &path, &token).await?;
+        // 権限補助が有効なら、権限不足のときだけ一時的に緩めて読み、終わったら戻す。
+        let entries = permissions::with_access(files.permissions().as_ref(), &path, 0o500, || {
+            transfer::list_bounded(&files.ssh, &path, &token)
+        })
+        .await?;
         anyhow::Ok(Listing { path, entries })
     }
     .await
@@ -391,13 +424,14 @@ fn schedule(app: &AppHandle) {
         let progress = state.files.progress_tx.clone();
         let RuntimeHandle::Tokio(handle) = tauri::async_runtime::handle();
         let task_files = files.clone();
+        let permissions = files.permissions();
         let spawned = files.work.spawn(&handle, async move {
             let context = TaskContext {
                 job: &job_id,
                 progress: &progress,
                 cancel: &cancel,
-                // 権限補助は未移植。有効化しない間は何も緩めない。
-                permission: None,
+                // 有効にした接続だけ。無効の間は何も緩めない。
+                permission: permissions.as_ref(),
                 mode,
             };
             let result = match operation {
@@ -747,4 +781,96 @@ pub fn files_bookmark_add(
         .map_err(|error| error.to_string())?;
     *state.snapshot.lock().map_err(|_| "状態が不正です")? = snapshot;
     Ok(bookmarks_of(&state, &files.bookmark_key))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionStatus {
+    enabled: bool,
+    busy: bool,
+    note: Option<String>,
+}
+
+#[tauri::command]
+pub fn permissions_status(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<PermissionStatus, String> {
+    let (_, files) = files_of(&state, &id)?;
+    let manager = files.permissions();
+    Ok(PermissionStatus {
+        enabled: manager.is_some(),
+        busy: files
+            .permissions_busy
+            .load(std::sync::atomic::Ordering::SeqCst),
+        note: manager.and_then(|m| m.migration_note()),
+    })
+}
+
+/// 権限補助をこの接続で有効にする。旧Python版の停止確認と、旧版の未復元記録が無いことが前提。
+#[tauri::command]
+pub async fn permissions_enable(
+    state: State<'_, AppState>,
+    id: String,
+    legacy_stopped: bool,
+) -> Result<PermissionStatus, String> {
+    use std::sync::atomic::Ordering;
+    let (_, files) = files_of(&state, &id)?;
+    if !legacy_stopped {
+        return Err("権限操作の前に、旧Python版をすべて終了したことの確認が必要です".into());
+    }
+    let _work = files.work.start().map_err(|e| e.to_string())?;
+    if files.permissions().is_some() {
+        return Err("この接続ではすでに有効です".into());
+    }
+    if files.permissions_busy.swap(true, Ordering::SeqCst) {
+        return Err("処理中です".into());
+    }
+    let result = async {
+        let key = files
+            .ssh
+            .accepted
+            .lock()
+            .map_err(|_| anyhow::anyhow!("確認済み鍵を読めません"))?
+            .get(&format!(
+                "{}:{}",
+                files.ssh.scope.host, files.ssh.scope.port
+            ))
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("接続先の確認済み鍵がありません"))?;
+        // username と検証済み鍵まで束縛し、異なる相手の復元記録を適用しない。
+        let connection = serde_json::to_string(&(
+            files.ssh.scope.host.as_str(),
+            files.ssh.scope.port,
+            files.ssh.scope.username.as_str(),
+            key.fingerprint,
+        ))?;
+        let backend = Arc::new(permissions::SftpBackend::new(files.ssh.sftp().await?));
+        PermManager::scoped(backend, connection, true)
+    }
+    .await;
+    files.permissions_busy.store(false, Ordering::SeqCst);
+    let manager = result.map_err(|e| e.to_string())?;
+    let note = manager.migration_note();
+    *files.permissions.lock().map_err(|_| "状態が不正です")? = Some(manager);
+    Ok(PermissionStatus {
+        enabled: true,
+        busy: false,
+        note,
+    })
+}
+
+/// この接続の未復元記録を元の権限へ戻す。
+#[tauri::command]
+pub async fn permissions_recover(state: State<'_, AppState>, id: String) -> Result<String, String> {
+    let (_, files) = files_of(&state, &id)?;
+    let manager = files.permissions().ok_or("権限補助が有効ではありません")?;
+    let _work = files.work.start().map_err(|e| e.to_string())?;
+    match manager.recover().await {
+        Ok((restored, 0)) => Ok(format!("権限復旧: {restored}件復元しました")),
+        Ok((restored, pending)) => Err(format!(
+            "権限復旧: {restored}件復元 / {pending}件未完了（記録は保持しています）"
+        )),
+        Err(error) => Err(format!("権限復旧できませんでした。記録を保持: {error}")),
+    }
 }

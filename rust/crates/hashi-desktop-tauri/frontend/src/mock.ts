@@ -35,6 +35,7 @@ function mockDoc(sessionId: string | null, path: string): OpenedDoc {
 
 export function mockApi(): Api {
   let localOpens = 0;
+  let permEnabled = false;
   let stored: import('./appearance').Appearance | null = null;
   let profiles: Profile[] = [
     { ...emptyProfile(), name: '本番サーバー', host: 'prod.example.com', username: 'deploy' },
@@ -221,6 +222,13 @@ export function mockApi(): Api {
       setTimeout(() => h({ id: 'ssh-1', available: true, message: '' }), 100);
       return () => {};
     },
+    permissionsStatus: async () => ({ enabled: permEnabled, busy: false, note: permEnabled ? '旧版の残存マーカー0件、復旧記録の確認先1件（未復元0件）。旧記録は変更していません。' : null }),
+    permissionsEnable: async () => {
+      permEnabled = true;
+      return { enabled: true, busy: false, note: '旧版の残存マーカー0件、復旧記録の確認先1件（未復元0件）。旧記録は変更していません。' };
+    },
+    permissionsRecover: async () => '権限復旧: 0件復元しました',
+    onSessionWarning: async () => () => {},
     editorOpenRemote: async (sessionId, path) => mockDoc(sessionId, path),
     editorOpenLocal: async () => mockDoc(null, localOpens++ % 2 === 0 ? '/home/me/nginx.conf' : '/home/me/world.dat'),
     editorSave: async (_id, text) => ({ name: 'saved', path: '/x/saved', sessionId: null, size: text?.length ?? 0 }),

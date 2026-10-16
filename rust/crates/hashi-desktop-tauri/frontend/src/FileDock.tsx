@@ -44,9 +44,11 @@ import {
   Folder20Filled,
   FolderArrowUp20Regular,
   Options20Regular,
+  ShieldKeyhole20Regular,
   Star20Regular,
 } from '@fluentui/react-icons';
 import type { Api } from './api';
+import { PermissionDialog } from './PermissionDialog';
 import type { ExistingPolicy, FileEntry, FileJob, TransferMode } from './types';
 
 const useStyles = makeStyles({
@@ -130,6 +132,7 @@ interface Props {
 }
 
 export function FileDock({ api, sessionId, available, unavailableMessage, onEdit }: Props) {
+  const [permOpen, setPermOpen] = useState(false);
   const styles = useStyles();
   const [path, setPath] = useState('');
   const [pathInput, setPathInput] = useState('');
@@ -326,6 +329,9 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
           削除
         </Button>
         <div className={styles.grow} />
+        <Button size="small" appearance="subtle" icon={<ShieldKeyhole20Regular />} onClick={() => setPermOpen(true)}>
+          権限補助
+        </Button>
         <Popover positioning="below-end">
           <PopoverTrigger disableButtonEnhancement>
             <Button size="small" appearance="subtle" icon={<Options20Regular />}>
@@ -486,6 +492,7 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
           </DialogBody>
         </DialogSurface>
       </Dialog>
+      <PermissionDialog api={api} open={permOpen} sessionId={sessionId} onClose={() => setPermOpen(false)} />
     </div>
   );
 }

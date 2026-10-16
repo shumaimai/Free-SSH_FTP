@@ -27,6 +27,7 @@ import type {
   SessionStateEvent,
   OpenedDoc,
   SavedDoc,
+  PermissionStatus,
 } from './types';
 
 export interface Api {
@@ -76,6 +77,10 @@ export interface Api {
   onFilesChanged(handler: (sessionId: string) => void): Promise<() => void>;
   onFileDrop(handler: (count: number) => void): Promise<() => void>;
   onFilesState(handler: (event: { id: string; available: boolean; message: string }) => void): Promise<() => void>;
+  permissionsStatus(id: string): Promise<PermissionStatus>;
+  permissionsEnable(id: string, legacyStopped: boolean): Promise<PermissionStatus>;
+  permissionsRecover(id: string): Promise<string>;
+  onSessionWarning(handler: (event: { id: string; message: string }) => void): Promise<() => void>;
   editorOpenRemote(sessionId: string, path: string): Promise<OpenedDoc>;
   editorOpenLocal(): Promise<OpenedDoc | null>;
   editorSave(id: string, text: string | null, patches: [number, number][] | null): Promise<SavedDoc>;
@@ -167,6 +172,11 @@ async function tauriApi(): Promise<Api> {
     onFileDrop: (handler) => listen<number>('file-drop', (e) => handler(e.payload)),
     onFilesState: (handler) =>
       listen<{ id: string; available: boolean; message: string }>('files-state', (e) => handler(e.payload)),
+    permissionsStatus: (id) => invoke('permissions_status', { id }),
+    permissionsEnable: (id, legacyStopped) => invoke('permissions_enable', { id, legacyStopped }),
+    permissionsRecover: (id) => invoke('permissions_recover', { id }),
+    onSessionWarning: (handler) =>
+      listen<{ id: string; message: string }>('session-warning', (e) => handler(e.payload)),
     editorOpenRemote: (sessionId, path) => invoke('editor_open_remote', { sessionId, path }),
     editorOpenLocal: () => invoke('editor_open_local'),
     editorSave: (id, text, patches) => invoke('editor_save', { id, text, patches }),

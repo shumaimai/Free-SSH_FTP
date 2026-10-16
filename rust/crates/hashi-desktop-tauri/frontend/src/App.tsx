@@ -178,6 +178,7 @@ export function App({ api }: { api: Api }) {
         }
       }),
       api.onCloseRequested(() => setQuitAsk(true)),
+      api.onSessionWarning((e) => setWarnings((old) => [...old, e.message].slice(-5))),
       api.onApproval((r) => setApprovals((old) => [...old, r])),
       api.onApprovalClosed((id) => setApprovals((old) => old.filter((r) => r.id !== id))),
       api.onChallenge((c) => setChallenges((old) => [...old, c])),
@@ -200,6 +201,7 @@ export function App({ api }: { api: Api }) {
 
   const [discard, setDiscard] = useState<string | null>(null);
   const [quitAsk, setQuitAsk] = useState(false);
+  const [warnings, setWarnings] = useState<string[]>([]);
 
   const closeTab = useCallback(
     (key: string, force = false) => {
@@ -401,6 +403,18 @@ export function App({ api }: { api: Api }) {
         </div>
         <div className={styles.work}>
         <div className={styles.main}>
+          {warnings.length > 0 && (
+            <div className={styles.banner} style={{ top: startupError ? 56 : 8 }}>
+              <MessageBar intent="warning">
+                <MessageBarBody>{warnings.join(' / ')}</MessageBarBody>
+                <MessageBarActions>
+                  <Button size="small" onClick={() => setWarnings([])}>
+                    閉じる
+                  </Button>
+                </MessageBarActions>
+              </MessageBar>
+            </div>
+          )}
           {startupError && (
             <div className={styles.banner}>
               <MessageBar intent="error">

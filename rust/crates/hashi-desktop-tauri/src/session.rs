@@ -141,15 +141,22 @@ impl Session {
     }
 
     /// 接続を閉じる前の後始末: ポート転送の停止と、進行中のファイル操作の終了待ち。
-    pub async fn shutdown_extras(&self) {
+    /// 完了を確認できなかったことは警告として返す（利用者へ伝える）。
+    pub async fn shutdown_extras(&self) -> Vec<String> {
+        let mut warnings = vec![];
         let mut forwards = self.forwards.lock().await;
         for mut entry in forwards.drain(..) {
-            let _ = tokio::time::timeout(Duration::from_secs(5), entry.handle.stop()).await;
+            match tokio::time::timeout(Duration::from_secs(5), entry.handle.stop()).await {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => warnings.push(format!("ポート転送の停止は未確認: {error}")),
+                Err(_) => warnings.push("ポート転送の停止がタイムアウトしました".to_owned()),
+            }
         }
         drop(forwards);
         if let Some(files) = self.files() {
-            files.shutdown().await;
+            warnings.extend(files.shutdown().await);
         }
+        warnings
     }
 
     pub fn files(&self) -> Option<Arc<Files>> {
@@ -161,10 +168,10 @@ impl Session {
     }
 
     /// 取消 → ファイル操作の終了待ち → 端末/接続の終了 → 受信タスクの回収。待ちには上限を置く。
-    pub async fn close(&self, registry: &Registry) {
+    pub async fn close(&self, registry: &Registry) -> Vec<String> {
         unbind(registry, &self.binding);
         // 接続を閉じる前に、ポート転送と進行中の転送（確定ACK・復元を含む）を終わらせる。
-        self.shutdown_extras().await;
+        let warnings = self.shutdown_extras().await;
         let _ = self.finish_log().await;
         self.cancel.cancel();
         if let Some(local) = self.local.clone() {
@@ -180,6 +187,7 @@ impl Session {
         }
         self.tracker.close();
         let _ = tokio::time::timeout(Duration::from_secs(8), self.tracker.wait()).await;
+        warnings
     }
 }
 
@@ -581,7 +589,9 @@ pub async fn session_connect(
             .await;
             unbind(&registry, &binding);
             // 接続を閉じる前に、ポート転送と進行中の転送を終わらせる。
-            session_ref.shutdown_extras().await;
+            for message in session_ref.shutdown_extras().await {
+                let _ = app.emit("session-warning", WarningEvent { id: id.clone(), message });
+            }
             let _ = session_ref.finish_log().await;
             let _ = tokio::time::timeout(Duration::from_secs(5), ssh.close()).await;
             outcome
@@ -655,8 +665,23 @@ pub async fn session_close(app: AppHandle, id: String) -> Result<(), String> {
         .map_err(|_| "セッション台帳が不正です")?
         .remove(&id);
     if let Some(session) = session {
-        session.close(&state.ai.registry).await;
+        for message in session.close(&state.ai.registry).await {
+            let _ = app.emit(
+                "session-warning",
+                WarningEvent {
+                    id: id.clone(),
+                    message,
+                },
+            );
+        }
         emit_state(&app, &id, "closed", "閉じました");
     }
     Ok(())
+}
+
+/// 終了時に完了を確認できなかったこと（権限の復元・ポート転送の停止など）を画面へ伝える。
+#[derive(serde::Serialize, Clone)]
+struct WarningEvent {
+    id: String,
+    message: String,
 }
