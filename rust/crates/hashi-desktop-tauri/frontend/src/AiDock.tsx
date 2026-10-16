@@ -228,7 +228,7 @@ export function AiDock({ api, targets }: Props) {
     return () => clearTimeout(timer);
   }, [api, base, service, setup, isUrlService]);
 
-  useEffect(() => endRef.current?.scrollIntoView({ block: 'end' }), [messages]);
+  useEffect(() => endRef.current?.scrollIntoView({ block: 'end' }), [messages, running]);
   // 終わった端末は共有対象から外す。
   useEffect(() => {
     setSelected((old) => old.filter((id) => targets.some((t) => t.sessionId === id)));
@@ -263,32 +263,38 @@ export function AiDock({ api, targets }: Props) {
     }
   };
 
+  // 応答のイベント（ai-delta / ai-done）は、命令の戻りより先に届くことがある。
+  // 「実行中」は命令を出す前に立て、終わりの通知（ai-done）だけが下ろす。後から立て直すと下ろせなくなる。
+  const abort = (error: unknown) => {
+    setRunning(false);
+    setMessages((old) => [...old, { role: 'error', text: String(error) }]);
+  };
+
   const send = async () => {
     const text = question.trim();
     if (!text || running) return;
+    setQuestion('');
+    setMessages((old) => [...old, { role: 'user', text }]);
+    setRunning(true);
     try {
       const result = await api.aiSend(text, selected, mode);
-      setMessages((old) => [...old, { role: 'user', text }]);
-      setQuestion('');
       if (result.preview !== null) {
+        // 送る前の確認。会話はまだ始まっていない。
+        setRunning(false);
         setPreview(result.preview);
-      } else {
-        setMessages((old) => [...old, { role: 'ai', text: '' }]);
-        setRunning(true);
       }
     } catch (error) {
-      setMessages((old) => [...old, { role: 'error', text: String(error) }]);
+      abort(error);
     }
   };
 
   const confirm = async (context: string) => {
     setPreview(null);
+    setRunning(true);
     try {
       await api.aiConfirm(context);
-      setMessages((old) => [...old, { role: 'ai', text: '' }]);
-      setRunning(true);
     } catch (error) {
-      setMessages((old) => [...old, { role: 'error', text: String(error) }]);
+      abort(error);
     }
   };
 
@@ -505,13 +511,18 @@ export function AiDock({ api, targets }: Props) {
             </div>
           ) : m.role === 'ai' ? (
             <div key={i} className={styles.bubbleAi}>
-              {m.text ? <Rich text={m.text} /> : <Caption1 className={styles.note}>考えています…</Caption1>}
+              {m.text ? <Rich text={m.text} /> : <Caption1 className={styles.note}>…</Caption1>}
             </div>
           ) : (
             <Caption1 key={i} className={m.role === 'error' ? styles.error : styles.note}>
               {m.text}
             </Caption1>
           ),
+        )}
+        {running && messages[messages.length - 1]?.role !== 'ai' && (
+          <div className={styles.bubbleAi}>
+            <Caption1 className={styles.note}>考えています…</Caption1>
+          </div>
         )}
         <div ref={endRef} />
       </div>
