@@ -26,6 +26,8 @@ fn main() {
             app::profile_save,
             app::profile_delete,
             app::pick_key_file,
+            app::appearance_get,
+            app::appearance_set,
             app::challenge_reply,
             session::session_open_local,
             session::session_connect,

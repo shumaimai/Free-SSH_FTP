@@ -6,6 +6,7 @@ import { makeStyles, mergeClasses } from '@fluentui/react-components';
 import type { Api } from './api';
 import type { SessionInfo } from './types';
 import { InputQueue } from './inputQueue';
+import { TERM_FONTS, termTheme, type Appearance } from './appearance';
 
 const useStyles = makeStyles({
   host: {
@@ -21,6 +22,7 @@ interface Props {
   api: Api;
   active: boolean;
   dark: boolean;
+  appearance: Appearance;
   /** 端末の大きさが決まってから呼ばれる。出力はsinkへ渡す。 */
   start: (
     size: { cols: number; rows: number },
@@ -30,39 +32,47 @@ interface Props {
   onError: (message: string) => void;
 }
 
-const TERMINAL_FONT =
-  '"Cascadia Mono", "Cascadia Code", Consolas, "BIZ UDGothic", "MS Gothic", "Noto Sans Mono CJK JP", monospace';
+const fontStack = (id: string) => (TERM_FONTS.find((f) => f.id === id) ?? TERM_FONTS[0]).stack;
 
-function palette(dark: boolean) {
-  return dark
-    ? { background: '#1b1b1f', foreground: '#e6e6e6', cursor: '#56ccb2', selectionBackground: '#3a5f7a' }
-    : { background: '#ffffff', foreground: '#1f1f1f', cursor: '#0f7b6c', selectionBackground: '#b7d7f0' };
-}
-
-export function TerminalView({ api, active, dark, start, onOpened, onError }: Props) {
+export function TerminalView({ api, active, dark, appearance, start, onOpened, onError }: Props) {
   const styles = useStyles();
   const host = useRef<HTMLDivElement>(null);
   const term = useRef<Terminal | null>(null);
+  const fitRef = useRef<FitAddon | null>(null);
+  const idRef = useRef<string | null>(null);
   // 親の再描画で関数が変わっても、マウント時の1回だけ開始する。
-  const latest = useRef({ start, onOpened, onError, dark });
-  latest.current = { start, onOpened, onError, dark };
+  const latest = useRef({ start, onOpened, onError, dark, appearance });
+  latest.current = { start, onOpened, onError, dark, appearance };
 
+  // 外観の変更は、作り直さずに反映する。フォントが変わると1文字の大きさも変わるので、列数・行数を取り直して伝える。
   useEffect(() => {
-    if (term.current) term.current.options.theme = palette(dark);
-  }, [dark]);
+    const terminal = term.current;
+    if (!terminal) return;
+    terminal.options.theme = termTheme(appearance.termScheme, dark, appearance.accent);
+    terminal.options.fontFamily = fontStack(appearance.termFont);
+    terminal.options.fontSize = appearance.termSize;
+    const timer = window.setTimeout(() => {
+      fitRef.current?.fit();
+      const id = idRef.current;
+      if (id) void api.resize(id, terminal.cols, terminal.rows).catch(() => {});
+    }, 30);
+    return () => window.clearTimeout(timer);
+  }, [api, dark, appearance]);
 
   useEffect(() => {
     const element = host.current;
     if (!element) return;
+    const first = latest.current.appearance;
     const terminal = new Terminal({
-      fontFamily: TERMINAL_FONT,
-      fontSize: 14,
+      fontFamily: fontStack(first.termFont),
+      fontSize: first.termSize,
       cursorBlink: true,
       scrollback: 5000,
-      theme: palette(latest.current.dark),
+      theme: termTheme(first.termScheme, latest.current.dark, first.accent),
     });
     term.current = terminal;
     const fit = new FitAddon();
+    fitRef.current = fit;
     terminal.loadAddon(fit);
     terminal.open(element);
     fit.fit();
@@ -89,6 +99,7 @@ export function TerminalView({ api, active, dark, start, onOpened, onError }: Pr
       })
       .then((info) => {
         id = info.id;
+        idRef.current = info.id;
         if (alive) latest.current.onOpened(info);
       })
       .catch((error) => latest.current.onError(String(error)));
@@ -99,6 +110,8 @@ export function TerminalView({ api, active, dark, start, onOpened, onError }: Pr
       input.dispose();
       terminal.dispose();
       term.current = null;
+      fitRef.current = null;
+      idRef.current = null;
     };
     // 端末は1つの画面につき1回だけ作る。
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -113,6 +126,6 @@ export function TerminalView({ api, active, dark, start, onOpened, onError }: Pr
   return <div
       ref={host}
       className={mergeClasses(styles.host, !active && styles.hidden)}
-      style={{ backgroundColor: palette(dark).background }}
+      style={{ backgroundColor: termTheme(appearance.termScheme, dark, appearance.accent).background }}
     />;
 }

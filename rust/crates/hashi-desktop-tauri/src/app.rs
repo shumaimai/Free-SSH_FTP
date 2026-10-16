@@ -5,7 +5,7 @@ use hashi_storage::{
     config::{Profile, Snapshot, Store},
     paths::Channel,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     sync::{
@@ -204,6 +204,68 @@ pub fn challenge_reply(
     Ok(())
 }
 
+/// 外観の設定。値は固定の候補のidだけで、画面（appearance.ts）と同じ一覧を持つ。
+const MODES: [&str; 3] = ["system", "light", "dark"];
+const ACCENTS: [&str; 7] = ["teal", "blue", "green", "purple", "rose", "orange", "slate"];
+const UI_FONTS: [&str; 5] = ["system", "yugothic", "meiryo", "biz", "noto"];
+const TERM_FONTS: [&str; 5] = ["cascadia", "consolas", "bizud", "msgothic", "courier"];
+const TERM_SCHEMES: [&str; 5] = ["auto", "campbell", "onedark", "solarized", "light"];
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Appearance {
+    pub mode: String,
+    pub accent: String,
+    pub ui_font: String,
+    pub term_font: String,
+    pub term_size: u32,
+    pub term_scheme: String,
+}
+
+impl Appearance {
+    /// 候補にない値・範囲外のサイズは受け付けない。画面が送った文字列をそのまま保存しない。
+    pub fn validate(&self) -> Result<(), String> {
+        let ok = MODES.contains(&self.mode.as_str())
+            && ACCENTS.contains(&self.accent.as_str())
+            && UI_FONTS.contains(&self.ui_font.as_str())
+            && TERM_FONTS.contains(&self.term_font.as_str())
+            && TERM_SCHEMES.contains(&self.term_scheme.as_str())
+            && (10..=24).contains(&self.term_size);
+        if ok {
+            Ok(())
+        } else {
+            Err("外観の設定値が不正です".into())
+        }
+    }
+}
+
+#[tauri::command]
+pub fn appearance_get(state: State<'_, AppState>) -> Result<Option<Appearance>, String> {
+    let snapshot = state.snapshot.lock().map_err(|_| "状態が不正です")?;
+    // 壊れた保存値は無いものとして扱い、画面は既定値で開く（上書きもしない）。
+    Ok(snapshot
+        .settings
+        .get("appearance")
+        .and_then(|value| serde_json::from_value::<Appearance>(value.clone()).ok())
+        .filter(|appearance| appearance.validate().is_ok()))
+}
+
+#[tauri::command]
+pub fn appearance_set(state: State<'_, AppState>, appearance: Appearance) -> Result<(), String> {
+    state.writable()?;
+    appearance.validate()?;
+    let value = serde_json::to_value(&appearance).map_err(|error| error.to_string())?;
+    let snapshot = state
+        .store
+        .transact(|snapshot| {
+            snapshot.settings.insert("appearance".into(), value);
+            Ok(())
+        })
+        .map_err(|error| error.to_string())?;
+    *state.snapshot.lock().map_err(|_| "状態が不正です")? = snapshot;
+    Ok(())
+}
+
 /// 全セッションを閉じる。接続の終了待ちには上限を置く。
 pub async fn shutdown(app: &AppHandle) {
     let state = app.state::<AppState>();
@@ -214,5 +276,50 @@ pub async fn shutdown(app: &AppHandle) {
         .unwrap_or_default();
     for session in sessions {
         session.close().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn valid() -> Appearance {
+        Appearance {
+            mode: "system".into(),
+            accent: "teal".into(),
+            ui_font: "system".into(),
+            term_font: "cascadia".into(),
+            term_size: 14,
+            term_scheme: "auto".into(),
+        }
+    }
+
+    #[test]
+    fn appearance_accepts_only_known_ids_and_sizes() {
+        assert!(valid().validate().is_ok());
+        for bad in [
+            Appearance {
+                mode: "x".into(),
+                ..valid()
+            },
+            Appearance {
+                accent: "#ff0000".into(),
+                ..valid()
+            },
+            Appearance {
+                ui_font: "evil; }".into(),
+                ..valid()
+            },
+            Appearance {
+                term_size: 9,
+                ..valid()
+            },
+            Appearance {
+                term_size: 25,
+                ..valid()
+            },
+        ] {
+            assert!(bad.validate().is_err());
+        }
     }
 }

@@ -11,6 +11,7 @@ import type {
 import { emptyProfile } from './types';
 
 export function mockApi(): Api {
+  let stored: import('./appearance').Appearance | null = null;
   let profiles: Profile[] = [
     { ...emptyProfile(), name: '本番サーバー', host: 'prod.example.com', username: 'deploy' },
     {
@@ -53,6 +54,10 @@ export function mockApi(): Api {
     profileDelete: async (index) => {
       profiles = profiles.filter((_, i) => i !== index);
       return profiles;
+    },
+    appearanceGet: async () => stored,
+    appearanceSet: async (a) => {
+      stored = a;
     },
     pickKeyFile: async () => 'C:\\Users\\me\\.ssh\\id_ed25519',
     challengeReply: async (challengeId, answer: ChallengeAnswer) => {

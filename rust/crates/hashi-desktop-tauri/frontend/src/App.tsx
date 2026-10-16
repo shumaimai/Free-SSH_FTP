@@ -12,10 +12,8 @@ import {
   TabList,
   Text,
   tokens,
-  webDarkTheme,
-  webLightTheme,
 } from '@fluentui/react-components';
-import { Dismiss12Regular, Home20Regular, WindowConsole20Regular, PlugConnected20Regular } from '@fluentui/react-icons';
+import { Dismiss12Regular, Home20Regular, Settings20Regular, WindowConsole20Regular, PlugConnected20Regular } from '@fluentui/react-icons';
 import type { Api } from './api';
 import type { Challenge, ChallengeAnswer, Profile, SessionInfo, SessionState } from './types';
 import { emptyProfile } from './types';
@@ -23,6 +21,8 @@ import { Home } from './Home';
 import { ProfileDialog } from './ProfileDialog';
 import { ChallengeDialog } from './ChallengeDialog';
 import { TerminalView } from './TerminalView';
+import { SettingsDialog } from './SettingsDialog';
+import { DEFAULT_APPEARANCE, UI_FONTS, fluentTheme, sanitize, type Appearance } from './appearance';
 
 const useStyles = makeStyles({
   shell: {
@@ -90,7 +90,20 @@ function useDark(): boolean {
 
 export function App({ api }: { api: Api }) {
   const styles = useStyles();
-  const dark = useDark();
+  const systemDark = useDark();
+  const [appearance, setAppearance] = useState<Appearance>(DEFAULT_APPEARANCE);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const dark = appearance.mode === 'dark' || (appearance.mode === 'system' && systemDark);
+  const theme = useMemo(() => {
+    const base = fluentTheme(dark, appearance.accent);
+    const font = (UI_FONTS.find((f) => f.id === appearance.uiFont) ?? UI_FONTS[0]).stack;
+    return { ...base, fontFamilyBase: font };
+  }, [dark, appearance.accent, appearance.uiFont]);
+  const changeAppearance = (value: Appearance) => {
+    const next = sanitize(value);
+    setAppearance(next);
+    void api.appearanceSet(next).catch((e) => setNotice(String(e)));
+  };
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [startupError, setStartupError] = useState<string | null>(null);
   const [tabs, setTabs] = useState<TabInfo[]>([]);
@@ -103,6 +116,7 @@ export function App({ api }: { api: Api }) {
   const closed = useRef(new Set<string>());
 
   useEffect(() => {
+    void api.appearanceGet().then((a) => a && setAppearance(sanitize(a)));
     void api.profilesList().then((r) => {
       setProfiles(r.profiles);
       setStartupError(r.error);
@@ -193,7 +207,7 @@ export function App({ api }: { api: Api }) {
   };
 
   return (
-    <FluentProvider theme={dark ? webDarkTheme : webLightTheme} style={{ height: '100vh' }}>
+    <FluentProvider theme={theme} style={{ height: '100vh' }}>
       <div className={styles.shell}>
         <div className={styles.bar}>
           <span className={styles.brand}>Hashi</span>
@@ -239,6 +253,12 @@ export function App({ api }: { api: Api }) {
             ))}
           </TabList>
           <div className={styles.grow} />
+          <Button
+            appearance="subtle"
+            aria-label="外観の設定"
+            icon={<Settings20Regular />}
+            onClick={() => setSettingsOpen(true)}
+          />
         </div>
         <div className={styles.main}>
           {startupError && (
@@ -282,6 +302,7 @@ export function App({ api }: { api: Api }) {
                 api={api}
                 active={active === tab.key}
                 dark={dark}
+                appearance={appearance}
                 start={(size, sink) =>
                   tab.kind === 'local'
                     ? api.openLocal(size.cols, size.rows, sink)
@@ -320,6 +341,13 @@ export function App({ api }: { api: Api }) {
         }}
         onClose={() => setDialog(null)}
         onPickKey={() => api.pickKeyFile()}
+      />
+      <SettingsDialog
+        open={settingsOpen}
+        value={appearance}
+        dark={dark}
+        onChange={changeAppearance}
+        onClose={() => setSettingsOpen(false)}
       />
       <ChallengeDialog challenge={challenges[0] ?? null} error={challengeError} onAnswer={(a) => void answer(a)} />
     </FluentProvider>

@@ -1,4 +1,5 @@
 // 画面とRust側の境界。本番はTauriのcommand/eventだけを使い、試験用(VITE_MOCK)は偽の実装へ差し替える。
+import type { Appearance } from './appearance';
 import type {
   Challenge,
   ChallengeAnswer,
@@ -13,6 +14,8 @@ export interface Api {
   profileSave(index: number | null, profile: Profile): Promise<Profile[]>;
   profileDelete(index: number): Promise<Profile[]>;
   pickKeyFile(): Promise<string | null>;
+  appearanceGet(): Promise<Appearance | null>;
+  appearanceSet(appearance: Appearance): Promise<void>;
   challengeReply(challengeId: string, answer: ChallengeAnswer): Promise<void>;
   openLocal(cols: number, rows: number, sink: DataSink): Promise<SessionInfo>;
   connect(index: number, cols: number, rows: number, sink: DataSink): Promise<SessionInfo>;
@@ -36,6 +39,8 @@ async function tauriApi(): Promise<Api> {
     profileSave: (index, profile) => invoke('profile_save', { index, profile }),
     profileDelete: (index) => invoke('profile_delete', { index }),
     pickKeyFile: () => invoke('pick_key_file'),
+    appearanceGet: () => invoke('appearance_get'),
+    appearanceSet: (appearance) => invoke('appearance_set', { appearance }),
     challengeReply: (challengeId, answer) => invoke('challenge_reply', { challengeId, answer }),
     openLocal: (cols, rows, sink) =>
       invoke('session_open_local', { cols, rows, onData: channelFor(sink) }),
