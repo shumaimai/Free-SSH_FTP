@@ -166,15 +166,13 @@ export function AiDock({ api, targets }: Props) {
   const refresh = useCallback(async () => {
     const s = await api.aiStatus();
     setStatus(s);
-    if (s.connected) setSetup(false);
-    else {
-      const saved = s.saved;
-      if (saved?.service) setService(saved.service);
-      if (saved?.base !== undefined) setBase(saved.base);
-      if (saved?.protocol) setProtocol(saved.protocol);
-      if (saved?.use_tools !== undefined) setUseTools(saved.use_tools);
-      setSetup(true);
-    }
+    // 接続済みでも、設定を開き直したときに今のサービスが選ばれているよう、前回の設定を入れておく。
+    const saved = s.saved;
+    if (saved?.service) setService(saved.service);
+    if (saved?.base !== undefined) setBase(saved.base);
+    if (saved?.protocol) setProtocol(saved.protocol);
+    if (saved?.use_tools !== undefined) setUseTools(saved.use_tools);
+    setSetup(!s.connected);
     return s;
   }, [api]);
 

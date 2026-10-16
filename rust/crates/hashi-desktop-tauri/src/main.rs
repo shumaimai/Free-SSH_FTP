@@ -45,6 +45,7 @@ fn main() {
             app::profiles_list,
             app::profile_save,
             app::profile_delete,
+            app::client_log,
             import::import_legacy_inspect,
             import::import_bundle_pick,
             import::import_bundle_unlock,

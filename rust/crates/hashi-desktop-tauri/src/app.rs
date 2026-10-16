@@ -118,6 +118,33 @@ pub fn start_challenge_pump(app: AppHandle) {
     });
 }
 
+/// 画面（WebView）で起きた例外を、設定フォルダの`client-errors.log`へ残す（白い画面などの原因調査用）。
+/// 画面が渡した文字列は長さを切り、ファイルは小さく保つ。秘密を書かないよう、画面側は例外の文面だけを渡す。
+#[tauri::command]
+pub fn client_log(message: String) -> Result<(), String> {
+    use std::io::Write;
+    const LIMIT: u64 = 64 * 1024;
+    let root = hashi_storage::paths::config_root(Channel::Preview).map_err(|e| e.to_string())?;
+    let path = root.join("client-errors.log");
+    let rotate = std::fs::metadata(&path)
+        .map(|m| m.len() > LIMIT)
+        .unwrap_or(false);
+    if rotate {
+        let _ = std::fs::rename(&path, root.join("client-errors.old.log"));
+    }
+    let text: String = message.chars().take(4000).collect();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| e.to_string())?;
+    writeln!(file, "[{now}] {text}").map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn profiles_list(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     let snapshot = state.snapshot.lock().map_err(|_| "状態が不正です")?;
