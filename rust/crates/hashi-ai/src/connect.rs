@@ -192,15 +192,9 @@ pub enum Outcome {
     NeedModel(String, Vec<String>),
 }
 
-/// 「接続する」: モデル一覧の取得、モデルの決定、toolsなしの応答確認、キーの保存。
-/// 確認で失敗したら何も保存しない。キーやURLの誤り（401/403）は原因をそのまま返す。
-pub fn connect(
-    probe: ApiProvider,
-    typed_model: &str,
-    key_id: &str,
-    persist: bool,
-    secrets: &EncryptedSecrets,
-) -> Result<Outcome, String> {
+/// 接続の確認だけ行う: モデル一覧の取得、モデルの決定、toolsなしの応答確認。キーは保存しない。
+/// キーやURLの誤り（401/403）は原因をそのまま返す。
+pub fn verify(probe: ApiProvider, typed_model: &str) -> Result<Outcome, String> {
     let cancel = CancellationToken::new();
     let raw = probe.models(&cancel);
     let raw_models = raw.as_ref().cloned().unwrap_or_default();
@@ -229,7 +223,7 @@ pub fn connect(
                     Err(message)
                 } else {
                     Ok(Outcome::NeedModel(
-                        format!("モデル一覧を取得できませんでした（{message}）。モデル名を入力して、もう一度「接続する」を押してください。"),
+                        format!("モデル一覧を取得できませんでした（{message}）。モデル名を入力して、もう一度確認してください。"),
                         models,
                     ))
                 };
@@ -269,23 +263,38 @@ pub fn connect(
         let auth = message.contains("HTTP 401") || message.contains("HTTP 403");
         return if typed.is_empty() && !auth {
             Ok(Outcome::NeedModel(
-                format!("自動で選んだモデル「{model}」で確認に失敗しました（{message}）。別のモデル名を選ぶか入力して、もう一度「接続する」を押してください。"),
+                format!("自動で選んだモデル「{model}」で確認に失敗しました（{message}）。別のモデル名を選ぶか入力して、もう一度確認してください。"),
                 models,
             ))
         } else {
             Err(message)
         };
     }
-    secrets
-        .set(
-            key_id,
-            persist
-                .then(|| provider.key().to_owned())
-                .as_deref()
-                .filter(|v| !v.is_empty()),
-        )
-        .map_err(|_| "APIキーを保存できませんでした。もう一度お試しください。".to_owned())?;
     Ok(Outcome::Connected(Box::new(provider), models))
+}
+
+/// 「接続する」: 確認に成功したらキーを保存する（保存しない指定なら保存済みのキーを消す）。
+/// 確認で失敗したら何も保存しない。
+pub fn connect(
+    probe: ApiProvider,
+    typed_model: &str,
+    key_id: &str,
+    persist: bool,
+    secrets: &EncryptedSecrets,
+) -> Result<Outcome, String> {
+    let outcome = verify(probe, typed_model)?;
+    if let Outcome::Connected(provider, _) = &outcome {
+        secrets
+            .set(
+                key_id,
+                persist
+                    .then(|| provider.key().to_owned())
+                    .as_deref()
+                    .filter(|v| !v.is_empty()),
+            )
+            .map_err(|_| "APIキーを保存できませんでした。もう一度お試しください。".to_owned())?;
+    }
+    Ok(outcome)
 }
 
 #[cfg(test)]

@@ -13,8 +13,9 @@ import type {
   FileJob,
   Listing,
   TransferMode,
-  AiConnectArgs,
-  AiConnectResult,
+  AiModelEntry,
+  AiModelsList,
+  AiCheckResult,
   AiServiceInfo,
   AiStatus,
   ApprovalRequest,
@@ -55,8 +56,13 @@ export interface Api {
   aiStatus(): Promise<AiStatus>;
   aiHasKey(service: string, base: string): Promise<boolean>;
   aiForget(service: string, base: string): Promise<void>;
-  aiConnect(args: AiConnectArgs): Promise<AiConnectResult>;
-  aiSwitchModel(model: string): Promise<void>;
+  aiModelsList(): Promise<AiModelsList>;
+  aiModelSave(entry: AiModelEntry, key: string): Promise<AiModelsList>;
+  aiModelDelete(id: string): Promise<AiModelsList>;
+  aiModelUse(id: string): Promise<{ model: string }>;
+  aiModelCheck(entry: AiModelEntry, key: string): Promise<AiCheckResult>;
+  aiModelCandidates(entry: AiModelEntry, key: string): Promise<string[]>;
+  onAiModelsChanged(handler: () => void): Promise<() => void>;
   aiClear(): Promise<void>;
   aiStop(): Promise<void>;
   aiSend(question: string, targets: string[], mode: ShareMode): Promise<{ preview: string | null }>;
@@ -166,8 +172,13 @@ async function tauriApi(): Promise<Api> {
     aiStatus: () => invoke('ai_status'),
     aiHasKey: (service, base) => invoke('ai_has_key', { service, base }),
     aiForget: (service, base) => invoke('ai_forget', { service, base }),
-    aiConnect: (args) => invoke('ai_connect', { args }),
-    aiSwitchModel: (model) => invoke('ai_switch_model', { model }),
+    aiModelsList: () => invoke('ai_models_list'),
+    aiModelSave: (entry, key) => invoke('ai_model_save', { entry, key }),
+    aiModelDelete: (id) => invoke('ai_model_delete', { id }),
+    aiModelUse: (id) => invoke('ai_model_use', { id }),
+    aiModelCheck: (entry, key) => invoke('ai_model_check', { entry, key }),
+    aiModelCandidates: (entry, key) => invoke('ai_model_candidates', { entry, key }),
+    onAiModelsChanged: (handler) => listen('ai-models-changed', () => handler()),
     aiClear: () => invoke('ai_clear'),
     aiStop: () => invoke('ai_stop'),
     aiSend: (question, targets, mode) => invoke('ai_send', { question, targets, mode }),

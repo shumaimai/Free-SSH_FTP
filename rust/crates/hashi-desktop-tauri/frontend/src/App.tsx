@@ -34,6 +34,7 @@ import { ProfileDialog } from './ProfileDialog';
 import { ChallengeDialog } from './ChallengeDialog';
 import { TerminalView } from './TerminalView';
 import { SettingsDialog } from './SettingsDialog';
+import { AiModelsPage } from './AiModelsPage';
 import { AiDock } from './AiDock';
 import { FileDock } from './FileDock';
 import { SnippetBar } from './SnippetBar';
@@ -106,7 +107,7 @@ const useStyles = makeStyles({
 
 interface TabInfo {
   key: string;
-  kind: 'local' | 'ssh' | 'editor';
+  kind: 'local' | 'ssh' | 'editor' | 'aimodels';
   index?: number;
   label: string;
   sessionId?: string;
@@ -157,6 +158,8 @@ export function App({ api }: { api: Api }) {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [startupError, setStartupError] = useState<string | null>(null);
   const [tabs, setTabs] = useState<TabInfo[]>([]);
+  const tabsRef = useRef<TabInfo[]>([]);
+  tabsRef.current = tabs;
   const [active, setActive] = useState<string>('home');
   const [states, setStates] = useState<Record<string, { state: SessionState; message: string }>>({});
   const [notice, setNotice] = useState('');
@@ -205,6 +208,13 @@ export function App({ api }: { api: Api }) {
     setTabs((old) => [...old, { ...tab, key }]);
     setActive(key);
   }, []);
+
+  // AIモデルの管理ページは1つだけ開く。すでにあればそのタブへ移る。
+  const openAiModels = useCallback(() => {
+    const existing = tabsRef.current.find((t) => t.kind === 'aimodels');
+    if (existing) setActive(existing.key);
+    else openTab({ kind: 'aimodels', label: 'AIモデル' });
+  }, [openTab]);
 
   const [discard, setDiscard] = useState<string | null>(null);
   const [quitAsk, setQuitAsk] = useState(false);
@@ -327,13 +337,15 @@ export function App({ api }: { api: Api }) {
                     <PlugConnected20Regular />
                   ) : tab.kind === 'editor' ? (
                     <DocumentEdit20Regular />
+                  ) : tab.kind === 'aimodels' ? (
+                    <Bot20Regular />
                   ) : (
                     <WindowConsole20Regular />
                   )
                 }
               >
                 <span style={{ display: 'inline-flex', alignItems: 'center' }}>
-                  {tab.kind !== 'editor' && (
+                  {tab.kind !== 'editor' && tab.kind !== 'aimodels' && (
                     <span
                       style={{
                         width: 8,
@@ -385,6 +397,9 @@ export function App({ api }: { api: Api }) {
                 </MenuItem>
                 <MenuItem icon={<Key20Regular />} onClick={() => setKeygenOpen(true)}>
                   SSH鍵を作る...
+                </MenuItem>
+                <MenuItem icon={<Bot20Regular />} onClick={openAiModels}>
+                  AIモデルの管理
                 </MenuItem>
                 <MenuItem icon={<Bot20Regular />} onClick={() => setExternalOpen(true)}>
                   外部連携（MCP）...
@@ -452,7 +467,11 @@ export function App({ api }: { api: Api }) {
               key={tab.key}
               className={mergeClasses(styles.pane, styles.paneCol, active !== tab.key && styles.paneHidden)}
             >
-              {tab.kind === 'editor' && tab.doc ? (
+              {tab.kind === 'aimodels' ? (
+                <ErrorBoundary>
+                  <AiModelsPage api={api} />
+                </ErrorBoundary>
+              ) : tab.kind === 'editor' && tab.doc ? (
                 <EditorPane
                   api={api}
                   doc={tab.doc}
@@ -543,7 +562,7 @@ export function App({ api }: { api: Api }) {
             </div>
             <div style={{ height: 'calc(100% - 40px)', minHeight: 0, display: dockTab === 'ai' ? 'block' : 'none' }}>
               <ErrorBoundary>
-                <AiDock api={api} targets={shareTargets} />
+                <AiDock api={api} targets={shareTargets} onManage={openAiModels} />
               </ErrorBoundary>
             </div>
           </aside>

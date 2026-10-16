@@ -84,21 +84,36 @@ export interface AiStatus {
   saved: { service?: string; base?: string; model?: string; protocol?: string; use_tools?: boolean } | null;
 }
 
-export interface AiConnectArgs {
+/** 登録したAIモデル1件。キーは含まない。 */
+export interface AiModelEntry {
+  id: string;
+  name: string;
   service: string;
   base: string;
-  key: string;
+  /** 空なら使うときに一覧から選ぶ。 */
   model: string;
   protocol: string;
   useTools: boolean;
-  persist: boolean;
+  resolved?: string;
 }
-
-export interface AiConnectResult {
-  kind: 'connected' | 'need_model';
+export interface AiModelView extends AiModelEntry {
+  label: string;
+  /** キーが要らない、または保存済み。 */
+  hasKey: boolean;
+}
+export interface AiModelsList {
+  entries: AiModelView[];
+  active: string | null;
+  warning: string | null;
+}
+export interface AiCheckResult {
+  ok: boolean;
   message: string;
   model: string | null;
   models: string[];
+}
+export function emptyAiModel(): AiModelEntry {
+  return { id: '', name: '', service: 'openai', base: '', model: '', protocol: 'auto', useTools: true };
 }
 
 export type ShareMode = 'consult' | 'confirm' | 'auto';

@@ -3,7 +3,7 @@
 use crate::app::AppState;
 use hashi_ai::{
     api::ApiProvider,
-    connect::{self, Outcome, PROTOCOLS, SERVICES},
+    connect::{self, PROTOCOLS, SERVICES},
     conversation::Conversation,
 };
 use hashi_core::broker::{Action, ApprovalRequest, Broker, Mode, Registry};
@@ -11,7 +11,7 @@ use hashi_storage::{
     paths::Channel,
     secrets::{EncryptedSecrets, Namespace},
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
@@ -29,26 +29,25 @@ pub struct AiState {
     pub broker: Arc<Broker>,
     approval_rx: Mutex<Option<mpsc::Receiver<ApprovalRequest>>>,
     approvals: Mutex<HashMap<String, ApprovalRequest>>,
-    provider: Mutex<Option<Arc<ApiProvider>>>,
+    pub(crate) provider: Mutex<Option<Arc<ApiProvider>>>,
     /// 接続時のサービスid・入力URL・モデル一覧。モデル切替で同じ接続先を再構築するのに使う。
-    conn: Mutex<Option<Conn>>,
-    conversation: Mutex<Option<Arc<tokio::sync::Mutex<Conversation>>>>,
-    running: Mutex<Option<CancellationToken>>,
+    pub(crate) conn: Mutex<Option<Conn>>,
+    pub(crate) conversation: Mutex<Option<Arc<tokio::sync::Mutex<Conversation>>>>,
+    pub(crate) running: Mutex<Option<CancellationToken>>,
     /// 確認待ちの送信（質問・実行モード・対象）。確認されるまで実行モードは与えない。
-    preview: Mutex<Option<Pending>>,
-    connecting: Mutex<bool>,
+    pub(crate) preview: Mutex<Option<Pending>>,
+    pub(crate) connecting: Mutex<bool>,
 }
 
-struct Pending {
+pub(crate) struct Pending {
     question: String,
     mode: Mode,
     ids: Vec<(String, u64)>,
 }
 
 #[derive(Clone)]
-struct Conn {
+pub(crate) struct Conn {
     service: String,
-    base: String,
     models: Vec<String>,
 }
 
@@ -81,7 +80,7 @@ impl AiState {
         }
     }
 
-    fn cancel_running(&self) {
+    pub(crate) fn cancel_running(&self) {
         if let Some(token) = self.running.lock().ok().and_then(|mut r| r.take()) {
             token.cancel();
         }
@@ -92,7 +91,7 @@ impl AiState {
         }
     }
 
-    fn new_conversation(&self) {
+    pub(crate) fn new_conversation(&self) {
         self.cancel_running();
         if let Ok(mut preview) = self.preview.lock() {
             *preview = None;
@@ -115,7 +114,7 @@ impl AiState {
     }
 }
 
-fn secrets() -> Result<EncryptedSecrets, String> {
+pub(crate) fn secrets() -> Result<EncryptedSecrets, String> {
     EncryptedSecrets::new(Channel::Preview, Namespace::Ai).map_err(|e| e.to_string())
 }
 
@@ -289,30 +288,7 @@ pub async fn ai_forget(service: String, base: String) -> Result<(), String> {
     .map_err(|_| "処理に失敗しました".to_owned())?
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConnectArgs {
-    service: String,
-    base: String,
-    /// 空なら保存済みのキーを使う。
-    key: String,
-    model: String,
-    protocol: String,
-    use_tools: bool,
-    persist: bool,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConnectResult {
-    /// "connected" か "need_model"。
-    kind: &'static str,
-    message: String,
-    model: Option<String>,
-    models: Vec<String>,
-}
-
-fn load_saved_key(service: &connect::Service, base: &str) -> Result<String, String> {
+pub(crate) fn load_saved_key(service: &connect::Service, base: &str) -> Result<String, String> {
     let id = connect::key_id(connect::kind_for(service, base), base)?;
     Ok(secrets()?
         .get(&id)
@@ -320,7 +296,7 @@ fn load_saved_key(service: &connect::Service, base: &str) -> Result<String, Stri
         .unwrap_or_default())
 }
 
-fn save_connection(
+pub(crate) fn save_connection(
     state: &AppState,
     service: &str,
     base: &str,
@@ -348,10 +324,9 @@ fn save_connection(
     Ok(())
 }
 
-fn adopt(state: &AppState, service: &str, base: &str, provider: ApiProvider, models: Vec<String>) {
+pub(crate) fn adopt(state: &AppState, service: &str, provider: ApiProvider, models: Vec<String>) {
     let conn = Conn {
         service: service.to_owned(),
-        base: base.to_owned(),
         models,
     };
     state.ai.cancel_running();
@@ -364,166 +339,9 @@ fn adopt(state: &AppState, service: &str, base: &str, provider: ApiProvider, mod
     state.ai.new_conversation();
 }
 
-/// 「接続する」。モデル一覧の取得・応答の確認・設定とキーの保存を1回で行う。
-#[tauri::command]
-pub async fn ai_connect(
-    state: State<'_, AppState>,
-    args: ConnectArgs,
-) -> Result<ConnectResult, String> {
-    state.writable()?;
-    {
-        let mut busy = state.ai.connecting.lock().map_err(|_| "状態が不正です")?;
-        if *busy {
-            return Err("接続の確認中です".into());
-        }
-        *busy = true;
-    }
-    struct Release<'a>(&'a AppState);
-    impl Drop for Release<'_> {
-        fn drop(&mut self) {
-            if let Ok(mut busy) = self.0.ai.connecting.lock() {
-                *busy = false;
-            }
-        }
-    }
-    let _release = Release(&state);
-    let service = connect::service(&args.service).ok_or("サービスが不正です")?;
-    let base = connect::effective_base(service, &args.base);
-    let typed_model = args.model.trim().to_owned();
-    let mut key = args.key.trim().to_owned();
-    let (persist, protocol, use_tools) = (args.persist, args.protocol.clone(), args.use_tools);
-    let base_for_job = args.base.clone();
-    let outcome = tokio::task::spawn_blocking(move || {
-        if key.is_empty() && service.needs_key {
-            key = load_saved_key(service, &base)?;
-        }
-        let probe = connect::build(
-            service,
-            &base_for_job,
-            &key,
-            &typed_model,
-            &protocol,
-            use_tools,
-        )?;
-        let id = connect::key_id(&probe.kind, &probe.base)?;
-        connect::connect(
-            probe,
-            &typed_model,
-            &id,
-            persist && service.needs_key,
-            &secrets()?,
-        )
-    })
-    .await
-    .map_err(|_| "処理に失敗しました".to_owned())??;
-    match outcome {
-        Outcome::NeedModel(message, models) => Ok(ConnectResult {
-            kind: "need_model",
-            message,
-            model: None,
-            models,
-        }),
-        Outcome::Connected(provider, models) => {
-            save_connection(&state, &args.service, &args.base, &provider)?;
-            let model = provider.model.clone();
-            adopt(&state, &args.service, &args.base, *provider, models.clone());
-            Ok(ConnectResult {
-                kind: "connected",
-                message: String::new(),
-                model: Some(model),
-                models,
-            })
-        }
-    }
-}
-
 /// 起動時に前回の接続を読み戻す。通信はせず、保存キーが読めれば会話できる状態にする。
 pub fn restore(app: &AppHandle) {
-    let state = app.state::<AppState>();
-    let Some(saved) = state
-        .snapshot
-        .lock()
-        .ok()
-        .and_then(|s| s.settings.get("ai_connection").cloned())
-    else {
-        return;
-    };
-    let (Some(service_id), Some(model)) = (saved["service"].as_str(), saved["model"].as_str())
-    else {
-        return;
-    };
-    let Some(service) = connect::service(service_id) else {
-        return;
-    };
-    let typed = saved["base"].as_str().unwrap_or_default();
-    let base = connect::effective_base(service, typed);
-    let key = if service.needs_key {
-        match load_saved_key(service, &base) {
-            Ok(key) if !key.is_empty() => key,
-            _ => return,
-        }
-    } else {
-        String::new()
-    };
-    let protocol = saved["protocol"].as_str().unwrap_or("auto");
-    let use_tools = saved["use_tools"].as_bool().unwrap_or(true);
-    if let Ok(mut provider) = connect::build(service, typed, &key, model, protocol, use_tools) {
-        provider.auto_protocol = saved["protocol_auto"].as_bool().unwrap_or(false);
-        adopt(&state, service_id, typed, provider, vec![]);
-    }
-}
-
-/// モデルを切り替える。通信はせず、会話は新しくする。
-#[tauri::command]
-pub async fn ai_switch_model(state: State<'_, AppState>, model: String) -> Result<(), String> {
-    state.writable()?;
-    let current = state
-        .ai
-        .provider
-        .lock()
-        .map_err(|_| "状態が不正です")?
-        .clone()
-        .ok_or("AIは未接続です")?;
-    let conn = state
-        .ai
-        .conn
-        .lock()
-        .map_err(|_| "状態が不正です")?
-        .clone()
-        .ok_or("AIは未接続です")?;
-    let model = model.trim().to_owned();
-    if model.is_empty() {
-        return Err("モデルを指定してください".into());
-    }
-    // 方式を利用者が選んでいないなら、切り替え先のモデルに合う方式を一覧から選び直す（取得できなければ名前で決める）。
-    let protocol = if current.auto_protocol {
-        let probe = current.clone();
-        let listed = tokio::task::spawn_blocking(move || {
-            probe
-                .models(&tokio_util::sync::CancellationToken::new())
-                .unwrap_or_default()
-        })
-        .await
-        .unwrap_or_default();
-        connect::protocol_from_endpoints(&model, &listed)
-            .unwrap_or("auto")
-            .to_owned()
-    } else {
-        current.protocol.clone()
-    };
-    let mut provider = ApiProvider::new(
-        &current.kind,
-        &model,
-        current.key(),
-        Some(&current.base),
-        current.use_tools,
-        &protocol,
-    )
-    .map_err(|e| e.to_string())?;
-    provider.auto_protocol = current.auto_protocol;
-    save_connection(&state, &conn.service, &conn.base, &provider)?;
-    adopt(&state, &conn.service, &conn.base, provider, conn.models);
-    Ok(())
+    crate::ai_models::restore_active(app);
 }
 
 #[tauri::command]

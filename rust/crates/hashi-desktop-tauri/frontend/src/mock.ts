@@ -6,7 +6,6 @@ import type {
   Snippet,
   FileEntry,
   FileJob,
-  AiConnectResult,
   AiServiceInfo,
   AiStatus,
   ApprovalRequest,
@@ -18,6 +17,8 @@ import type {
   SessionStateEvent,
   OpenedDoc,
   ImportPreview,
+  AiModelEntry,
+  AiModelsList,
 } from './types';
 import { emptyProfile } from './types';
 
@@ -104,6 +105,29 @@ export function mockApi(): Api {
     { id: 'custom', label: 'その他', needsKey: true, hasKeyPage: false, blurb: 'OpenAI互換のAPIを出している他社サービス。接続先URLを入力してください。', defaultBase: '' },
   ];
   const ai: AiStatus = { connected: false, service: null, model: null, models: [], saved: null };
+  let models: AiModelEntry[] = [];
+  let activeModel: string | null = null;
+  const savedKeys = new Set<string>(['anthropic|']);
+  const modelChanged = new Set<() => void>();
+  const keyOf = (e: AiModelEntry) => `${e.service}|${e.base}`;
+  const labelOf = (e: AiModelEntry) =>
+    e.name || `${{ openai: 'OpenAI', anthropic: 'Claude', local: '自分のPC', custom: 'その他' }[e.service] ?? 'AI'} / ${e.model || 'モデルは自動'}`;
+  const modelsList = (): AiModelsList => ({
+    entries: models.map((e) => ({ ...e, label: labelOf(e), hasKey: e.service === 'local' || savedKeys.has(keyOf(e)) })),
+    active: activeModel,
+    warning: null,
+  });
+  const useModel = async (id: string) => {
+    const e = models.find((m) => m.id === id);
+    if (!e) throw new Error('登録が見つかりません');
+    if (e.service !== 'local' && !savedKeys.has(keyOf(e))) {
+      throw new Error('このモデルのAPIキーが保存されていません。AIモデルの管理でキーを入力してください');
+    }
+    activeModel = id;
+    Object.assign(ai, { connected: true, service: e.service, model: e.model || 'gpt-5', models: [] });
+    modelChanged.forEach((h) => h());
+    return { model: ai.model ?? '' };
+  };
   const deltaHandlers = new Set<(t: string) => void>();
   const doneHandlers = new Set<(e: { error: string | null; text: string }) => void>();
   const approvalHandlers = new Set<(r: ApprovalRequest) => void>();
@@ -196,15 +220,38 @@ export function mockApi(): Api {
     aiStatus: async () => ({ ...ai }),
     aiHasKey: async (service) => service === 'anthropic',
     aiForget: async () => {},
-    aiConnect: async (args): Promise<AiConnectResult> => {
-      await new Promise((r) => setTimeout(r, 500));
-      if (args.key === 'bad') throw new Error('AI接続エラー HTTP 401: この接続先のAPIキーを確認してください');
-      const models = ['gpt-5', 'gpt-5-mini', 'gpt-4.1'];
-      Object.assign(ai, { connected: true, service: args.service, model: args.model || models[0], models });
-      return { kind: 'connected', message: '', model: ai.model, models };
+    aiModelsList: async () => modelsList(),
+    aiModelSave: async (entry, key) => {
+      if (!entry.id) entry = { ...entry, id: crypto.randomUUID() };
+      if (key) savedKeys.add(keyOf(entry));
+      const i = models.findIndex((m) => m.id === entry.id);
+      if (i >= 0) models[i] = entry;
+      else models.push(entry);
+      if (!activeModel) await useModel(entry.id);
+      modelChanged.forEach((h) => h());
+      return modelsList();
     },
-    aiSwitchModel: async (model) => {
-      ai.model = model;
+    aiModelDelete: async (id) => {
+      models = models.filter((m) => m.id !== id);
+      if (activeModel === id) {
+        activeModel = null;
+        Object.assign(ai, { connected: false, service: null, model: null });
+      }
+      modelChanged.forEach((h) => h());
+      return modelsList();
+    },
+    aiModelUse: async (id) => useModel(id),
+    aiModelCheck: async (entry, key) => {
+      await new Promise((r) => setTimeout(r, 400));
+      if (key === 'bad') throw new Error('AI接続エラー HTTP 401: この接続先のAPIキーを確認してください');
+      const list = ['gpt-5', 'gpt-5-mini', 'gpt-4.1'];
+      if (!entry.model && key === 'nomodel') return { ok: false, message: '自動で選んだモデルで確認に失敗しました。別のモデル名を選んでください。', model: null, models: list };
+      return { ok: true, message: '接続できました', model: entry.model || list[0], models: list };
+    },
+    aiModelCandidates: async () => ['gpt-5', 'gpt-5-mini', 'gpt-4.1', 'o3'],
+    onAiModelsChanged: async (h) => {
+      modelChanged.add(h);
+      return () => modelChanged.delete(h);
     },
     aiClear: async () => {},
     aiStop: async () => {},

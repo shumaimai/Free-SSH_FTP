@@ -1,22 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Accordion,
-  AccordionHeader,
-  AccordionItem,
-  AccordionPanel,
   Body1,
   Button,
   Caption1,
-  Checkbox,
   Dialog,
   DialogActions,
   DialogBody,
   DialogContent,
   DialogSurface,
   DialogTitle,
-  Field,
-  Input,
-  Link,
   makeStyles,
   mergeClasses,
   MessageBar,
@@ -28,12 +20,13 @@ import {
   ToggleButton,
   tokens,
 } from '@fluentui/react-components';
-import { Delete20Regular, Send20Filled, Stop20Regular, Settings20Regular } from '@fluentui/react-icons';
+import { Bot20Regular, ChatAdd20Regular, Send20Filled, Stop20Regular } from '@fluentui/react-icons';
 import type { Api } from './api';
-import type { AiConnectResult, AiServiceInfo, AiStatus, ShareMode } from './types';
+import type { AiModelsList, AiStatus, ShareMode } from './types';
 
 const useStyles = makeStyles({
   root: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, gap: '10px' },
+  header: { display: 'flex', flexDirection: 'column', gap: '4px' },
   scroll: { flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px', paddingRight: '4px' },
   setup: { display: 'flex', flexDirection: 'column', gap: '12px', overflowY: 'auto', height: '100%' },
   row: { display: 'flex', alignItems: 'center', gap: '8px' },
@@ -90,6 +83,8 @@ export interface ShareTarget {
 interface Props {
   api: Api;
   targets: ShareTarget[];
+  /** AIモデルの管理ページを開く。 */
+  onManage(): void;
 }
 
 interface Msg {
@@ -130,26 +125,12 @@ function Rich({ text }: { text: string }) {
   );
 }
 
-export function AiDock({ api, targets }: Props) {
+export function AiDock({ api, targets, onManage }: Props) {
   const styles = useStyles();
-  const [services, setServices] = useState<AiServiceInfo[]>([]);
-  const [protocols, setProtocols] = useState<[string, string][]>([]);
   const [status, setStatus] = useState<AiStatus | null>(null);
-  const [setup, setSetup] = useState(false);
-
-  // 設定画面の入力
-  const [service, setService] = useState('openai');
-  const [base, setBase] = useState('');
-  const [key, setKey] = useState('');
-  const [model, setModel] = useState('');
-  const [protocol, setProtocol] = useState('auto');
-  const [useTools, setUseTools] = useState(true);
-  const [persist, setPersist] = useState(true);
-  const [hasKey, setHasKey] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [needModel, setNeedModel] = useState(false);
-  const [candidates, setCandidates] = useState<string[]>([]);
-  const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
+  const [models, setModels] = useState<AiModelsList | null>(null);
+  const [switching, setSwitching] = useState(false);
+  const [problem, setProblem] = useState('');
 
   // 会話
   const [messages, setMessages] = useState<Msg[]>([]);
@@ -161,29 +142,24 @@ export function AiDock({ api, targets }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   // 確認窓で「戻る」を押したとき、入力欄へ戻す質問。
   const pendingText = useRef('');
-
-  const current = useMemo(() => services.find((s) => s.id === service), [services, service]);
-  const isUrlService = service === 'local' || service === 'custom';
+  // 使用中のモデルが変わったら、前の会話の表示は引き継がない。
+  const shownModel = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const s = await api.aiStatus();
+    const [s, list] = await Promise.all([api.aiStatus(), api.aiModelsList()]);
     setStatus(s);
-    // 接続済みでも、設定を開き直したときに今のサービスが選ばれているよう、前回の設定を入れておく。
-    const saved = s.saved;
-    if (saved?.service) setService(saved.service);
-    if (saved?.base !== undefined) setBase(saved.base);
-    if (saved?.protocol) setProtocol(saved.protocol);
-    if (saved?.use_tools !== undefined) setUseTools(saved.use_tools);
-    setSetup(!s.connected);
+    setModels(list);
+    const key = s.connected ? `${list.active ?? ''}:${s.model ?? ''}` : null;
+    if (shownModel.current !== null && shownModel.current !== key) setMessages([]);
+    shownModel.current = key;
     return s;
   }, [api]);
 
   useEffect(() => {
-    void api.aiServices().then(setServices);
-    void api.aiProtocols().then(setProtocols);
     void refresh();
     const subs = [
       api.onAiRestored(() => void refresh()),
+      api.onAiModelsChanged(() => void refresh()),
       api.onAiDelta((text) =>
         setMessages((old) => {
           const last = old[old.length - 1];
@@ -206,28 +182,6 @@ export function AiDock({ api, targets }: Props) {
     return () => subs.forEach((p) => void p.then((off) => off()));
   }, [api, refresh]);
 
-  // サービスを選んだとき、保存済みのキーがあるか確かめる（キー自体は受け取らない）。
-  useEffect(() => {
-    if (!setup || !current) return;
-    setKey('');
-    setModel('');
-    setCandidates([]);
-    setNeedModel(false);
-    setMessage(null);
-    if (!isUrlService) setBase('');
-    void api.aiHasKey(service, base).then(setHasKey).catch(() => setHasKey(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [service, setup]);
-
-  // 接続先URLを変えたら、そのURLの保存キーの有無を見直す（入力済みのキーは消さない）。
-  useEffect(() => {
-    if (!setup || !isUrlService) return;
-    const timer = setTimeout(() => {
-      void api.aiHasKey(service, base).then(setHasKey).catch(() => setHasKey(false));
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [api, base, service, setup, isUrlService]);
-
   // 会話欄だけを末尾へ送る。scrollIntoViewは外側の枠（アプリ全体）まで動かし、画面がずれることがある。
   useEffect(() => {
     const box = scrollRef.current;
@@ -238,32 +192,17 @@ export function AiDock({ api, targets }: Props) {
     setSelected((old) => old.filter((id) => targets.some((t) => t.sessionId === id)));
   }, [targets]);
 
-  const connect = async () => {
-    setBusy(true);
-    setMessage(null);
+  const choose = async (id: string) => {
+    if (!id || id === models?.active || switching) return;
+    setSwitching(true);
+    setProblem('');
     try {
-      const result: AiConnectResult = await api.aiConnect({
-        service,
-        base,
-        key,
-        model,
-        protocol,
-        useTools,
-        persist,
-      });
-      if (result.kind === 'need_model') {
-        setNeedModel(true);
-        setCandidates(result.models);
-        setMessage({ text: result.message, error: true });
-      } else {
-        setKey('');
-        setMessages([]);
-        await refresh();
-      }
+      await api.aiModelUse(id);
+      await refresh();
     } catch (error) {
-      setMessage({ text: String(error), error: true });
+      setProblem(String(error));
     } finally {
-      setBusy(false);
+      setSwitching(false);
     }
   };
 
@@ -307,168 +246,79 @@ export function AiDock({ api, targets }: Props) {
     void api.aiStop();
   };
 
-  // ---- 設定画面 ----
-  if (setup || !status?.connected) {
+  if (!status || !models) return <Caption1 className={styles.note}>読み込み中…</Caption1>;
+
+  // ---- 登録が1件も無い ----
+  if (models.entries.length === 0) {
     return (
       <div className={styles.setup}>
         <Subtitle2>AIをつなぐ</Subtitle2>
-        <Caption1>サービスを選び、APIキーを貼り付けるだけです。キーはこのPCの専用の暗号化ファイルにだけ保存します。</Caption1>
-        <Field label="1  サービス">
-          <div className={styles.wrap}>
-            {services.map((s) => (
-              <ToggleButton key={s.id} appearance={service === s.id ? 'primary' : 'outline'} checked={service === s.id} disabled={busy} onClick={() => setService(s.id)}>
-                {s.label}
-              </ToggleButton>
-            ))}
-          </div>
-        </Field>
-        {current && <Caption1>{current.blurb}</Caption1>}
-        {isUrlService && (
-          <Field label="接続先URL">
-            <Input
-              value={base}
-              disabled={busy}
-              placeholder={current?.defaultBase || 'https://example.com/v1'}
-              onChange={(_, d) => {
-                // キーは接続を押したときの接続先へだけ送る。先にキーを貼っても消さない。
-                setBase(d.value);
-                setNeedModel(false);
-              }}
-            />
-          </Field>
-        )}
-        {current?.needsKey && (
-          <>
-            <Field label="2  APIキー">
-              <Input
-                type="password"
-                value={key}
-                disabled={busy}
-                placeholder={hasKey ? '保存済みのキーを使います（変えるときだけ貼り付け）' : 'ここに貼り付け'}
-                onChange={(_, d) => setKey(d.value)}
-              />
-            </Field>
-            <div className={styles.row}>
-              <Checkbox checked={persist} onChange={(_, d) => setPersist(d.checked === true)} label="このPCに保存する" />
-              <div className={styles.grow} />
-              {current.hasKeyPage && (
-                <Link onClick={() => void api.aiOpenKeyPage(service).catch((e) => setMessage({ text: String(e), error: true }))}>
-                  キーの取得ページを開く
-                </Link>
-              )}
-            </div>
-          </>
-        )}
-        <Field label={needModel ? 'モデル名（選んでください）' : 'モデル名（空なら自動で選びます）'}>
-          <div className={styles.row}>
-            <Input
-              className={styles.grow}
-              value={model}
-              disabled={busy}
-              placeholder="例: claude-sonnet-5-5 / gpt-5"
-              onChange={(_, d) => setModel(d.value)}
-            />
-            {candidates.length > 0 && (
-              <Select value="" disabled={busy} onChange={(_, d) => d.value && setModel(d.value)} style={{ maxWidth: 150 }}>
-                <option value="">一覧から選ぶ</option>
-                {candidates.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </div>
-        </Field>
-        {isUrlService && (
-          <Accordion collapsible>
-            <AccordionItem value="adv">
-              <AccordionHeader>詳細設定</AccordionHeader>
-              <AccordionPanel>
-                <Field label="通信の形式">
-                  <Select value={protocol} onChange={(_, d) => setProtocol(d.value)}>
-                    {protocols.map(([id, label]) => (
-                      <option key={id} value={id}>
-                        {label}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-                <Checkbox
-                  checked={useTools}
-                  onChange={(_, d) => setUseTools(d.checked === true)}
-                  label="このAIは関数呼び出し（ツール）に対応している"
-                />
-                <Caption1 className={styles.note}>対応していないAIでは外してください。端末の閲覧だけになります。</Caption1>
-              </AccordionPanel>
-            </AccordionItem>
-          </Accordion>
-        )}
-        <div className={styles.row}>
-          <Button appearance="primary" disabled={busy || (current?.needsKey && !key && !hasKey) || (isUrlService && !base && service === 'custom')} onClick={() => void connect()}>
-            接続する
-          </Button>
-          {busy && <Spinner size="tiny" />}
-          {status?.connected && (
-            <Button disabled={busy} onClick={() => setSetup(false)}>
-              会話へ戻る
-            </Button>
-          )}
-        </div>
-        {message && (
-          <MessageBar intent={message.error ? 'error' : 'info'}>
-            <MessageBarBody>{message.text}</MessageBarBody>
-          </MessageBar>
-        )}
-        <Caption1 className={styles.note}>接続時に短い確認の質問を1回送ります。利用料は提供元の料金に従います。</Caption1>
-        {current?.needsKey && hasKey && (
-          <Button
-            appearance="subtle"
-            style={{ alignSelf: 'flex-start', color: tokens.colorPaletteRedForeground1 }}
-            disabled={busy}
-            onClick={() =>
-              void api.aiForget(service, base).then(() => {
-                setHasKey(false);
-                setMessage({ text: '保存したキーを削除しました。', error: false });
-              })
-            }
-          >
-            このサービスの保存キーを削除
-          </Button>
-        )}
+        <Caption1>
+          使いたいAIモデルを登録すると、ここで相談できます。登録・変更・削除は「AIモデルの管理」で行います。
+        </Caption1>
+        <Button appearance="primary" style={{ alignSelf: 'flex-start' }} onClick={onManage}>
+          AIモデルを登録する
+        </Button>
       </div>
     );
   }
 
   // ---- 会話 ----
   const sharing = selected.length > 0;
+  const header = (
+    <div className={styles.header}>
+      <Select
+        aria-label="使うAIモデル"
+        value={models.active ?? ''}
+        disabled={switching || running}
+        onChange={(_, d) => void choose(d.value)}
+      >
+        {!models.active && <option value="">AIモデルを選んでください</option>}
+        {models.entries.map((e) => (
+          <option key={e.id} value={e.id}>
+            {e.label}
+          </option>
+        ))}
+      </Select>
+      <div className={styles.row}>
+        <Button size="small" appearance="subtle" icon={<Bot20Regular />} onClick={onManage}>
+          AIモデルの管理
+        </Button>
+        <div className={styles.grow} />
+        <Button
+          size="small"
+          appearance="subtle"
+          icon={<ChatAdd20Regular />}
+          disabled={running || !status.connected}
+          onClick={() => void api.aiClear().then(() => setMessages([]))}
+        >
+          新しい会話
+        </Button>
+      </div>
+      {switching && <Spinner size="tiny" label="切り替え中" />}
+      {problem && (
+        <MessageBar intent="error">
+          <MessageBarBody>{problem}</MessageBarBody>
+        </MessageBar>
+      )}
+      {models.warning && (
+        <MessageBar intent="warning">
+          <MessageBarBody>{models.warning}</MessageBarBody>
+        </MessageBar>
+      )}
+    </div>
+  );
+  if (!status.connected) {
+    return (
+      <div className={styles.root}>
+        {header}
+        <Body1 className={styles.note}>使うAIモデルを上で選ぶと、ここで相談できます。</Body1>
+      </div>
+    );
+  }
   return (
     <div className={styles.root}>
-      <div className={styles.row}>
-        <Select
-          className={styles.grow}
-          aria-label="モデル"
-          value={status.model ?? ''}
-          onChange={(_, d) => void api.aiSwitchModel(d.value).then(async () => {
-            setMessages([{ role: 'note', text: `モデルを ${d.value} に切り替えました。会話は新しくなっています。` }]);
-            await refresh();
-          })}
-        >
-          {[...new Set([status.model ?? '', ...status.models])].filter(Boolean).map((m) => (
-            <option key={m} value={m}>
-              {m}
-            </option>
-          ))}
-        </Select>
-        <Button appearance="subtle" aria-label="接続設定" icon={<Settings20Regular />} onClick={() => setSetup(true)} />
-        <Button
-          appearance="subtle"
-          aria-label="会話を消去"
-          icon={<Delete20Regular />}
-          disabled={running}
-          onClick={() => void api.aiClear().then(() => setMessages([]))}
-        />
-      </div>
+      {header}
       <div className={styles.share}>
         <Caption1>AIに見せる端末</Caption1>
         <div className={styles.wrap}>

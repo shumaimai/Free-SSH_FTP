@@ -3,6 +3,7 @@
 //! 画面（frontend/）とはcommandとeventだけで話す。画面側へ渡すのは表示に要るものだけで、
 //! 秘密・認証要求の照合・信頼情報の保存は常にこちら（Rust側）で行う。
 mod ai;
+mod ai_models;
 mod app;
 mod editor;
 mod external;
@@ -92,8 +93,12 @@ fn main() {
             ai::ai_status,
             ai::ai_has_key,
             ai::ai_forget,
-            ai::ai_connect,
-            ai::ai_switch_model,
+            ai_models::ai_models_list,
+            ai_models::ai_model_save,
+            ai_models::ai_model_delete,
+            ai_models::ai_model_use,
+            ai_models::ai_model_check,
+            ai_models::ai_model_candidates,
             ai::ai_clear,
             ai::ai_stop,
             ai::ai_send,
