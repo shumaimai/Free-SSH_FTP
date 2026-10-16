@@ -125,7 +125,7 @@ impl Files {
 }
 
 #[derive(Clone)]
-enum Operation {
+pub enum Operation {
     Upload {
         local: PathBuf,
         remote: String,
@@ -244,7 +244,7 @@ pub fn start_pumps(app: AppHandle) {
     });
 }
 
-fn parse_policy(policy: &str) -> Result<Existing, String> {
+pub fn parse_policy(policy: &str) -> Result<Existing, String> {
     match policy {
         "refuse" => Ok(Existing::Refuse),
         "overwrite" => Ok(Existing::Overwrite),
@@ -254,7 +254,7 @@ fn parse_policy(policy: &str) -> Result<Existing, String> {
     }
 }
 
-fn parse_mode(mode: &str) -> Result<Mode, String> {
+pub fn parse_mode(mode: &str) -> Result<Mode, String> {
     match mode {
         "atomic" => Ok(Mode::Atomic),
         "in_place" => Ok(Mode::InPlace),
@@ -262,7 +262,7 @@ fn parse_mode(mode: &str) -> Result<Mode, String> {
     }
 }
 
-fn files_of(state: &AppState, id: &str) -> Result<(Arc<Session>, Arc<Files>), String> {
+pub fn files_of(state: &AppState, id: &str) -> Result<(Arc<Session>, Arc<Files>), String> {
     let session = state
         .sessions
         .lock()
@@ -278,6 +278,8 @@ fn files_of(state: &AppState, id: &str) -> Result<(Arc<Session>, Arc<Files>), St
 pub struct Listing {
     path: String,
     entries: Vec<Entry>,
+    /// 同期ブラウズが有効なとき、ローカル側を追随させる指示（絶対パスは写さず相対移動だけ）。
+    follow: Option<crate::local::FollowView>,
 }
 
 /// 一覧。pathが空なら開始フォルダ（未設定ならホーム）。新しい一覧要求は古い要求を取り消す。
@@ -286,6 +288,7 @@ pub async fn files_list(
     state: State<'_, AppState>,
     id: String,
     path: Option<String>,
+    follow: Option<bool>,
 ) -> Result<Listing, String> {
     let (_, files) = files_of(&state, &id)?;
     let _work = files.work.start().map_err(|e| e.to_string())?;
@@ -295,6 +298,12 @@ pub async fn files_list(
         None if files.initial_path.is_empty() => ".".to_owned(),
         None => files.initial_path.clone(),
     };
+    // 同期ブラウズの追随で開始した要求だけ、結果の跳ね返りを読み飛ばす（要求ごとのStampで判定）。
+    let navigation = Stamp::default();
+    let tab = crate::local::remote_stamp(&id);
+    if follow.unwrap_or(false) {
+        state.local.expect_remote(navigation.clone());
+    }
     let result = async {
         let nav = files.nav.lock().await;
         let path = nav.canonicalize(target).await?;
@@ -303,14 +312,29 @@ pub async fn files_list(
             transfer::list_bounded(&files.ssh, &path, &token)
         })
         .await?;
-        anyhow::Ok(Listing { path, entries })
+        anyhow::Ok((path, entries))
     }
-    .await
-    .map_err(|e| e.to_string())?;
+    .await;
+    let (path, entries) = match result {
+        Ok(listing) => listing,
+        Err(error) => {
+            let message = error.to_string();
+            // 追随の失敗はエラーにせず、理由を添えた通知にする（左右でフォルダ構成が違うのは当たり前）。
+            return Err(state
+                .local
+                .remote_failed(&navigation, &message)
+                .unwrap_or(message));
+        }
+    };
     if token.is_cancelled() {
         return Err("別の一覧要求に置き換えられました".into());
     }
-    Ok(result)
+    let follow = state.local.on_remote(&tab, &navigation, &path);
+    Ok(Listing {
+        path,
+        entries,
+        follow,
+    })
 }
 
 #[tauri::command]
@@ -329,7 +353,7 @@ pub async fn files_search(
         .map_err(|e| e.to_string())
 }
 
-fn enqueue(
+pub fn enqueue(
     app: &AppHandle,
     state: &AppState,
     session_id: &str,
@@ -527,6 +551,8 @@ fn finish(
     }
     if changed {
         let _ = app.emit("files-changed", session_id);
+        // 受信でローカルのフォルダが変わったので、ローカルペインも読み直す。
+        let _ = app.emit("local-changed", ());
     }
     schedule(app);
 }
@@ -562,13 +588,13 @@ pub fn files_clear_jobs(state: State<'_, AppState>) {
     }
 }
 
-fn file_name(path: &std::path::Path) -> String {
+pub fn file_name(path: &std::path::Path) -> String {
     path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default()
 }
 
-fn remote_join(dir: &str, name: &str) -> String {
+pub fn remote_join(dir: &str, name: &str) -> String {
     format!("{}/{}", dir.trim_end_matches('/'), name)
 }
 
@@ -873,4 +899,38 @@ pub async fn permissions_recover(state: State<'_, AppState>, id: String) -> Resu
         )),
         Err(error) => Err(format!("権限復旧できませんでした。記録を保持: {error}")),
     }
+}
+
+/// 受信: ローカルペインで開いているフォルダへ直接置く（保存先はRust側が持つフォルダだけ）。
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub fn files_download_here(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    remote_path: String,
+    name: String,
+    policy: String,
+    mode: String,
+) -> Result<(), String> {
+    let (policy, mode) = (parse_policy(&policy)?, parse_mode(&mode)?);
+    files_of(&state, &id)?;
+    transfer::safe_name(&name).map_err(|e| e.to_string())?;
+    let local = state
+        .local
+        .directory()
+        .ok_or("ローカルのフォルダがまだ開かれていません")?
+        .join(&name);
+    enqueue(
+        &app,
+        &state,
+        &id,
+        format!("受信 {name}"),
+        Operation::Download {
+            remote: remote_path,
+            local,
+        },
+        policy,
+        mode,
+    )
 }

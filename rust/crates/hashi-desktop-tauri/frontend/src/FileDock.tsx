@@ -21,6 +21,7 @@ import {
   MenuTrigger,
   mergeClasses,
   MessageBar,
+  MessageBarActions,
   MessageBarBody,
   Popover,
   PopoverSurface,
@@ -44,14 +45,27 @@ import {
   Folder20Filled,
   FolderArrowUp20Regular,
   Options20Regular,
+  PanelLeft20Regular,
   ShieldKeyhole20Regular,
   Star20Regular,
 } from '@fluentui/react-icons';
 import type { Api } from './api';
 import { PermissionDialog } from './PermissionDialog';
-import type { ExistingPolicy, FileEntry, FileJob, TransferMode } from './types';
+import { LocalPane } from './LocalPane';
+import type { ExistingPolicy, FileEntry, FileJob, Follow, LocalListing, TransferMode } from './types';
 
 const useStyles = makeStyles({
+  dual: { display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: '12px', height: '100%', minHeight: 0 },
+  ghost: {
+    position: 'fixed',
+    zIndex: 1000,
+    pointerEvents: 'none',
+    padding: '4px 10px',
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorBrandBackground,
+    color: tokens.colorNeutralForegroundOnBrand,
+    boxShadow: tokens.shadow8,
+  },
   root: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, gap: '8px' },
   row: { display: 'flex', alignItems: 'center', gap: '6px' },
   wrap: { display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' },
@@ -125,13 +139,16 @@ const PHASE: Record<FileJob['phase'], { label: string; color: 'brand' | 'success
 interface Props {
   /** ファイルを内蔵エディタで開く依頼（開く処理は呼び出し側）。 */
   onEdit: (sessionId: string, path: string) => void;
+  /** 2ペイン（左にこのPCのフォルダ）の表示。ドックの幅は呼び出し側が変える。 */
+  twoPane: boolean;
+  onTwoPane: (value: boolean) => void;
   api: Api;
   sessionId: string | null;
   available: boolean;
   unavailableMessage: string;
 }
 
-export function FileDock({ api, sessionId, available, unavailableMessage, onEdit }: Props) {
+export function FileDock({ api, sessionId, available, unavailableMessage, onEdit, twoPane, onTwoPane }: Props) {
   const [permOpen, setPermOpen] = useState(false);
   const styles = useStyles();
   const [path, setPath] = useState('');
@@ -154,13 +171,61 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
   const sessionRef = useRef<string | null>(sessionId);
   sessionRef.current = sessionId;
 
+  // 2ペイン（ローカル側）。開いているフォルダはRust側が持ち、画面は表示と選んだ名前だけを持つ。
+  const [local, setLocal] = useState<LocalListing | null>(null);
+  const [localInput, setLocalInput] = useState('');
+  const [localSel, setLocalSel] = useState<Set<string>>(new Set());
+  const [localHidden, setLocalHidden] = useState(false);
+  const [localLoading, setLocalLoading] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [roots, setRoots] = useState<string[]>([]);
+  const [syncOn, setSyncOn] = useState(false);
+  const [notice, setNotice] = useState('');
+  const anchor = useRef<string | null>(null);
+  const loadRef = useRef<(target: string | null, follow?: boolean) => Promise<void>>(async () => {});
+  const syncRef = useRef(false);
+  syncRef.current = syncOn;
+  const loadLocalRef = useRef<(target: string | null, follow?: boolean) => Promise<void>>(async () => {});
+
+  /** 追随の指示を受けたら、もう片方のペインを動かす（失敗は通知だけにする）。 */
+  const followUp = useCallback((follow: Follow | null) => {
+    if (!follow) return;
+    if (follow.kind === 'failed') setNotice(follow.message);
+    else if (follow.kind === 'remote') void loadRef.current(follow.path, true);
+    else void loadLocalRef.current(follow.path, true);
+  }, []);
+
+  const loadLocal = useCallback(
+    async (target: string | null, follow = false) => {
+      setLocalLoading(true);
+      setLocalError(null);
+      try {
+        const listing = await api.localList(target, follow);
+        setLocal(listing);
+        setLocalInput(listing.path);
+        setLocalSel(new Set());
+        anchor.current = null;
+        followUp(listing.follow);
+      } catch (e) {
+        const message = String(e);
+        if (message.includes('置き換えられました')) return;
+        if (follow) setNotice(message);
+        else setLocalError(message);
+      } finally {
+        setLocalLoading(false);
+      }
+    },
+    [api, followUp],
+  );
+  loadLocalRef.current = loadLocal;
+
   const load = useCallback(
-    async (target: string | null) => {
+    async (target: string | null, follow = false) => {
       if (!sessionId) return;
       setLoading(true);
       setError(null);
       try {
-        const listing = await api.filesList(sessionId, target);
+        const listing = await api.filesList(sessionId, target, follow);
         // 別の接続へ切り替わった後に届いた結果は捨てる。
         if (sessionRef.current !== sessionId) return;
         setPath(listing.path);
@@ -168,16 +233,21 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
         setEntries(listing.entries);
         setSearching(null);
         setSelected(null);
+        followUp(listing.follow);
       } catch (e) {
         // 古い要求が新しい要求に置き換えられただけなら、エラーにしない。
         const message = String(e);
-        if (!message.includes('置き換えられました')) setError(message);
+        if (message.includes('置き換えられました')) return;
+        // 同期ブラウズの追随の失敗は、エラー欄ではなく通知にする。
+        if (follow) setNotice(message);
+        else setError(message);
       } finally {
         setLoading(false);
       }
     },
-    [api, sessionId],
+    [api, sessionId, followUp],
   );
+  loadRef.current = load;
 
   // 接続が使えるようになったら、開始フォルダを開く。
   useEffect(() => {
@@ -186,6 +256,8 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
     setError(null);
     setSearching(null);
     if (sessionId && available) {
+      // 表示する接続が変わったら、同期ブラウズの基準を取り直す（最初の一覧で基準が決まる）。
+      void api.syncSet(syncRef.current, sessionId, '').catch(() => {});
       void load(null);
       void api.filesBookmarks(sessionId).then(setBookmarks).catch(() => setBookmarks([]));
     }
@@ -209,6 +281,117 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
     ];
     return () => subs.forEach((p) => void p.then((off) => off()));
   }, [api, load, policy, mode]);
+
+  // 2ペインを開いたら、ローカルのフォルダを読み込む。同期ブラウズの設定も読む。
+  useEffect(() => {
+    if (!twoPane) return;
+    void api.syncGet().then(setSyncOn).catch(() => setSyncOn(false));
+    if (!local) void loadLocal(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [twoPane, api]);
+
+  useEffect(() => {
+    const sub = api.onLocalChanged(() => {
+      if (twoPaneRef.current) void loadLocalRef.current(null);
+    });
+    return () => void sub.then((off) => off());
+  }, [api]);
+
+  const twoPaneRef = useRef(twoPane);
+  twoPaneRef.current = twoPane;
+
+  const localShown = useMemo(
+    () => (local?.entries ?? []).filter((e) => localHidden || !e.name.startsWith('.')),
+    [local, localHidden],
+  );
+
+  const setSync = (value: boolean) => {
+    setSyncOn(value);
+    syncRef.current = value;
+    setNotice('');
+    void api.syncSet(value, sessionRef.current, pathRef.current || '').catch((e) => setError(String(e)));
+  };
+
+  const selectLocal = (entry: FileEntry, additive: boolean, range: boolean) => {
+    setLocalSel((old) => {
+      if (range && anchor.current) {
+        const names = localShown.map((e) => e.name);
+        const [a, b] = [names.indexOf(anchor.current), names.indexOf(entry.name)];
+        if (a >= 0 && b >= 0) return new Set(names.slice(Math.min(a, b), Math.max(a, b) + 1));
+      }
+      anchor.current = entry.name;
+      if (additive) {
+        const next = new Set(old);
+        if (next.has(entry.name)) next.delete(entry.name);
+        else next.add(entry.name);
+        return next;
+      }
+      return new Set([entry.name]);
+    });
+  };
+
+  const sendSelected = () => {
+    const id = sessionRef.current;
+    const names = [...localSelRef.current];
+    if (!id || !pathRef.current || names.length === 0) return;
+    void api.localUpload(id, names, pathRef.current, policy, mode).catch((e) => setError(String(e)));
+  };
+  const receiveSelected = () => {
+    const id = sessionRef.current;
+    const entry = entries.find((e) => e.path === selectedRef.current);
+    if (!id || !entry) return;
+    void api.filesDownloadHere(id, entry.path, entry.name, policy, mode).catch((e) => setError(String(e)));
+  };
+  const localSelRef = useRef(localSel);
+  localSelRef.current = localSel;
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+  const transferRef = useRef<(from: 'local' | 'remote') => void>(() => {});
+  transferRef.current = (from) => (from === 'local' ? sendSelected() : receiveSelected());
+
+  // ペイン間のドラッグ。運ぶのは「どちらのペインか」の印だけで、何を送るかは受け側が選択状態から決める。
+  // （Tauriのファイルドロップ受信を有効にしたままでもWindowsで動くよう、HTML5のドラッグ&ドロップは使わない。）
+  const [drag, setDrag] = useState<{ x: number; y: number; label: string } | null>(null);
+  const dragRef = useRef<{ pane: 'local' | 'remote'; sx: number; sy: number; active: boolean; label: string } | null>(null);
+  useEffect(() => {
+    const move = (e: PointerEvent) => {
+      const d = dragRef.current;
+      if (!d) return;
+      if (!d.active && Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 8) {
+        d.active = true;
+        // 掴んでいる間は文字が選択されないようにする。
+        document.body.style.userSelect = 'none';
+      }
+      if (d.active) setDrag({ x: e.clientX, y: e.clientY, label: d.label });
+    };
+    const up = (e: PointerEvent) => {
+      const d = dragRef.current;
+      dragRef.current = null;
+      document.body.style.userSelect = '';
+      setDrag(null);
+      if (!d?.active) return;
+      const under = document.elementFromPoint(e.clientX, e.clientY);
+      const pane = (under?.closest('[data-pane]') as HTMLElement | null)?.dataset.pane;
+      if (pane && pane !== d.pane) transferRef.current(d.pane);
+    };
+    const cancel = () => {
+      dragRef.current = null;
+      document.body.style.userSelect = '';
+      setDrag(null);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', cancel);
+    return () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', cancel);
+    };
+  }, []);
+  const startDrag = (pane: 'local' | 'remote', label: string, e: React.PointerEvent) => {
+    if (e.button !== 0 || !twoPaneRef.current) return;
+    dragRef.current = { pane, sx: e.clientX, sy: e.clientY, active: false, label };
+  };
 
   const shown = useMemo(() => {
     const list = entries.filter((e) => hidden || searching !== null || !e.name.startsWith('.'));
@@ -237,8 +420,8 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
   }
 
   const activeJobs = jobs.filter((j) => j.sessionId === sessionId);
-  return (
-    <div className={styles.root}>
+  const remotePane = (
+    <div className={styles.root} data-pane="remote">
       <div className={styles.row}>
         <Button
           size="small"
@@ -286,10 +469,15 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
           icon={<ArrowDownload20Regular />}
           disabled={!current}
           onClick={() =>
-            current && void run(api.filesDownload(sessionId, current.path, current.name, current.directory, policy, mode))
+            current &&
+            void run(
+              twoPane
+                ? api.filesDownloadHere(sessionId, current.path, current.name, policy, mode)
+                : api.filesDownload(sessionId, current.path, current.name, current.directory, policy, mode),
+            )
           }
         >
-          受信
+          {twoPane ? '受信（左のフォルダへ）' : '受信'}
         </Button>
         <Button
           size="small"
@@ -329,6 +517,15 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
           削除
         </Button>
         <div className={styles.grow} />
+        <Button
+          size="small"
+          appearance={twoPane ? 'primary' : 'subtle'}
+          icon={<PanelLeft20Regular />}
+          aria-pressed={twoPane}
+          onClick={() => onTwoPane(!twoPane)}
+        >
+          2ペイン
+        </Button>
         <Button size="small" appearance="subtle" icon={<ShieldKeyhole20Regular />} onClick={() => setPermOpen(true)}>
           権限補助
         </Button>
@@ -414,6 +611,12 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
             aria-selected={selected === entry.path}
             tabIndex={0}
             className={mergeClasses(styles.item, selected === entry.path && styles.itemOn)}
+            onPointerDown={(e) => {
+              // 選択していない行を掴んだら、その行だけを選んで運ぶ。
+              if (selectedRef.current !== entry.path) setSelected(entry.path);
+              selectedRef.current = entry.path;
+              startDrag('remote', entry.name, e);
+            }}
             onClick={() => setSelected(entry.path)}
             onDoubleClick={() => enter(entry)}
             onKeyDown={(e) => {
@@ -493,6 +696,74 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
         </DialogSurface>
       </Dialog>
       <PermissionDialog api={api} open={permOpen} sessionId={sessionId} onClose={() => setPermOpen(false)} />
+    </div>
+  );
+  return (
+    <div className={twoPane ? styles.dual : undefined} style={twoPane ? undefined : { height: '100%' }}>
+      {twoPane && (
+        <LocalPane
+          path={local?.path ?? ''}
+          pathInput={localInput}
+          parent={local?.parent ?? null}
+          entries={[...localShown].sort(
+            (a, b) => Number(b.directory) - Number(a.directory) || a.name.localeCompare(b.name, 'ja'),
+          )}
+          selected={localSel}
+          hidden={localHidden}
+          loading={localLoading}
+          error={localError}
+          sync={syncOn}
+          roots={roots}
+          canSend={Boolean(path)}
+          onPathInput={setLocalInput}
+          onGo={(target) => void loadLocal(target)}
+          onRefresh={() => void loadLocal(local?.path ?? null)}
+          onPick={() =>
+            void api
+              .localPickDir()
+              .then((listing) => {
+                if (!listing) return;
+                setLocal(listing);
+                setLocalInput(listing.path);
+                setLocalSel(new Set());
+                followUp(listing.follow);
+              })
+              .catch((e) => setLocalError(String(e)))
+          }
+          onRoots={() => void api.localRoots().then(setRoots).catch(() => setRoots([]))}
+          onEnter={(entry) => entry.directory && void loadLocal(entry.path)}
+          onSelect={selectLocal}
+          onRowPointerDown={(entry, e) => {
+            if (!localSelRef.current.has(entry.name)) {
+              setLocalSel(new Set([entry.name]));
+              localSelRef.current = new Set([entry.name]);
+            }
+            const n = Math.max(localSelRef.current.size, 1);
+            startDrag('local', n > 1 ? `${n}件` : entry.name, e);
+          }}
+          onHidden={setLocalHidden}
+          onSync={setSync}
+          onSend={sendSelected}
+        />
+      )}
+      {remotePane}
+      {notice && (
+        <div style={{ position: 'fixed', bottom: 36, right: 16, zIndex: 900, maxWidth: 420 }}>
+          <MessageBar intent="warning">
+            <MessageBarBody>{notice}</MessageBarBody>
+            <MessageBarActions>
+              <Button size="small" appearance="transparent" onClick={() => setNotice('')}>
+                閉じる
+              </Button>
+            </MessageBarActions>
+          </MessageBar>
+        </div>
+      )}
+      {drag && (
+        <div className={styles.ghost} style={{ left: drag.x + 12, top: drag.y + 12 }}>
+          {drag.label}
+        </div>
+      )}
     </div>
   );
 }

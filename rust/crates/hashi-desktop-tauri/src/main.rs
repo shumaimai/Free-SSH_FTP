@@ -9,6 +9,7 @@ mod external;
 mod files;
 mod forwards;
 mod keygen;
+mod local;
 mod session;
 mod settings;
 mod snippets;
@@ -73,6 +74,13 @@ fn main() {
             external::external_stop,
             external::mcp_start,
             external::mcp_stop,
+            local::local_list,
+            local::local_pick_dir,
+            local::local_roots,
+            local::local_upload,
+            local::sync_get,
+            local::sync_set,
+            files::files_download_here,
             files::permissions_status,
             files::permissions_enable,
             files::permissions_recover,

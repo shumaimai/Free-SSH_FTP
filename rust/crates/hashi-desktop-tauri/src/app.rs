@@ -1,5 +1,6 @@
 //! アプリ全体の状態とcommand。保存データ・認証要求の台帳・セッション一覧を持つ。
 use crate::external::External;
+use crate::local::LocalPane;
 use crate::{
     ai::AiState, editor::Editors, files::FileJobs, session::Session, settings::UpdateInfo,
 };
@@ -32,6 +33,7 @@ pub struct AppState {
     pub files: FileJobs,
     pub editors: Editors,
     pub external: External,
+    pub local: LocalPane,
     pub update: Mutex<Option<UpdateInfo>>,
     exiting: AtomicBool,
 }
@@ -61,6 +63,7 @@ impl AppState {
             files: FileJobs::new(),
             editors: Editors::default(),
             external: External::default(),
+            local: LocalPane::default(),
             update: Mutex::new(None),
             exiting: AtomicBool::new(false),
         })
@@ -279,7 +282,6 @@ pub fn appearance_set(state: State<'_, AppState>, appearance: Appearance) -> Res
     Ok(())
 }
 
-/// 全セッションを閉じる。接続の終了待ちには上限を置く。
 /// 終了を要求する。`force`でなければ未保存のエディタがある間は画面に確認させる。
 /// 二重に押されても終了処理は1回だけ走らせる。
 pub fn request_exit(app: &AppHandle, force: bool) {
@@ -303,6 +305,7 @@ pub fn app_quit(app: AppHandle) {
     request_exit(&app, true);
 }
 
+/// 全セッションを閉じる。接続の終了待ちには上限を置く。
 pub async fn shutdown(app: &AppHandle) {
     let state = app.state::<AppState>();
     // AI処理・共有・承認待ちを先に止めてから、端末と接続を終える。

@@ -160,7 +160,7 @@ fn remote_name(name: &str) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn safe_name(name: &str) -> Result<()> {
+pub fn safe_name(name: &str) -> Result<()> {
     if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\', '\0']) {
         bail!("転送先のファイル名が不正です");
     }

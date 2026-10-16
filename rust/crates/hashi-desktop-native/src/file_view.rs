@@ -46,7 +46,7 @@ pub(super) struct Browser {
     delete_target: Option<(Stamp, String)>,
     jobs: VecDeque<Job>,
     drop_area: Option<(egui::Rect, egui::LayerId)>,
-    pub(super) sync: super::sync_view::SyncState,
+    pub(super) sync: hashi_core::sync_browse::SyncState,
 }
 impl Browser {
     pub(super) fn local_path(&self) -> &std::path::Path {

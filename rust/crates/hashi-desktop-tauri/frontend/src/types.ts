@@ -123,9 +123,23 @@ export interface FileEntry {
   permissions: number | null;
 }
 
+/** 同期ブラウズの追随指示。絶対パスは写さず、相対移動だけがRust側で計算される。 */
+export type Follow =
+  | { kind: 'remote'; path: string }
+  | { kind: 'local'; path: string }
+  | { kind: 'failed'; message: string };
+
 export interface Listing {
   path: string;
   entries: FileEntry[];
+  follow: Follow | null;
+}
+
+export interface LocalListing {
+  path: string;
+  parent: string | null;
+  entries: FileEntry[];
+  follow: Follow | null;
 }
 
 export type JobPhase = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';

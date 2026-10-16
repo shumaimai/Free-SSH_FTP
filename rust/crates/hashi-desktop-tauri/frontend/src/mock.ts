@@ -33,6 +33,16 @@ function mockDoc(sessionId: string | null, path: string): OpenedDoc {
   return { id, name, path, sessionId, kind: 'text', text, hex: null, encoding: 'UTF-8', newline: 'LF', size: text.length };
 }
 
+const localTree: Record<string, FileEntry[]> = {
+  '/home/me': [
+    { name: 'Documents', path: '/home/me/Documents', directory: true, symlink: false, size: 0, permissions: null },
+    { name: 'Downloads', path: '/home/me/Downloads', directory: true, symlink: false, size: 0, permissions: null },
+    { name: 'notes.txt', path: '/home/me/notes.txt', directory: false, symlink: false, size: 2048, permissions: null },
+    { name: 'photo.png', path: '/home/me/photo.png', directory: false, symlink: false, size: 1843200, permissions: null },
+    { name: 'report.xlsx', path: '/home/me/report.xlsx', directory: false, symlink: false, size: 52311, permissions: null },
+  ],
+};
+
 export function mockApi(): Api {
   let localOpens = 0;
   let permEnabled = false;
@@ -205,8 +215,23 @@ export function mockApi(): Api {
     filesList: async (_id, path) => {
       const p = !path || path === '.' ? '/home/tester' : path.replace(/\/\.\.$/, '') || '/';
       const dir = p.endsWith('/..') ? '/home/tester' : p;
-      return { path: dir, entries: tree[dir] ?? [] };
+      return { path: dir, entries: tree[dir] ?? [], follow: null };
     },
+    filesDownloadHere: async (id, _p, name) => addJob(id, `受信 ${name}`),
+    localList: async (path) => {
+      const dir = !path ? '/home/me' : path;
+      const files = localTree[dir] ?? [];
+      return { path: dir, parent: dir === '/' ? null : dir.replace(/\/[^/]+$/, '') || '/', entries: files, follow: null };
+    },
+    localPickDir: async () => null,
+    localRoots: async () => ['/'],
+    localUpload: async (id, names) => {
+      names.forEach((n) => addJob(id, `送信 ${n}`));
+      return names.length;
+    },
+    syncGet: async () => false,
+    syncSet: async () => {},
+    onLocalChanged: async () => () => {},
     filesSearch: async (_id, _root, query) => (tree['/home/tester'] ?? []).filter((e) => e.name.includes(query)),
     filesJobs: async () => jobs,
     filesCancel: async () => {},

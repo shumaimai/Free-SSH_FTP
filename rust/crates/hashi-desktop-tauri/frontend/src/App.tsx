@@ -134,6 +134,7 @@ export function App({ api }: { api: Api }) {
   const [keygenOpen, setKeygenOpen] = useState(false);
   const [forwardOpen, setForwardOpen] = useState(false);
   const [externalOpen, setExternalOpen] = useState(false);
+  const [twoPane, setTwoPane] = useState(false);
   const [dockTab, setDockTab] = useState<'files' | 'ai'>('files');
   const [filesState, setFilesState] = useState<Record<string, { available: boolean; message: string }>>({});
   const autoOpened = useRef(false);
@@ -507,7 +508,10 @@ export function App({ api }: { api: Api }) {
           ))}
         </div>
         {dockOpen && (
-          <aside className={styles.dock}>
+          <aside
+            className={styles.dock}
+            style={twoPane && dockTab === 'files' ? { width: 'min(980px, 72vw)' } : undefined}
+          >
             <TabList
               size="small"
               selectedValue={dockTab}
@@ -524,6 +528,8 @@ export function App({ api }: { api: Api }) {
                 available={filesSessionId ? (filesState[filesSessionId]?.available ?? false) : false}
                 unavailableMessage={filesSessionId ? (filesState[filesSessionId]?.message ?? '') : ''}
                 onEdit={(id, path) => openEditor(api.editorOpenRemote(id, path))}
+                twoPane={twoPane}
+                onTwoPane={setTwoPane}
               />
             </div>
             <div style={{ height: 'calc(100% - 40px)', minHeight: 0, display: dockTab === 'ai' ? 'block' : 'none' }}>

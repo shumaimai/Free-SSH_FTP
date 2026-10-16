@@ -29,6 +29,7 @@ import type {
   SavedDoc,
   PermissionStatus,
   ExternalStatus,
+  LocalListing,
 } from './types';
 
 export interface Api {
@@ -63,7 +64,15 @@ export interface Api {
   onAiRestored(handler: () => void): Promise<() => void>;
   onApproval(handler: (request: ApprovalRequest) => void): Promise<() => void>;
   onApprovalClosed(handler: (id: string) => void): Promise<() => void>;
-  filesList(id: string, path: string | null): Promise<Listing>;
+  filesList(id: string, path: string | null, follow?: boolean): Promise<Listing>;
+  filesDownloadHere(id: string, remotePath: string, name: string, policy: ExistingPolicy, mode: TransferMode): Promise<void>;
+  localList(path: string | null, follow?: boolean): Promise<LocalListing>;
+  localPickDir(): Promise<LocalListing | null>;
+  localRoots(): Promise<string[]>;
+  localUpload(id: string, names: string[], remoteDir: string, policy: ExistingPolicy, mode: TransferMode): Promise<number>;
+  syncGet(): Promise<boolean>;
+  syncSet(enabled: boolean, sessionId: string | null, remotePath: string | null): Promise<void>;
+  onLocalChanged(handler: () => void): Promise<() => void>;
   filesSearch(id: string, root: string, query: string): Promise<FileEntry[]>;
   filesJobs(): Promise<FileJob[]>;
   filesCancel(jobId: string): Promise<void>;
@@ -159,7 +168,16 @@ async function tauriApi(): Promise<Api> {
     onAiRestored: (handler) => listen('ai-restored', () => handler()),
     onApproval: (handler) => listen<ApprovalRequest>('approval', (e) => handler(e.payload)),
     onApprovalClosed: (handler) => listen<string>('approval-closed', (e) => handler(e.payload)),
-    filesList: (id, path) => invoke('files_list', { id, path }),
+    filesList: (id, path, follow) => invoke('files_list', { id, path, follow: follow ?? false }),
+    filesDownloadHere: (id, remotePath, name, policy, mode) =>
+      invoke('files_download_here', { id, remotePath, name, policy, mode }),
+    localList: (path, follow) => invoke('local_list', { path, follow: follow ?? false }),
+    localPickDir: () => invoke('local_pick_dir'),
+    localRoots: () => invoke('local_roots'),
+    localUpload: (id, names, remoteDir, policy, mode) => invoke('local_upload', { id, names, remoteDir, policy, mode }),
+    syncGet: () => invoke('sync_get'),
+    syncSet: (enabled, sessionId, remotePath) => invoke('sync_set', { enabled, sessionId, remotePath }),
+    onLocalChanged: (handler) => listen('local-changed', () => handler()),
     filesSearch: (id, root, query) => invoke('files_search', { id, root, query }),
     filesJobs: () => invoke('files_jobs'),
     filesCancel: (jobId) => invoke('files_cancel', { jobId }),
