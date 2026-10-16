@@ -1,6 +1,8 @@
 // 画面の確認・試験用の偽のバックエンド。VITE_MOCK付きのビルドにだけ入り、製品には入らない。
 import type { Api } from './api';
 import type {
+  FileEntry,
+  FileJob,
   AiConnectResult,
   AiServiceInfo,
   AiStatus,
@@ -54,6 +56,38 @@ export function mockApi(): Api {
         doneHandlers.forEach((h) => h({ error: null, text: answer }));
       }
     }, 40);
+  };
+  const tree: Record<string, FileEntry[]> = {
+    '/home/tester': [
+      { name: 'docs', path: '/home/tester/docs', directory: true, symlink: false, size: 4096, permissions: 0o755 },
+      { name: 'projects', path: '/home/tester/projects', directory: true, symlink: false, size: 4096, permissions: 0o755 },
+      { name: 'archive.tar.gz', path: '/home/tester/archive.tar.gz', directory: false, symlink: false, size: 5_452_595, permissions: 0o644 },
+      { name: 'readme.txt', path: '/home/tester/readme.txt', directory: false, symlink: false, size: 412, permissions: 0o644 },
+      { name: 'メモ.md', path: '/home/tester/メモ.md', directory: false, symlink: false, size: 1536, permissions: 0o644 },
+    ],
+    '/home/tester/docs': [
+      { name: 'manual.pdf', path: '/home/tester/docs/manual.pdf', directory: false, symlink: false, size: 2_097_152, permissions: 0o644 },
+    ],
+  };
+  const jobHandlers = new Set<(j: FileJob) => void>();
+  const changedHandlers = new Set<(id: string) => void>();
+  let jobs: FileJob[] = [];
+  const addJob = (sessionId: string, label: string) => {
+    const job: FileJob = { id: `job-${jobs.length + 1}`, sessionId, label, phase: 'running', done: 0, total: 100, message: '' };
+    jobs = [...jobs, job];
+    jobHandlers.forEach((h) => h({ ...job }));
+    let n = 0;
+    const timer = setInterval(() => {
+      n += 25;
+      job.done = Math.min(100, n);
+      if (n >= 100) {
+        clearInterval(timer);
+        job.phase = 'done';
+        job.message = '1ファイル / 0フォルダ / 0スキップ';
+        changedHandlers.forEach((h) => h(sessionId));
+      }
+      jobHandlers.forEach((h) => h({ ...job }));
+    }, 300);
   };
   const challengeHandlers = new Set<(c: Challenge) => void>();
   const stateHandlers = new Set<(e: SessionStateEvent) => void>();
@@ -129,6 +163,39 @@ export function mockApi(): Api {
       return () => approvalHandlers.delete(h);
     },
     onApprovalClosed: async () => () => {},
+    filesList: async (_id, path) => {
+      const p = !path || path === '.' ? '/home/tester' : path.replace(/\/\.\.$/, '') || '/';
+      const dir = p.endsWith('/..') ? '/home/tester' : p;
+      return { path: dir, entries: tree[dir] ?? [] };
+    },
+    filesSearch: async (_id, _root, query) => (tree['/home/tester'] ?? []).filter((e) => e.name.includes(query)),
+    filesJobs: async () => jobs,
+    filesCancel: async () => {},
+    filesClearJobs: async () => {
+      jobs = jobs.filter((j) => j.phase === 'running');
+    },
+    filesUploadPick: async (id, _dir, folder) => addJob(id, folder ? '送信 projects' : '送信 report.xlsx'),
+    filesUploadDropped: async (id) => {
+      addJob(id, '送信 dropped.txt');
+      return 1;
+    },
+    filesDownload: async (id, _p, name) => addJob(id, `受信 ${name}`),
+    filesDelete: async (id, _p, name) => addJob(id, `削除 ${name}`),
+    filesBookmarks: async () => ['/home/tester/docs', '/var/www'],
+    filesBookmarkAdd: async () => ['/home/tester/docs', '/var/www'],
+    onFileJob: async (h) => {
+      jobHandlers.add(h);
+      return () => jobHandlers.delete(h);
+    },
+    onFilesChanged: async (h) => {
+      changedHandlers.add(h);
+      return () => changedHandlers.delete(h);
+    },
+    onFileDrop: async () => () => {},
+    onFilesState: async (h) => {
+      setTimeout(() => h({ id: 'ssh-1', available: true, message: '' }), 100);
+      return () => {};
+    },
     pickKeyFile: async () => 'C:\\Users\\me\\.ssh\\id_ed25519',
     challengeReply: async (challengeId, answer: ChallengeAnswer) => {
       if (!pendingChallenge || pendingChallenge.id !== challengeId) return;

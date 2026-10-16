@@ -1,6 +1,11 @@
 // 画面とRust側の境界。本番はTauriのcommand/eventだけを使い、試験用(VITE_MOCK)は偽の実装へ差し替える。
 import type { Appearance } from './appearance';
 import type {
+  ExistingPolicy,
+  FileEntry,
+  FileJob,
+  Listing,
+  TransferMode,
   AiConnectArgs,
   AiConnectResult,
   AiServiceInfo,
@@ -47,6 +52,21 @@ export interface Api {
   onAiRestored(handler: () => void): Promise<() => void>;
   onApproval(handler: (request: ApprovalRequest) => void): Promise<() => void>;
   onApprovalClosed(handler: (id: string) => void): Promise<() => void>;
+  filesList(id: string, path: string | null): Promise<Listing>;
+  filesSearch(id: string, root: string, query: string): Promise<FileEntry[]>;
+  filesJobs(): Promise<FileJob[]>;
+  filesCancel(jobId: string): Promise<void>;
+  filesClearJobs(): Promise<void>;
+  filesUploadPick(id: string, remoteDir: string, folder: boolean, policy: ExistingPolicy, mode: TransferMode): Promise<void>;
+  filesUploadDropped(id: string, remoteDir: string, policy: ExistingPolicy, mode: TransferMode): Promise<number>;
+  filesDownload(id: string, remotePath: string, name: string, directory: boolean, policy: ExistingPolicy, mode: TransferMode): Promise<void>;
+  filesDelete(id: string, remotePath: string, name: string, confirmation: string): Promise<void>;
+  filesBookmarks(id: string): Promise<string[]>;
+  filesBookmarkAdd(id: string, path: string): Promise<string[]>;
+  onFileJob(handler: (job: FileJob) => void): Promise<() => void>;
+  onFilesChanged(handler: (sessionId: string) => void): Promise<() => void>;
+  onFileDrop(handler: (count: number) => void): Promise<() => void>;
+  onFilesState(handler: (event: { id: string; available: boolean; message: string }) => void): Promise<() => void>;
   onChallenge(handler: (challenge: Challenge) => void): Promise<() => void>;
   onSessionState(handler: (event: SessionStateEvent) => void): Promise<() => void>;
 }
@@ -93,6 +113,25 @@ async function tauriApi(): Promise<Api> {
     onAiRestored: (handler) => listen('ai-restored', () => handler()),
     onApproval: (handler) => listen<ApprovalRequest>('approval', (e) => handler(e.payload)),
     onApprovalClosed: (handler) => listen<string>('approval-closed', (e) => handler(e.payload)),
+    filesList: (id, path) => invoke('files_list', { id, path }),
+    filesSearch: (id, root, query) => invoke('files_search', { id, root, query }),
+    filesJobs: () => invoke('files_jobs'),
+    filesCancel: (jobId) => invoke('files_cancel', { jobId }),
+    filesClearJobs: () => invoke('files_clear_jobs'),
+    filesUploadPick: (id, remoteDir, folder, policy, mode) =>
+      invoke('files_upload_pick', { id, remoteDir, folder, policy, mode }),
+    filesUploadDropped: (id, remoteDir, policy, mode) =>
+      invoke('files_upload_dropped', { id, remoteDir, policy, mode }),
+    filesDownload: (id, remotePath, name, directory, policy, mode) =>
+      invoke('files_download', { id, remotePath, name, directory, policy, mode }),
+    filesDelete: (id, remotePath, name, confirmation) => invoke('files_delete', { id, remotePath, name, confirmation }),
+    filesBookmarks: (id) => invoke('files_bookmarks', { id }),
+    filesBookmarkAdd: (id, path) => invoke('files_bookmark_add', { id, path }),
+    onFileJob: (handler) => listen<FileJob>('file-job', (e) => handler(e.payload)),
+    onFilesChanged: (handler) => listen<string>('files-changed', (e) => handler(e.payload)),
+    onFileDrop: (handler) => listen<number>('file-drop', (e) => handler(e.payload)),
+    onFilesState: (handler) =>
+      listen<{ id: string; available: boolean; message: string }>('files-state', (e) => handler(e.payload)),
     onChallenge: (handler) => listen<Challenge>('challenge', (e) => handler(e.payload)),
     onSessionState: (handler) =>
       listen<SessionStateEvent>('session-state', (e) => handler(e.payload)),

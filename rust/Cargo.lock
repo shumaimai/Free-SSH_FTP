@@ -2513,6 +2513,7 @@ dependencies = [
  "hashi-terminal",
  "rfd",
  "russh",
+ "russh-sftp",
  "serde",
  "serde_json",
  "tauri",

@@ -1,5 +1,5 @@
 //! アプリ全体の状態とcommand。保存データ・認証要求の台帳・セッション一覧を持つ。
-use crate::{ai::AiState, session::Session};
+use crate::{ai::AiState, files::FileJobs, session::Session};
 use hashi_core::interaction::{Challenge, Interaction, Reply, Request};
 use hashi_storage::{
     config::{Profile, Snapshot, Store},
@@ -26,6 +26,7 @@ pub struct AppState {
     challenges: Mutex<HashMap<String, Request>>,
     pub sessions: Mutex<HashMap<String, Arc<Session>>>,
     pub ai: AiState,
+    pub files: FileJobs,
     exiting: AtomicBool,
 }
 
@@ -51,6 +52,7 @@ impl AppState {
             challenges: Mutex::new(HashMap::new()),
             sessions: Mutex::new(HashMap::new()),
             ai: AiState::new(),
+            files: FileJobs::new(),
             exiting: AtomicBool::new(false),
         })
     }
@@ -273,6 +275,11 @@ pub async fn shutdown(app: &AppHandle) {
     let state = app.state::<AppState>();
     // AI処理・共有・承認待ちを先に止めてから、端末と接続を終える。
     state.ai.stop_all();
+    if let Ok(sessions) = state.sessions.lock() {
+        for id in sessions.keys() {
+            state.files.cancel_session(id);
+        }
+    }
     let sessions: Vec<Arc<Session>> = state
         .sessions
         .lock()

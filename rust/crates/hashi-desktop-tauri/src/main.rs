@@ -4,6 +4,7 @@
 //! 秘密・認証要求の照合・信頼情報の保存は常にこちら（Rust側）で行う。
 mod ai;
 mod app;
+mod files;
 mod session;
 
 use tauri::{Manager, WindowEvent};
@@ -21,6 +22,7 @@ fn main() {
         .setup(|app| {
             app::start_challenge_pump(app.handle().clone());
             ai::start_pumps(app.handle().clone());
+            files::start_pumps(app.handle().clone());
             let handle = app.handle().clone();
             // 保存キーの復号は重いので、画面の起動を待たせない。
             tauri::async_runtime::spawn_blocking(move || {
@@ -52,6 +54,17 @@ fn main() {
             ai::ai_confirm,
             ai::ai_cancel_preview,
             ai::approval_reply,
+            files::files_list,
+            files::files_search,
+            files::files_jobs,
+            files::files_cancel,
+            files::files_clear_jobs,
+            files::files_upload_pick,
+            files::files_upload_dropped,
+            files::files_download,
+            files::files_delete,
+            files::files_bookmarks,
+            files::files_bookmark_add,
             session::session_open_local,
             session::session_connect,
             session::session_input,
@@ -59,6 +72,15 @@ fn main() {
             session::session_close,
         ])
         .on_window_event(|window, event| {
+            if let WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+                // ローカルのパスは画面へ渡さず、件数だけ知らせる。
+                let app = window.app_handle();
+                let count = app
+                    .state::<app::AppState>()
+                    .files
+                    .set_dropped(paths.clone());
+                let _ = tauri::Emitter::emit(app, "file-drop", count);
+            }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 // 接続・端末を順に終わらせてから閉じる。閉じる前に二重に押されても1回だけ走らせる。
                 api.prevent_close();

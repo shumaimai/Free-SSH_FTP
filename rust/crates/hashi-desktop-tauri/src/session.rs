@@ -1,6 +1,6 @@
 //! 端末セッション（ローカルCMD・SSH）。出力は画面（xterm.js）へ生のバイト列で渡し、
 //! 同じ出力をhashi-terminalのモデルへも流す（AI観測・ログ用。画面の描画には使わない）。
-use crate::app::AppState;
+use crate::{app::AppState, files::Files};
 use hashi_core::{
     broker::{Kind, OutputCapture, Registration, Registry},
     interaction::Stamp,
@@ -9,6 +9,7 @@ use hashi_core::{
 };
 use hashi_terminal::Terminal;
 use serde::Serialize;
+use serde_json::json;
 use std::{
     sync::{Arc, Mutex},
     time::Duration,
@@ -44,6 +45,7 @@ pub struct Session {
     tracker: TaskTracker,
     binding: Binding,
     pending: Arc<Mutex<Pending>>,
+    files: Mutex<Option<Arc<Files>>>,
 }
 
 #[derive(Serialize, Clone)]
@@ -86,15 +88,28 @@ impl Session {
                 tracker: TaskTracker::new(),
                 binding: Arc::new(Mutex::new(None)),
                 pending: Arc::new(Mutex::new(Pending::default())),
+                files: Mutex::new(None),
             },
             stamp,
         )
     }
 
-    /// 取消 → 端末/接続の終了 → 受信タスクの回収。待ちには上限を置く。
+    pub fn files(&self) -> Option<Arc<Files>> {
+        self.files.lock().ok().and_then(|f| f.clone())
+    }
+
+    pub fn is_closing(&self) -> bool {
+        self.cancel.is_cancelled()
+    }
+
+    /// 取消 → ファイル操作の終了待ち → 端末/接続の終了 → 受信タスクの回収。待ちには上限を置く。
     pub async fn close(&self, registry: &Registry) {
-        self.cancel.cancel();
         unbind(registry, &self.binding);
+        // 接続を閉じる前に、進行中の転送（確定ACK・復元を含む）を終わらせる。
+        if let Some(files) = self.files() {
+            files.shutdown().await;
+        }
+        self.cancel.cancel();
         if let Some(local) = self.local.clone() {
             let _ = tokio::time::timeout(
                 Duration::from_secs(5),
@@ -346,6 +361,7 @@ pub async fn session_connect(
         session.input.clone(),
     );
     let label_for_binding = session.label.clone();
+    let session_ref = session.clone();
     let interaction = state.interaction.clone();
     emit_state(&app, &id, "connecting", "接続中");
     let task_app = app.clone();
@@ -370,6 +386,34 @@ pub async fn session_connect(
                     return Err(error);
                 }
             };
+            // ファイル操作は端末と別のチャネル。使えなくても端末は使えるようにする。
+            let files_ready = async {
+                let nav = ssh.sftp().await?;
+                let xfer = ssh.sftp().await?;
+                anyhow::Ok((nav, xfer))
+            };
+            match tokio::time::timeout(Duration::from_secs(30), files_ready).await {
+                Ok(Ok((nav, xfer))) => {
+                    let files = Arc::new(Files::new(
+                        ssh.clone(),
+                        nav,
+                        xfer,
+                        &cancel,
+                        profile.initial_path.clone(),
+                        profile.id(),
+                    ));
+                    if let Ok(mut slot) = session_ref.files.lock() {
+                        *slot = Some(files);
+                    }
+                    let _ = app.emit("files-state", json!({"id": id, "available": true, "message": ""}));
+                }
+                Ok(Err(error)) => {
+                    let _ = app.emit("files-state", json!({"id": id, "available": false, "message": error.to_string()}));
+                }
+                Err(_) => {
+                    let _ = app.emit("files-state", json!({"id": id, "available": false, "message": "SFTPの開始がタイムアウトしました"}));
+                }
+            }
             // 接続できてから台帳へ登録する（独立実行は同じSSH接続の別チャネルを使う）。
             bind(
                 &registry,
@@ -423,6 +467,10 @@ pub async fn session_connect(
             }
             .await;
             unbind(&registry, &binding);
+            // 接続を閉じる前に、進行中の転送を終わらせる。
+            if let Some(files) = session_ref.files() {
+                files.shutdown().await;
+            }
             let _ = tokio::time::timeout(Duration::from_secs(5), ssh.close()).await;
             outcome
         }

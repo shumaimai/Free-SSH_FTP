@@ -14,7 +14,7 @@ import {
   ToggleButton,
   tokens,
 } from '@fluentui/react-components';
-import { Chat20Regular, Dismiss12Regular, Home20Regular, Settings20Regular, WindowConsole20Regular, PlugConnected20Regular } from '@fluentui/react-icons';
+import { Dismiss12Regular, PanelRight20Regular, Home20Regular, Settings20Regular, WindowConsole20Regular, PlugConnected20Regular } from '@fluentui/react-icons';
 import type { Api } from './api';
 import type { ApprovalRequest, Challenge, ChallengeAnswer, Profile, SessionInfo, SessionState } from './types';
 import { emptyProfile } from './types';
@@ -24,6 +24,7 @@ import { ChallengeDialog } from './ChallengeDialog';
 import { TerminalView } from './TerminalView';
 import { SettingsDialog } from './SettingsDialog';
 import { AiDock } from './AiDock';
+import { FileDock } from './FileDock';
 import { ApprovalDialog } from './ApprovalDialog';
 import { DEFAULT_APPEARANCE, UI_FONTS, fluentTheme, sanitize, type Appearance } from './appearance';
 
@@ -59,7 +60,7 @@ const useStyles = makeStyles({
   work: { display: 'flex', minHeight: 0 },
   main: { position: 'relative', minHeight: 0, minWidth: 0, flex: 1, backgroundColor: tokens.colorNeutralBackground2 },
   dock: {
-    width: '400px',
+    width: '420px',
     flexShrink: 0,
     padding: '12px',
     boxSizing: 'border-box',
@@ -108,6 +109,9 @@ export function App({ api }: { api: Api }) {
   const [appearance, setAppearance] = useState<Appearance>(DEFAULT_APPEARANCE);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [dockOpen, setDockOpen] = useState(false);
+  const [dockTab, setDockTab] = useState<'files' | 'ai'>('files');
+  const [filesState, setFilesState] = useState<Record<string, { available: boolean; message: string }>>({});
+  const autoOpened = useRef(false);
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const dark = appearance.mode === 'dark' || (appearance.mode === 'system' && systemDark);
   const theme = useMemo(() => {
@@ -138,6 +142,15 @@ export function App({ api }: { api: Api }) {
       setStartupError(r.error);
     });
     const subscriptions: Array<Promise<() => void>> = [
+      api.onFilesState((e) => {
+        setFilesState((old) => ({ ...old, [e.id]: { available: e.available, message: e.message } }));
+        // 最初にファイルが使えるようになったとき、一度だけパネルを開く。
+        if (e.available && !autoOpened.current) {
+          autoOpened.current = true;
+          setDockTab('files');
+          setDockOpen(true);
+        }
+      }),
       api.onApproval((r) => setApprovals((old) => [...old, r])),
       api.onApprovalClosed((id) => setApprovals((old) => old.filter((r) => r.id !== id))),
       api.onChallenge((c) => setChallenges((old) => [...old, c])),
@@ -223,6 +236,11 @@ export function App({ api }: { api: Api }) {
     [tabs, states],
   );
   const activeTab = tabs.find((t) => t.key === active);
+  // ファイル欄は、いま開いているSSH接続のもの。ローカル端末やホームでは出さない。
+  const filesSessionId =
+    activeTab?.kind === 'ssh' && activeTab.sessionId && states[activeTab.sessionId]?.state === 'connected'
+      ? activeTab.sessionId
+      : null;
   const activeState = activeTab?.sessionId ? states[activeTab.sessionId] : undefined;
   const dotColor = (tab: TabInfo) => {
     const s = tab.sessionId ? states[tab.sessionId]?.state : undefined;
@@ -282,10 +300,11 @@ export function App({ api }: { api: Api }) {
           <ToggleButton
             appearance="subtle"
             checked={dockOpen}
-            icon={<Chat20Regular />}
+            icon={<PanelRight20Regular />}
+            aria-label="ファイル・AIパネル"
             onClick={() => setDockOpen((open) => !open)}
           >
-            AI
+            ファイル・AI
           </ToggleButton>
           <Button
             appearance="subtle"
@@ -353,7 +372,26 @@ export function App({ api }: { api: Api }) {
         </div>
         {dockOpen && (
           <aside className={styles.dock}>
-            <AiDock api={api} targets={shareTargets} />
+            <TabList
+              size="small"
+              selectedValue={dockTab}
+              onTabSelect={(_, d) => setDockTab(d.value as 'files' | 'ai')}
+              style={{ marginBottom: 8 }}
+            >
+              <Tab value="files">ファイル</Tab>
+              <Tab value="ai">AI</Tab>
+            </TabList>
+            <div style={{ height: 'calc(100% - 40px)', minHeight: 0, display: dockTab === 'files' ? 'block' : 'none' }}>
+              <FileDock
+                api={api}
+                sessionId={filesSessionId}
+                available={filesSessionId ? (filesState[filesSessionId]?.available ?? false) : false}
+                unavailableMessage={filesSessionId ? (filesState[filesSessionId]?.message ?? '') : ''}
+              />
+            </div>
+            <div style={{ height: 'calc(100% - 40px)', minHeight: 0, display: dockTab === 'ai' ? 'block' : 'none' }}>
+              <AiDock api={api} targets={shareTargets} />
+            </div>
           </aside>
         )}
         </div>

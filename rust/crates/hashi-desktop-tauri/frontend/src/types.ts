@@ -112,3 +112,33 @@ export interface ApprovalRequest {
   cwd: string | null;
   text: string;
 }
+
+// ---- ファイル ----
+export interface FileEntry {
+  name: string;
+  path: string;
+  directory: boolean;
+  symlink: boolean;
+  size: number;
+  permissions: number | null;
+}
+
+export interface Listing {
+  path: string;
+  entries: FileEntry[];
+}
+
+export type JobPhase = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+
+export interface FileJob {
+  id: string;
+  sessionId: string;
+  label: string;
+  phase: JobPhase;
+  done: number;
+  total: number;
+  message: string;
+}
+
+export type ExistingPolicy = 'refuse' | 'overwrite' | 'resume' | 'skip';
+export type TransferMode = 'atomic' | 'in_place';
