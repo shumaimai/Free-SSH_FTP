@@ -4,6 +4,7 @@
 //! 秘密・認証要求の照合・信頼情報の保存は常にこちら（Rust側）で行う。
 mod ai;
 mod app;
+mod editor;
 mod files;
 mod forwards;
 mod keygen;
@@ -59,6 +60,13 @@ fn main() {
             ai::ai_confirm,
             ai::ai_cancel_preview,
             ai::approval_reply,
+            editor::editor_open_remote,
+            editor::editor_open_local,
+            editor::editor_save,
+            editor::editor_save_as,
+            editor::editor_set_dirty,
+            editor::editor_close,
+            app::app_quit,
             files::files_list,
             files::files_search,
             files::files_jobs,
@@ -103,16 +111,9 @@ fn main() {
                 let _ = tauri::Emitter::emit(app, "file-drop", count);
             }
             if let WindowEvent::CloseRequested { api, .. } = event {
-                // 接続・端末を順に終わらせてから閉じる。閉じる前に二重に押されても1回だけ走らせる。
+                // 未保存の編集があれば画面で確認する。なければ接続・端末を順に終わらせて閉じる。
                 api.prevent_close();
-                let app = window.app_handle().clone();
-                let state = app.state::<app::AppState>();
-                if state.begin_exit() {
-                    tauri::async_runtime::spawn(async move {
-                        app::shutdown(&app).await;
-                        app.exit(0);
-                    });
-                }
+                app::request_exit(window.app_handle(), false);
             }
         })
         .build(tauri::generate_context!());

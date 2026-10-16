@@ -25,6 +25,8 @@ import type {
   Profile,
   SessionInfo,
   SessionStateEvent,
+  OpenedDoc,
+  SavedDoc,
 } from './types';
 
 export interface Api {
@@ -74,6 +76,14 @@ export interface Api {
   onFilesChanged(handler: (sessionId: string) => void): Promise<() => void>;
   onFileDrop(handler: (count: number) => void): Promise<() => void>;
   onFilesState(handler: (event: { id: string; available: boolean; message: string }) => void): Promise<() => void>;
+  editorOpenRemote(sessionId: string, path: string): Promise<OpenedDoc>;
+  editorOpenLocal(): Promise<OpenedDoc | null>;
+  editorSave(id: string, text: string | null, patches: [number, number][] | null): Promise<SavedDoc>;
+  editorSaveAs(id: string, text: string | null, patches: [number, number][] | null): Promise<SavedDoc | null>;
+  editorSetDirty(id: string, dirty: boolean): Promise<void>;
+  editorClose(id: string): Promise<void>;
+  appQuit(): Promise<void>;
+  onCloseRequested(handler: () => void): Promise<() => void>;
   snippetsList(): Promise<Snippet[]>;
   snippetsSave(list: Snippet[]): Promise<Snippet[]>;
   snippetVariables(body: string): Promise<string[]>;
@@ -157,6 +167,14 @@ async function tauriApi(): Promise<Api> {
     onFileDrop: (handler) => listen<number>('file-drop', (e) => handler(e.payload)),
     onFilesState: (handler) =>
       listen<{ id: string; available: boolean; message: string }>('files-state', (e) => handler(e.payload)),
+    editorOpenRemote: (sessionId, path) => invoke('editor_open_remote', { sessionId, path }),
+    editorOpenLocal: () => invoke('editor_open_local'),
+    editorSave: (id, text, patches) => invoke('editor_save', { id, text, patches }),
+    editorSaveAs: (id, text, patches) => invoke('editor_save_as', { id, text, patches }),
+    editorSetDirty: (id, dirty) => invoke('editor_set_dirty', { id, dirty }),
+    editorClose: (id) => invoke('editor_close', { id }),
+    appQuit: () => invoke('app_quit'),
+    onCloseRequested: (handler) => listen('close-requested', () => handler()),
     snippetsList: () => invoke('snippets_list'),
     snippetsSave: (list) => invoke('snippets_save', { list }),
     snippetVariables: (body) => invoke('snippet_variables', { body }),

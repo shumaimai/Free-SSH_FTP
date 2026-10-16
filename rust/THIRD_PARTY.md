@@ -24,7 +24,7 @@ SSH候補はrussh 0.64.1（ring/RSA/flate2）、SFTPはrussh-sftp 3.0.1、
 egui版のネイティブ候補はPython/Qt/WebViewのランタイムを同梱しない。
 
 Web画面版（`crates/hashi-desktop-tauri`）はTauri 2とWindowsのWebView2（OS付属のEdge描画部品）を使う。
-画面はReact 19、Fluent UI（`@fluentui/react-components`）、xterm.js（`@xterm/xterm`）で、
+画面はReact 19、Fluent UI（`@fluentui/react-components`）、xterm.js（`@xterm/xterm`）、エディタのCodeMirror 6（`codemirror`・`@codemirror/*`、MIT）で、
 `frontend/package-lock.json`で固定する。配布時は`tools/rust_artifact.py`が実行時のnpm依存だけの
 ライセンス（本文・package.json）を`licenses/npm/`へ同梱する。開発用依存は同梱しない。
 

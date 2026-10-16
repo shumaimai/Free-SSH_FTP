@@ -74,6 +74,16 @@ impl Files {
         hashi_core::keygen::register_public_key(&self.ssh, &nav, public_line).await
     }
 
+    /// 一覧・削除・エディタ用のSFTPチャネル（転送のxferとは別）。
+    pub fn nav(&self) -> &Sftp {
+        &self.nav
+    }
+
+    /// 接続の終了で取り消されるtoken（エディタの読み書きに渡す）。
+    pub fn work_token(&self) -> CancellationToken {
+        self.work_cancel.child_token()
+    }
+
     /// 古い一覧・検索を取り消し、新しい要求のtokenを返す。取消済みtokenは次の要求へ流用しない。
     fn begin_navigation(&self) -> CancellationToken {
         let token = self.work_cancel.child_token();

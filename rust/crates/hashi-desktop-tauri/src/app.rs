@@ -1,5 +1,7 @@
 //! アプリ全体の状態とcommand。保存データ・認証要求の台帳・セッション一覧を持つ。
-use crate::{ai::AiState, files::FileJobs, session::Session, settings::UpdateInfo};
+use crate::{
+    ai::AiState, editor::Editors, files::FileJobs, session::Session, settings::UpdateInfo,
+};
 use hashi_core::interaction::{Challenge, Interaction, Reply, Request};
 use hashi_storage::{
     config::{Profile, Snapshot, Store},
@@ -27,6 +29,7 @@ pub struct AppState {
     pub sessions: Mutex<HashMap<String, Arc<Session>>>,
     pub ai: AiState,
     pub files: FileJobs,
+    pub editors: Editors,
     pub update: Mutex<Option<UpdateInfo>>,
     exiting: AtomicBool,
 }
@@ -54,6 +57,7 @@ impl AppState {
             sessions: Mutex::new(HashMap::new()),
             ai: AiState::new(),
             files: FileJobs::new(),
+            editors: Editors::default(),
             update: Mutex::new(None),
             exiting: AtomicBool::new(false),
         })
@@ -273,6 +277,29 @@ pub fn appearance_set(state: State<'_, AppState>, appearance: Appearance) -> Res
 }
 
 /// 全セッションを閉じる。接続の終了待ちには上限を置く。
+/// 終了を要求する。`force`でなければ未保存のエディタがある間は画面に確認させる。
+/// 二重に押されても終了処理は1回だけ走らせる。
+pub fn request_exit(app: &AppHandle, force: bool) {
+    let state = app.state::<AppState>();
+    if !force && state.editors.dirty_count() > 0 {
+        let _ = app.emit("close-requested", ());
+        return;
+    }
+    if state.begin_exit() {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            shutdown(&app).await;
+            app.exit(0);
+        });
+    }
+}
+
+/// 未保存の確認を済ませた上での終了（画面の「保存せず終了」）。
+#[tauri::command]
+pub fn app_quit(app: AppHandle) {
+    request_exit(&app, true);
+}
+
 pub async fn shutdown(app: &AppHandle) {
     let state = app.state::<AppState>();
     // AI処理・共有・承認待ちを先に止めてから、端末と接続を終える。

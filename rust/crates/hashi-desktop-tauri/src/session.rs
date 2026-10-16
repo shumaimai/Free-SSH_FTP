@@ -3,9 +3,9 @@
 use crate::{app::AppState, files::Files, forwards};
 use hashi_core::{
     broker::{Kind, OutputCapture, Registration, Registry},
-    session_log::SessionLog,
     interaction::Stamp,
     local::{LocalTerminal, TerminalEvent},
+    session_log::SessionLog,
     ssh::SshSession,
 };
 use hashi_terminal::Terminal;
@@ -275,12 +275,7 @@ fn spawn_flusher(session: &Session, registry: Arc<Registry>, app: AppHandle) {
 }
 
 /// 確定した受信行をログへ渡す。書けなくなったら、このセッションのログだけを止めて知らせる。
-fn drain_log(
-    model: &Mutex<Terminal>,
-    log: &Mutex<Option<SessionLog>>,
-    app: &AppHandle,
-    id: &str,
-) {
+fn drain_log(model: &Mutex<Terminal>, log: &Mutex<Option<SessionLog>>, app: &AppHandle, id: &str) {
     let Ok(mut slot) = log.lock() else { return };
     let Some(active) = slot.as_mut() else { return };
     let (mut lines, dropped) = match model.lock() {

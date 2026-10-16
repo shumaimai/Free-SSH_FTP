@@ -16,10 +16,25 @@ import type {
   Profile,
   SessionInfo,
   SessionStateEvent,
+  OpenedDoc,
 } from './types';
 import { emptyProfile } from './types';
 
+function mockDoc(sessionId: string | null, path: string): OpenedDoc {
+  const name = path.split('/').pop() ?? path;
+  const id = crypto.randomUUID();
+  if (name.endsWith('.bin') || name.endsWith('.dat')) {
+    const bytes = new Uint8Array(1500).map((_, i) => (i * 7 + (i >> 4)) & 0xff);
+    let bin = '';
+    bytes.forEach((b) => (bin += String.fromCharCode(b)));
+    return { id, name, path, sessionId, kind: 'hex', text: null, hex: btoa(bin), encoding: 'UTF-8', newline: 'LF', size: bytes.length };
+  }
+  const text = `# ${name}\nserver {\n    listen 80;\n    server_name example.com;\n    # 日本語のコメント\n    location / {\n        proxy_pass http://127.0.0.1:8080;\n    }\n}\n`;
+  return { id, name, path, sessionId, kind: 'text', text, hex: null, encoding: 'UTF-8', newline: 'LF', size: text.length };
+}
+
 export function mockApi(): Api {
+  let localOpens = 0;
   let stored: import('./appearance').Appearance | null = null;
   let profiles: Profile[] = [
     { ...emptyProfile(), name: '本番サーバー', host: 'prod.example.com', username: 'deploy' },
@@ -206,6 +221,14 @@ export function mockApi(): Api {
       setTimeout(() => h({ id: 'ssh-1', available: true, message: '' }), 100);
       return () => {};
     },
+    editorOpenRemote: async (sessionId, path) => mockDoc(sessionId, path),
+    editorOpenLocal: async () => mockDoc(null, localOpens++ % 2 === 0 ? '/home/me/nginx.conf' : '/home/me/world.dat'),
+    editorSave: async (_id, text) => ({ name: 'saved', path: '/x/saved', sessionId: null, size: text?.length ?? 0 }),
+    editorSaveAs: async () => ({ name: 'copy.txt', path: '/home/me/copy.txt', sessionId: null, size: 1 }),
+    editorSetDirty: async () => {},
+    editorClose: async () => {},
+    appQuit: async () => {},
+    onCloseRequested: async () => () => {},
     snippetsList: async () => snippets,
     snippetsSave: async (list) => {
       snippets = list;

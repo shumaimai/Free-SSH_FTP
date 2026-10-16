@@ -18,8 +18,14 @@ pub struct Settings {
 impl Settings {
     fn from_map(map: &serde_json::Map<String, Value>) -> Self {
         Self {
-            update_check: map.get("update_check").and_then(Value::as_bool).unwrap_or(true),
-            session_log: map.get("session_log").and_then(Value::as_bool).unwrap_or(false),
+            update_check: map
+                .get("update_check")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
+            session_log: map
+                .get("session_log")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             session_log_dir: map
                 .get("session_log_dir")
                 .and_then(Value::as_str)

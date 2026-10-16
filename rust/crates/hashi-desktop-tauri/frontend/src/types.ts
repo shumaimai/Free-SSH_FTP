@@ -192,3 +192,25 @@ export interface UpdateInfo {
   tag: string;
   url: string;
 }
+
+/** エディタに開いた文書。保存先はRust側が持ち、画面は表示と編集内容だけを扱う。 */
+export interface OpenedDoc {
+  id: string;
+  name: string;
+  path: string;
+  sessionId: string | null;
+  kind: 'text' | 'hex';
+  text: string | null;
+  /** HEXのときの全バイト（base64）。 */
+  hex: string | null;
+  encoding: string;
+  newline: string;
+  size: number;
+}
+
+export interface SavedDoc {
+  name: string;
+  path: string;
+  sessionId: string | null;
+  size: number;
+}

@@ -2,6 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Button,
   Caption1,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
   FluentProvider,
   Menu,
   MenuItem,
@@ -19,9 +25,9 @@ import {
   ToggleButton,
   tokens,
 } from '@fluentui/react-components';
-import { Dismiss12Regular, Key20Regular, PanelRight20Regular, PlugConnected20Filled, Wrench20Regular, Home20Regular, Settings20Regular, WindowConsole20Regular, PlugConnected20Regular } from '@fluentui/react-icons';
+import { Dismiss12Regular, DocumentEdit20Regular, FolderOpen20Regular, Key20Regular, PanelRight20Regular, PlugConnected20Filled, Wrench20Regular, Home20Regular, Settings20Regular, WindowConsole20Regular, PlugConnected20Regular } from '@fluentui/react-icons';
 import type { Api } from './api';
-import type { UpdateInfo, ApprovalRequest, Challenge, ChallengeAnswer, Profile, SessionInfo, SessionState } from './types';
+import type { OpenedDoc, UpdateInfo, ApprovalRequest, Challenge, ChallengeAnswer, Profile, SessionInfo, SessionState } from './types';
 import { emptyProfile } from './types';
 import { Home } from './Home';
 import { ProfileDialog } from './ProfileDialog';
@@ -31,6 +37,7 @@ import { SettingsDialog } from './SettingsDialog';
 import { AiDock } from './AiDock';
 import { FileDock } from './FileDock';
 import { SnippetBar } from './SnippetBar';
+import { EditorPane } from './EditorView';
 import { KeygenDialog } from './KeygenDialog';
 import { ForwardDialog } from './ForwardDialog';
 import { ApprovalDialog } from './ApprovalDialog';
@@ -96,10 +103,13 @@ const useStyles = makeStyles({
 
 interface TabInfo {
   key: string;
-  kind: 'local' | 'ssh';
+  kind: 'local' | 'ssh' | 'editor';
   index?: number;
   label: string;
   sessionId?: string;
+  /** エディタのタブ: 開いている文書と未保存の印。 */
+  doc?: OpenedDoc;
+  dirty?: boolean;
 }
 
 function useDark(): boolean {
@@ -167,6 +177,7 @@ export function App({ api }: { api: Api }) {
           setDockOpen(true);
         }
       }),
+      api.onCloseRequested(() => setQuitAsk(true)),
       api.onApproval((r) => setApprovals((old) => [...old, r])),
       api.onApprovalClosed((id) => setApprovals((old) => old.filter((r) => r.id !== id))),
       api.onChallenge((c) => setChallenges((old) => [...old, c])),
@@ -187,15 +198,33 @@ export function App({ api }: { api: Api }) {
     setActive(key);
   }, []);
 
+  const [discard, setDiscard] = useState<string | null>(null);
+  const [quitAsk, setQuitAsk] = useState(false);
+
   const closeTab = useCallback(
-    (key: string) => {
+    (key: string, force = false) => {
       const tab = tabs.find((t) => t.key === key);
+      if (tab?.kind === 'editor' && tab.dirty && !force) {
+        setActive(key);
+        setDiscard(key);
+        return;
+      }
+      if (tab?.doc) void api.editorClose(tab.doc.id);
       closed.current.add(key);
       setTabs((old) => old.filter((t) => t.key !== key));
       setActive((current) => (current === key ? 'home' : current));
       if (tab?.sessionId) void api.close(tab.sessionId).catch((e) => setNotice(String(e)));
     },
     [api, tabs],
+  );
+
+  const openEditor = useCallback(
+    (task: Promise<OpenedDoc | null>) => {
+      task
+        .then((doc) => doc && openTab({ kind: 'editor', label: doc.name, doc, dirty: false }))
+        .catch((e) => setNotice(String(e)));
+    },
+    [openTab],
   );
 
   const onOpened = useCallback(
@@ -253,11 +282,12 @@ export function App({ api }: { api: Api }) {
   );
   const activeTab = tabs.find((t) => t.key === active);
   // ファイル欄は、いま開いているSSH接続のもの。ローカル端末やホームでは出さない。
+  const tabSession = activeTab?.kind === 'editor' ? (activeTab.doc?.sessionId ?? undefined) : activeTab?.sessionId;
   const filesSessionId =
-    activeTab?.kind === 'ssh' && activeTab.sessionId && states[activeTab.sessionId]?.state === 'connected'
-      ? activeTab.sessionId
+    activeTab && activeTab.kind !== 'local' && tabSession && states[tabSession]?.state === 'connected'
+      ? tabSession
       : null;
-  const activeState = activeTab?.sessionId ? states[activeTab.sessionId] : undefined;
+  const activeState = tabSession ? states[tabSession] : undefined;
   const dotColor = (tab: TabInfo) => {
     const s = tab.sessionId ? states[tab.sessionId]?.state : undefined;
     if (s === 'connected') return tokens.colorPaletteGreenForeground1;
@@ -283,20 +313,31 @@ export function App({ api }: { api: Api }) {
               <Tab
                 key={tab.key}
                 value={tab.key}
-                icon={tab.kind === 'ssh' ? <PlugConnected20Regular /> : <WindowConsole20Regular />}
+                icon={
+                  tab.kind === 'ssh' ? (
+                    <PlugConnected20Regular />
+                  ) : tab.kind === 'editor' ? (
+                    <DocumentEdit20Regular />
+                  ) : (
+                    <WindowConsole20Regular />
+                  )
+                }
               >
                 <span style={{ display: 'inline-flex', alignItems: 'center' }}>
-                  <span
-                    style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: 4,
-                      background: dotColor(tab),
-                      marginRight: 8,
-                      display: 'inline-block',
-                    }}
-                  />
+                  {tab.kind !== 'editor' && (
+                    <span
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: 4,
+                        background: dotColor(tab),
+                        marginRight: 8,
+                        display: 'inline-block',
+                      }}
+                    />
+                  )}
                   {tab.label}
+                  {tab.dirty && <span aria-label="未保存" style={{ marginLeft: 4, color: tokens.colorBrandForeground1 }}>●</span>}
                   <span
                     role="button"
                     aria-label={`${tab.label}を閉じる`}
@@ -330,6 +371,9 @@ export function App({ api }: { api: Api }) {
             </MenuTrigger>
             <MenuPopover>
               <MenuList>
+                <MenuItem icon={<FolderOpen20Regular />} onClick={() => openEditor(api.editorOpenLocal())}>
+                  この PC のファイルを開く...
+                </MenuItem>
                 <MenuItem icon={<Key20Regular />} onClick={() => setKeygenOpen(true)}>
                   SSH鍵を作る...
                 </MenuItem>
@@ -379,6 +423,25 @@ export function App({ api }: { api: Api }) {
               key={tab.key}
               className={mergeClasses(styles.pane, styles.paneCol, active !== tab.key && styles.paneHidden)}
             >
+              {tab.kind === 'editor' && tab.doc ? (
+                <EditorPane
+                  api={api}
+                  doc={tab.doc}
+                  active={active === tab.key}
+                  dark={dark}
+                  appearance={appearance}
+                  onDirty={(dirty) => setTabs((old) => old.map((t) => (t.key === tab.key ? { ...t, dirty } : t)))}
+                  onSaved={(name, path, sessionId) =>
+                    setTabs((old) =>
+                      old.map((t) =>
+                        t.key === tab.key && t.doc ? { ...t, label: name, doc: { ...t.doc, name, path, sessionId } } : t,
+                      ),
+                    )
+                  }
+                  onMessage={setNotice}
+                />
+              ) : (
+              <>
               <SnippetBar
                 api={api}
                 sessionId={tab.sessionId && states[tab.sessionId]?.state === 'connected' ? tab.sessionId : null}
@@ -419,6 +482,8 @@ export function App({ api }: { api: Api }) {
                 }}
               />
               </div>
+              </>
+              )}
             </div>
           ))}
         </div>
@@ -439,6 +504,7 @@ export function App({ api }: { api: Api }) {
                 sessionId={filesSessionId}
                 available={filesSessionId ? (filesState[filesSessionId]?.available ?? false) : false}
                 unavailableMessage={filesSessionId ? (filesState[filesSessionId]?.message ?? '') : ''}
+                onEdit={(id, path) => openEditor(api.editorOpenRemote(id, path))}
               />
             </div>
             <div style={{ height: 'calc(100% - 40px)', minHeight: 0, display: dockTab === 'ai' ? 'block' : 'none' }}>
@@ -498,6 +564,44 @@ export function App({ api }: { api: Api }) {
           void api.approvalReply(current.id, allow).catch((e) => setNotice(String(e)));
         }}
       />
+      <Dialog open={discard !== null} onOpenChange={(_, d) => !d.open && setDiscard(null)}>
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>保存していない変更があります</DialogTitle>
+            <DialogContent>
+              {tabs.find((t) => t.key === discard)?.label} への変更は保存されていません。閉じると失われます。
+            </DialogContent>
+            <DialogActions>
+              <Button onClick={() => setDiscard(null)}>編集に戻る</Button>
+              <Button
+                appearance="primary"
+                onClick={() => {
+                  if (discard) closeTab(discard, true);
+                  setDiscard(null);
+                }}
+              >
+                保存せず閉じる
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+      <Dialog open={quitAsk} onOpenChange={(_, d) => !d.open && setQuitAsk(false)}>
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>保存していない編集があります</DialogTitle>
+            <DialogContent>
+              編集中のファイルに保存していない変更があります。このまま終了すると失われます。
+            </DialogContent>
+            <DialogActions>
+              <Button onClick={() => setQuitAsk(false)}>やめる</Button>
+              <Button appearance="primary" onClick={() => void api.appQuit()}>
+                保存せず終了
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
       <ChallengeDialog challenge={challenges[0] ?? null} error={challengeError} onAnswer={(a) => void answer(a)} />
     </FluentProvider>
   );

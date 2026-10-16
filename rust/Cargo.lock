@@ -2507,6 +2507,7 @@ name = "hashi-desktop-tauri"
 version = "0.1.0-alpha.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "hashi-ai",
  "hashi-core",
  "hashi-storage",

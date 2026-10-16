@@ -39,6 +39,7 @@ import {
   ArrowUpload20Regular,
   Delete20Regular,
   Document20Regular,
+  Edit20Regular,
   Dismiss16Regular,
   Folder20Filled,
   FolderArrowUp20Regular,
@@ -120,13 +121,15 @@ const PHASE: Record<FileJob['phase'], { label: string; color: 'brand' | 'success
 };
 
 interface Props {
+  /** ファイルを内蔵エディタで開く依頼（開く処理は呼び出し側）。 */
+  onEdit: (sessionId: string, path: string) => void;
   api: Api;
   sessionId: string | null;
   available: boolean;
   unavailableMessage: string;
 }
 
-export function FileDock({ api, sessionId, available, unavailableMessage }: Props) {
+export function FileDock({ api, sessionId, available, unavailableMessage, onEdit }: Props) {
   const styles = useStyles();
   const [path, setPath] = useState('');
   const [pathInput, setPathInput] = useState('');
@@ -211,7 +214,10 @@ export function FileDock({ api, sessionId, available, unavailableMessage }: Prop
 
   const current = entries.find((e) => e.path === selected) ?? null;
 
-  const enter = (entry: FileEntry) => entry.directory && void load(entry.path);
+  const enter = (entry: FileEntry) => {
+    if (entry.directory) void load(entry.path);
+    else if (sessionId) onEdit(sessionId, entry.path);
+  };
   const run = (task: Promise<unknown>) => task.catch((e) => setError(String(e)));
 
   if (!sessionId) {
@@ -281,6 +287,14 @@ export function FileDock({ api, sessionId, available, unavailableMessage }: Prop
           }
         >
           受信
+        </Button>
+        <Button
+          size="small"
+          icon={<Edit20Regular />}
+          disabled={!current || current.directory}
+          onClick={() => current && onEdit(sessionId, current.path)}
+        >
+          編集
         </Button>
         <Button
           size="small"
