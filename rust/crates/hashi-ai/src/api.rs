@@ -76,6 +76,8 @@ pub struct ApiProvider {
     pub base: String,
     pub use_tools: bool,
     pub protocol: String,
+    /// 通信方式を「自動」で作ったか。モデルが決まった後に、そのモデルに合わせて選び直すために持つ。
+    pub auto_protocol: bool,
 }
 impl ApiProvider {
     pub fn new(
@@ -97,6 +99,7 @@ impl ApiProvider {
             bail!("APIの形式を選んでください");
         }
         let model = model.trim().to_owned();
+        let auto_protocol = protocol == "auto";
         let protocol = if protocol == "auto" {
             if kind == "openai" {
                 "responses"
@@ -117,6 +120,7 @@ impl ApiProvider {
             base,
             use_tools,
             protocol: protocol.into(),
+            auto_protocol,
         })
     }
     pub fn key(&self) -> &str {

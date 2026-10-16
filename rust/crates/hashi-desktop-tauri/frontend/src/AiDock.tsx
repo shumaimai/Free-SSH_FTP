@@ -210,12 +210,23 @@ export function AiDock({ api, targets }: Props) {
   useEffect(() => {
     if (!setup || !current) return;
     setKey('');
+    setModel('');
+    setCandidates([]);
     setNeedModel(false);
     setMessage(null);
     if (!isUrlService) setBase('');
     void api.aiHasKey(service, base).then(setHasKey).catch(() => setHasKey(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [service, setup]);
+
+  // 接続先URLを変えたら、そのURLの保存キーの有無を見直す（入力済みのキーは消さない）。
+  useEffect(() => {
+    if (!setup || !isUrlService) return;
+    const timer = setTimeout(() => {
+      void api.aiHasKey(service, base).then(setHasKey).catch(() => setHasKey(false));
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [api, base, service, setup, isUrlService]);
 
   useEffect(() => endRef.current?.scrollIntoView({ block: 'end' }), [messages]);
   // 終わった端末は共有対象から外す。
@@ -231,7 +242,7 @@ export function AiDock({ api, targets }: Props) {
         service,
         base,
         key,
-        model: needModel ? model : '',
+        model,
         protocol,
         useTools,
         persist,
@@ -308,9 +319,8 @@ export function AiDock({ api, targets }: Props) {
               disabled={busy}
               placeholder={current?.defaultBase || 'https://example.com/v1'}
               onChange={(_, d) => {
+                // キーは接続を押したときの接続先へだけ送る。先にキーを貼っても消さない。
                 setBase(d.value);
-                // 入力済みのキーを、別の接続先へ送らない。
-                setKey('');
                 setNeedModel(false);
               }}
             />
@@ -338,28 +348,27 @@ export function AiDock({ api, targets }: Props) {
             </div>
           </>
         )}
-        {needModel && (
-          <Field label="モデル名">
-            <div className={styles.row}>
-              <Input
-                className={styles.grow}
-                value={model}
-                placeholder="提供元のモデル名"
-                onChange={(_, d) => setModel(d.value)}
-              />
-              {candidates.length > 0 && (
-                <Select value="" onChange={(_, d) => d.value && setModel(d.value)} style={{ maxWidth: 150 }}>
-                  <option value="">一覧から選ぶ</option>
-                  {candidates.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </Select>
-              )}
-            </div>
-          </Field>
-        )}
+        <Field label={needModel ? 'モデル名（選んでください）' : 'モデル名（空なら自動で選びます）'}>
+          <div className={styles.row}>
+            <Input
+              className={styles.grow}
+              value={model}
+              disabled={busy}
+              placeholder="例: claude-sonnet-5-5 / gpt-5"
+              onChange={(_, d) => setModel(d.value)}
+            />
+            {candidates.length > 0 && (
+              <Select value="" disabled={busy} onChange={(_, d) => d.value && setModel(d.value)} style={{ maxWidth: 150 }}>
+                <option value="">一覧から選ぶ</option>
+                {candidates.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </div>
+        </Field>
         {isUrlService && (
           <Accordion collapsible>
             <AccordionItem value="adv">

@@ -106,6 +106,33 @@ pub fn default_model(kind: &str, models: &[String]) -> Option<String> {
     models.first().cloned()
 }
 
+/// モデル一覧が示す対応エンドポイント（Command Code等）から、そのモデルで使う通信方式を選ぶ。
+/// 一覧に情報がなければ`None`（従来どおりモデル名とURLで決める）。
+pub fn protocol_from_endpoints(model: &str, listed: &[serde_json::Value]) -> Option<&'static str> {
+    let entry = listed.iter().find(|m| m["id"].as_str() == Some(model))?;
+    let endpoints: Vec<&str> = entry["supported_endpoints"]
+        .as_array()?
+        .iter()
+        .filter_map(|e| e.as_str())
+        .collect();
+    let has = |name: &str| {
+        endpoints
+            .iter()
+            .any(|e| e.trim_end_matches('/').ends_with(name))
+    };
+    if has("/messages") && model.to_lowercase().contains("claude") {
+        Some("messages")
+    } else if has("/chat/completions") {
+        Some("chat")
+    } else if has("/responses") {
+        Some("responses")
+    } else if has("/messages") {
+        Some("messages")
+    } else {
+        None
+    }
+}
+
 /// 保存キーの名前。`api:{種別}:{正規化URLのSHA-256}`。
 pub fn key_id(kind: &str, base: &str) -> Result<String, String> {
     use sha2::Digest;
@@ -175,7 +202,9 @@ pub fn connect(
     secrets: &EncryptedSecrets,
 ) -> Result<Outcome, String> {
     let cancel = CancellationToken::new();
-    let listed = probe.models(&cancel).map(|models| {
+    let raw = probe.models(&cancel);
+    let raw_models = raw.as_ref().cloned().unwrap_or_default();
+    let listed = raw.map(|models| {
         models
             .iter()
             .filter_map(|m| m["id"].as_str().map(str::to_owned))
@@ -207,27 +236,46 @@ pub fn connect(
             }
         }
     };
+    // 通信方式は「自動」のままなら、決まったモデルに合わせて選び直す（仮の名前で決めた方式を引き継がない）。
+    let protocol = if probe.auto_protocol {
+        protocol_from_endpoints(&model, &raw_models).unwrap_or("auto")
+    } else {
+        probe.protocol.as_str()
+    };
     let provider = ApiProvider::new(
         &probe.kind,
         &model,
         probe.key(),
         Some(&probe.base),
         probe.use_tools,
-        &probe.protocol,
+        protocol,
     )
     .map_err(|e| e.to_string())?;
+    let mut provider = provider;
+    // 利用者が方式を選んでいないことを覚えておく（モデルを切り替えたとき、そのモデルに合わせて選び直す）。
+    provider.auto_protocol = probe.auto_protocol;
     // 接続確認ではtoolsを送らない。
     let mut check = provider.clone();
     check.use_tools = false;
-    check
-        .respond(
-            &[json!({"role": "user", "content": "OKとだけ答えてください。"})],
-            "接続確認です。端末操作をせず短く回答してください。",
-            &[],
-            &cancel,
-            &mut |_| {},
-        )
-        .map_err(|e| e.to_string())?;
+    if let Err(error) = check.respond(
+        &[json!({"role": "user", "content": "OKとだけ答えてください。"})],
+        "接続確認です。端末操作をせず短く回答してください。",
+        &[],
+        &cancel,
+        &mut |_| {},
+    ) {
+        let message = error.to_string();
+        // 自動で選んだモデルが使えなかっただけなら、モデルを選び直せるようにする。キーやURLの誤りはそのまま返す。
+        let auth = message.contains("HTTP 401") || message.contains("HTTP 403");
+        return if typed.is_empty() && !auth {
+            Ok(Outcome::NeedModel(
+                format!("自動で選んだモデル「{model}」で確認に失敗しました（{message}）。別のモデル名を選ぶか入力して、もう一度「接続する」を押してください。"),
+                models,
+            ))
+        } else {
+            Err(message)
+        };
+    }
     secrets
         .set(
             key_id,
@@ -290,5 +338,37 @@ mod tests {
             "https://evil.example.com/v1"
         );
         assert_eq!(effective_base(&SERVICES[3], ""), "");
+    }
+
+    #[test]
+    fn protocol_follows_the_chosen_models_supported_endpoints() {
+        let listed = vec![
+            json!({"id": "claude-sonnet-5-5", "supported_endpoints": ["/messages"]}),
+            json!({"id": "gpt-x", "supported_endpoints": ["/chat/completions", "/responses"]}),
+            json!({"id": "resp-only", "supported_endpoints": ["/responses"]}),
+            json!({"id": "no-info"}),
+        ];
+        assert_eq!(
+            protocol_from_endpoints("claude-sonnet-5-5", &listed),
+            Some("messages")
+        );
+        assert_eq!(protocol_from_endpoints("gpt-x", &listed), Some("chat"));
+        assert_eq!(
+            protocol_from_endpoints("resp-only", &listed),
+            Some("responses")
+        );
+        assert_eq!(protocol_from_endpoints("no-info", &listed), None);
+        assert_eq!(protocol_from_endpoints("unknown", &listed), None);
+    }
+
+    #[test]
+    fn auto_protocol_is_remembered_so_it_can_follow_the_chosen_model() {
+        let placeholder =
+            ApiProvider::new("commandcode", "model-list", "k", None, true, "auto").unwrap();
+        assert!(placeholder.auto_protocol);
+        assert_eq!(placeholder.protocol, "chat");
+        let explicit =
+            ApiProvider::new("commandcode", "claude-x", "k", None, true, "chat").unwrap();
+        assert!(!explicit.auto_protocol);
     }
 }

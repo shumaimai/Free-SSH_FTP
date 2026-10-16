@@ -321,6 +321,7 @@ fn save_connection(
         "base": base,
         "model": provider.model,
         "protocol": provider.protocol,
+        "protocol_auto": provider.auto_protocol,
         "use_tools": provider.use_tools,
     });
     let snapshot = state
@@ -456,7 +457,8 @@ pub fn restore(app: &AppHandle) {
     };
     let protocol = saved["protocol"].as_str().unwrap_or("auto");
     let use_tools = saved["use_tools"].as_bool().unwrap_or(true);
-    if let Ok(provider) = connect::build(service, typed, &key, model, protocol, use_tools) {
+    if let Ok(mut provider) = connect::build(service, typed, &key, model, protocol, use_tools) {
+        provider.auto_protocol = saved["protocol_auto"].as_bool().unwrap_or(false);
         adopt(&state, service_id, typed, provider, vec![]);
     }
 }
@@ -483,15 +485,32 @@ pub async fn ai_switch_model(state: State<'_, AppState>, model: String) -> Resul
     if model.is_empty() {
         return Err("モデルを指定してください".into());
     }
-    let provider = ApiProvider::new(
+    // 方式を利用者が選んでいないなら、切り替え先のモデルに合う方式を一覧から選び直す（取得できなければ名前で決める）。
+    let protocol = if current.auto_protocol {
+        let probe = current.clone();
+        let listed = tokio::task::spawn_blocking(move || {
+            probe
+                .models(&tokio_util::sync::CancellationToken::new())
+                .unwrap_or_default()
+        })
+        .await
+        .unwrap_or_default();
+        connect::protocol_from_endpoints(&model, &listed)
+            .unwrap_or("auto")
+            .to_owned()
+    } else {
+        current.protocol.clone()
+    };
+    let mut provider = ApiProvider::new(
         &current.kind,
         &model,
         current.key(),
         Some(&current.base),
         current.use_tools,
-        &current.protocol,
+        &protocol,
     )
     .map_err(|e| e.to_string())?;
+    provider.auto_protocol = current.auto_protocol;
     save_connection(&state, &conn.service, &conn.base, &provider)?;
     adopt(&state, &conn.service, &conn.base, provider, conn.models);
     Ok(())
