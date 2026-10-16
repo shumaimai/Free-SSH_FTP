@@ -3,6 +3,11 @@ import {
   Button,
   Caption1,
   FluentProvider,
+  Menu,
+  MenuItem,
+  MenuList,
+  MenuPopover,
+  MenuTrigger,
   makeStyles,
   mergeClasses,
   MessageBar,
@@ -14,7 +19,7 @@ import {
   ToggleButton,
   tokens,
 } from '@fluentui/react-components';
-import { Dismiss12Regular, PanelRight20Regular, Home20Regular, Settings20Regular, WindowConsole20Regular, PlugConnected20Regular } from '@fluentui/react-icons';
+import { Dismiss12Regular, Key20Regular, PanelRight20Regular, PlugConnected20Filled, Wrench20Regular, Home20Regular, Settings20Regular, WindowConsole20Regular, PlugConnected20Regular } from '@fluentui/react-icons';
 import type { Api } from './api';
 import type { ApprovalRequest, Challenge, ChallengeAnswer, Profile, SessionInfo, SessionState } from './types';
 import { emptyProfile } from './types';
@@ -25,6 +30,9 @@ import { TerminalView } from './TerminalView';
 import { SettingsDialog } from './SettingsDialog';
 import { AiDock } from './AiDock';
 import { FileDock } from './FileDock';
+import { SnippetBar } from './SnippetBar';
+import { KeygenDialog } from './KeygenDialog';
+import { ForwardDialog } from './ForwardDialog';
 import { ApprovalDialog } from './ApprovalDialog';
 import { DEFAULT_APPEARANCE, UI_FONTS, fluentTheme, sanitize, type Appearance } from './appearance';
 
@@ -70,6 +78,8 @@ const useStyles = makeStyles({
     overflow: 'hidden',
   },
   pane: { position: 'absolute', inset: 0 },
+  paneCol: { display: 'flex', flexDirection: 'column' },
+  termArea: { position: 'relative', flex: 1, minHeight: 0 },
   paneHidden: { visibility: 'hidden', pointerEvents: 'none' },
   status: {
     display: 'flex',
@@ -109,6 +119,8 @@ export function App({ api }: { api: Api }) {
   const [appearance, setAppearance] = useState<Appearance>(DEFAULT_APPEARANCE);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [dockOpen, setDockOpen] = useState(false);
+  const [keygenOpen, setKeygenOpen] = useState(false);
+  const [forwardOpen, setForwardOpen] = useState(false);
   const [dockTab, setDockTab] = useState<'files' | 'ai'>('files');
   const [filesState, setFilesState] = useState<Record<string, { available: boolean; message: string }>>({});
   const autoOpened = useRef(false);
@@ -297,6 +309,23 @@ export function App({ api }: { api: Api }) {
             ))}
           </TabList>
           <div className={styles.grow} />
+          <Menu>
+            <MenuTrigger disableButtonEnhancement>
+              <Button appearance="subtle" icon={<Wrench20Regular />}>
+                ツール
+              </Button>
+            </MenuTrigger>
+            <MenuPopover>
+              <MenuList>
+                <MenuItem icon={<Key20Regular />} onClick={() => setKeygenOpen(true)}>
+                  SSH鍵を作る...
+                </MenuItem>
+                <MenuItem icon={<PlugConnected20Filled />} onClick={() => setForwardOpen(true)}>
+                  ポート転送...
+                </MenuItem>
+              </MenuList>
+            </MenuPopover>
+          </Menu>
           <ToggleButton
             appearance="subtle"
             checked={dockOpen}
@@ -333,7 +362,16 @@ export function App({ api }: { api: Api }) {
             />
           </div>
           {tabs.map((tab) => (
-            <div key={tab.key} className={mergeClasses(styles.pane, active !== tab.key && styles.paneHidden)}>
+            <div
+              key={tab.key}
+              className={mergeClasses(styles.pane, styles.paneCol, active !== tab.key && styles.paneHidden)}
+            >
+              <SnippetBar
+                api={api}
+                sessionId={tab.sessionId && states[tab.sessionId]?.state === 'connected' ? tab.sessionId : null}
+                onError={setNotice}
+              />
+              <div className={styles.termArea}>
               {(() => {
                 const st = tab.sessionId ? states[tab.sessionId] : undefined;
                 if (!st || (st.state !== 'error' && st.state !== 'closed')) return null;
@@ -367,6 +405,7 @@ export function App({ api }: { api: Api }) {
                   setNotice(message);
                 }}
               />
+              </div>
             </div>
           ))}
         </div>
@@ -427,6 +466,14 @@ export function App({ api }: { api: Api }) {
         dark={dark}
         onChange={changeAppearance}
         onClose={() => setSettingsOpen(false)}
+      />
+      <KeygenDialog api={api} open={keygenOpen} registerSession={filesSessionId} onClose={() => setKeygenOpen(false)} />
+      <ForwardDialog
+        api={api}
+        open={forwardOpen}
+        sessionId={filesSessionId}
+        label={activeTab?.label ?? ''}
+        onClose={() => setForwardOpen(false)}
       />
       <ApprovalDialog
         request={approvals[0] ?? null}

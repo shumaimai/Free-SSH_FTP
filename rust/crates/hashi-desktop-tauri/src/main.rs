@@ -5,7 +5,10 @@
 mod ai;
 mod app;
 mod files;
+mod forwards;
+mod keygen;
 mod session;
+mod snippets;
 
 use tauri::{Manager, WindowEvent};
 
@@ -65,6 +68,17 @@ fn main() {
             files::files_delete,
             files::files_bookmarks,
             files::files_bookmark_add,
+            keygen::keygen_defaults,
+            keygen::keygen_path_exists,
+            keygen::keygen_pick_path,
+            keygen::keygen_generate,
+            forwards::forward_list,
+            forwards::forward_start,
+            forwards::forward_stop,
+            snippets::snippets_list,
+            snippets::snippets_save,
+            snippets::snippet_variables,
+            snippets::snippet_send,
             session::session_open_local,
             session::session_connect,
             session::session_input,

@@ -68,6 +68,12 @@ impl Files {
         let _ = tokio::time::timeout(Duration::from_secs(30), self.work.wait()).await;
     }
 
+    /// 公開鍵を接続先のauthorized_keysへ追記する（hashi-coreの規則）。登録済みならfalse。
+    pub async fn register_public_key(&self, public_line: &str) -> anyhow::Result<bool> {
+        let nav = self.nav.lock().await;
+        hashi_core::keygen::register_public_key(&self.ssh, &nav, public_line).await
+    }
+
     /// 古い一覧・検索を取り消し、新しい要求のtokenを返す。取消済みtokenは次の要求へ流用しない。
     fn begin_navigation(&self) -> CancellationToken {
         let token = self.work_cancel.child_token();

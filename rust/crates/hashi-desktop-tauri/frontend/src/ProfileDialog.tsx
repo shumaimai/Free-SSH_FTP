@@ -73,6 +73,7 @@ export function ProfileDialog({ open, initial, existing, error, onSave, onDelete
               <Field label="ポート">
                 <Input
                   type="number"
+                  style={{ width: '100%', minWidth: 0 }}
                   value={String(p.port)}
                   onChange={(_, d) => set('port', Math.min(65535, Math.max(1, Number(d.value) || 22)))}
                 />

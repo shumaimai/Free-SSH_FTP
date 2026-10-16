@@ -142,3 +142,41 @@ export interface FileJob {
 
 export type ExistingPolicy = 'refuse' | 'overwrite' | 'resume' | 'skip';
 export type TransferMode = 'atomic' | 'in_place';
+
+// ---- スニペット ----
+export interface Snippet {
+  name: string;
+  body: string;
+  send_enter: boolean;
+}
+
+// ---- 鍵生成・ポート転送 ----
+export interface KeygenDefaults {
+  ed25519: string;
+  ecdsa: string;
+  rsa: string;
+  ecdsaBits: number[];
+  rsaBits: number[];
+}
+
+export interface KeygenArgs {
+  kind: 'ed25519' | 'ecdsa' | 'rsa';
+  bits: number;
+  passphrase: string;
+  comment: string;
+  path: string;
+  overwrite: boolean;
+  registerSession: string | null;
+}
+
+export interface KeygenResult {
+  path: string;
+  publicLine: string;
+  registered: boolean | null;
+  warning: string | null;
+}
+
+export interface ForwardInfo {
+  id: string;
+  label: string;
+}

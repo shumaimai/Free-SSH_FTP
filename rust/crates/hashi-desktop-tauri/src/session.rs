@@ -1,6 +1,6 @@
 //! 端末セッション（ローカルCMD・SSH）。出力は画面（xterm.js）へ生のバイト列で渡し、
 //! 同じ出力をhashi-terminalのモデルへも流す（AI観測・ログ用。画面の描画には使わない）。
-use crate::{app::AppState, files::Files};
+use crate::{app::AppState, files::Files, forwards};
 use hashi_core::{
     broker::{Kind, OutputCapture, Registration, Registry},
     interaction::Stamp,
@@ -46,6 +46,8 @@ pub struct Session {
     binding: Binding,
     pending: Arc<Mutex<Pending>>,
     files: Mutex<Option<Arc<Files>>>,
+    ssh: Mutex<Option<Arc<SshSession>>>,
+    pub forwards: tokio::sync::Mutex<Vec<forwards::Entry>>,
 }
 
 #[derive(Serialize, Clone)]
@@ -89,9 +91,38 @@ impl Session {
                 binding: Arc::new(Mutex::new(None)),
                 pending: Arc::new(Mutex::new(Pending::default())),
                 files: Mutex::new(None),
+                ssh: Mutex::new(None),
+                forwards: tokio::sync::Mutex::new(vec![]),
             },
             stamp,
         )
+    }
+
+    /// 端末へ入力を送る。満杯なら待たずに失敗を返し、入力を捨てたことを隠さない。
+    pub async fn send(&self, bytes: Vec<u8>) -> Result<(), String> {
+        if bytes.len() > MAX_INPUT {
+            return Err("端末入力が大きすぎます".into());
+        }
+        tokio::time::timeout(Duration::from_secs(2), self.input.send(bytes))
+            .await
+            .map_err(|_| "端末入力の送信待ちがあふれました".to_owned())?
+            .map_err(|_| "端末は終了しています".to_owned())
+    }
+
+    pub fn ssh(&self) -> Option<Arc<SshSession>> {
+        self.ssh.lock().ok().and_then(|s| s.clone())
+    }
+
+    /// 接続を閉じる前の後始末: ポート転送の停止と、進行中のファイル操作の終了待ち。
+    pub async fn shutdown_extras(&self) {
+        let mut forwards = self.forwards.lock().await;
+        for mut entry in forwards.drain(..) {
+            let _ = tokio::time::timeout(Duration::from_secs(5), entry.handle.stop()).await;
+        }
+        drop(forwards);
+        if let Some(files) = self.files() {
+            files.shutdown().await;
+        }
     }
 
     pub fn files(&self) -> Option<Arc<Files>> {
@@ -105,10 +136,8 @@ impl Session {
     /// 取消 → ファイル操作の終了待ち → 端末/接続の終了 → 受信タスクの回収。待ちには上限を置く。
     pub async fn close(&self, registry: &Registry) {
         unbind(registry, &self.binding);
-        // 接続を閉じる前に、進行中の転送（確定ACK・復元を含む）を終わらせる。
-        if let Some(files) = self.files() {
-            files.shutdown().await;
-        }
+        // 接続を閉じる前に、ポート転送と進行中の転送（確定ACK・復元を含む）を終わらせる。
+        self.shutdown_extras().await;
         self.cancel.cancel();
         if let Some(local) = self.local.clone() {
             let _ = tokio::time::timeout(
@@ -386,6 +415,9 @@ pub async fn session_connect(
                     return Err(error);
                 }
             };
+            if let Ok(mut slot) = session_ref.ssh.lock() {
+                *slot = Some(ssh.clone());
+            }
             // ファイル操作は端末と別のチャネル。使えなくても端末は使えるようにする。
             let files_ready = async {
                 let nav = ssh.sftp().await?;
@@ -467,10 +499,8 @@ pub async fn session_connect(
             }
             .await;
             unbind(&registry, &binding);
-            // 接続を閉じる前に、進行中の転送を終わらせる。
-            if let Some(files) = session_ref.files() {
-                files.shutdown().await;
-            }
+            // 接続を閉じる前に、ポート転送と進行中の転送を終わらせる。
+            session_ref.shutdown_extras().await;
             let _ = tokio::time::timeout(Duration::from_secs(5), ssh.close()).await;
             outcome
         }
@@ -487,7 +517,7 @@ pub async fn session_connect(
     })
 }
 
-fn find(state: &AppState, id: &str) -> Result<Arc<Session>, String> {
+pub fn find(state: &AppState, id: &str) -> Result<Arc<Session>, String> {
     state
         .sessions
         .lock()
@@ -504,17 +534,7 @@ pub async fn session_input(
     id: String,
     data: String,
 ) -> Result<(), String> {
-    if data.len() > MAX_INPUT {
-        return Err("端末入力が大きすぎます".into());
-    }
-    let session = find(&state, &id)?;
-    tokio::time::timeout(
-        Duration::from_secs(2),
-        session.input.send(data.into_bytes()),
-    )
-    .await
-    .map_err(|_| "端末入力の送信待ちがあふれました".to_owned())?
-    .map_err(|_| "端末は終了しています".to_owned())
+    find(&state, &id)?.send(data.into_bytes()).await
 }
 
 #[tauri::command]

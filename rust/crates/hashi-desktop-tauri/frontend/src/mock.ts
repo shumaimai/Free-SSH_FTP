@@ -1,6 +1,8 @@
 // 画面の確認・試験用の偽のバックエンド。VITE_MOCK付きのビルドにだけ入り、製品には入らない。
 import type { Api } from './api';
 import type {
+  ForwardInfo,
+  Snippet,
   FileEntry,
   FileJob,
   AiConnectResult,
@@ -89,6 +91,12 @@ export function mockApi(): Api {
       jobHandlers.forEach((h) => h({ ...job }));
     }, 300);
   };
+  let snippets: Snippet[] = [
+    { name: 'ディスク使用量', body: 'df -h', send_enter: true },
+    { name: 'ログを追う', body: 'tail -f {{file}}', send_enter: true },
+    { name: 'サービス再起動', body: 'sudo systemctl restart {{service}}', send_enter: false },
+  ];
+  let forwards: ForwardInfo[] = [];
   const challengeHandlers = new Set<(c: Challenge) => void>();
   const stateHandlers = new Set<(e: SessionStateEvent) => void>();
   const sinks = new Map<string, DataSink>();
@@ -195,6 +203,40 @@ export function mockApi(): Api {
     onFilesState: async (h) => {
       setTimeout(() => h({ id: 'ssh-1', available: true, message: '' }), 100);
       return () => {};
+    },
+    snippetsList: async () => snippets,
+    snippetsSave: async (list) => {
+      snippets = list;
+      return snippets;
+    },
+    snippetVariables: async (body) => [...new Set([...body.matchAll(/\{\{\s*([^{}\s]+)\s*\}\}/g)].map((m) => m[1]))],
+    snippetSend: async (id, index, values) => {
+      const sn = snippets[index];
+      write(id, sn.body.replace(/\{\{\s*([^{}\s]+)\s*\}\}/g, (_m, k) => values[k] ?? '') + (sn.send_enter ? '\r\n' : ''));
+    },
+    keygenDefaults: async () => ({
+      ed25519: 'C:\\Users\\me\\.ssh\\id_ed25519',
+      ecdsa: 'C:\\Users\\me\\.ssh\\id_ecdsa',
+      rsa: 'C:\\Users\\me\\.ssh\\id_rsa',
+      ecdsaBits: [256, 384, 521],
+      rsaBits: [2048, 3072, 4096],
+    }),
+    keygenPathExists: async (path) => path.endsWith('id_rsa'),
+    keygenPickPath: async () => 'C:\\Users\\me\\.ssh\\id_work',
+    keygenGenerate: async (args) => ({
+      path: args.path,
+      publicLine: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJq8x0m3EXAMPLEKEYDATAxxxxxxxxxxxxxxxxxxxx hashi',
+      registered: args.registerSession ? true : null,
+      warning: null,
+    }),
+    forwardList: async () => forwards,
+    forwardStart: async (_id, kind, bind, port, host, targetPort) => {
+      forwards = [...forwards, { id: `f${forwards.length + 1}`, label: `${kind === 'D' ? 'SOCKS5' : kind === 'R' ? 'リモート' : 'ローカル'} ${bind}:${port}${kind === 'D' ? '' : ` → ${host}:${targetPort}`}` }];
+      return forwards;
+    },
+    forwardStop: async (_id, forwardId) => {
+      forwards = forwards.filter((f) => f.id !== forwardId);
+      return forwards;
     },
     pickKeyFile: async () => 'C:\\Users\\me\\.ssh\\id_ed25519',
     challengeReply: async (challengeId, answer: ChallengeAnswer) => {

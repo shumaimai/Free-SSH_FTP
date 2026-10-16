@@ -1,6 +1,11 @@
 // 画面とRust側の境界。本番はTauriのcommand/eventだけを使い、試験用(VITE_MOCK)は偽の実装へ差し替える。
 import type { Appearance } from './appearance';
 import type {
+  ForwardInfo,
+  KeygenArgs,
+  KeygenDefaults,
+  KeygenResult,
+  Snippet,
   ExistingPolicy,
   FileEntry,
   FileJob,
@@ -67,6 +72,17 @@ export interface Api {
   onFilesChanged(handler: (sessionId: string) => void): Promise<() => void>;
   onFileDrop(handler: (count: number) => void): Promise<() => void>;
   onFilesState(handler: (event: { id: string; available: boolean; message: string }) => void): Promise<() => void>;
+  snippetsList(): Promise<Snippet[]>;
+  snippetsSave(list: Snippet[]): Promise<Snippet[]>;
+  snippetVariables(body: string): Promise<string[]>;
+  snippetSend(id: string, index: number, values: Record<string, string>): Promise<void>;
+  keygenDefaults(): Promise<KeygenDefaults>;
+  keygenPathExists(path: string): Promise<boolean>;
+  keygenPickPath(): Promise<string | null>;
+  keygenGenerate(args: KeygenArgs): Promise<KeygenResult>;
+  forwardList(id: string): Promise<ForwardInfo[]>;
+  forwardStart(id: string, kind: string, bind: string, port: number, host: string, targetPort: number): Promise<ForwardInfo[]>;
+  forwardStop(id: string, forwardId: string): Promise<ForwardInfo[]>;
   onChallenge(handler: (challenge: Challenge) => void): Promise<() => void>;
   onSessionState(handler: (event: SessionStateEvent) => void): Promise<() => void>;
 }
@@ -132,6 +148,18 @@ async function tauriApi(): Promise<Api> {
     onFileDrop: (handler) => listen<number>('file-drop', (e) => handler(e.payload)),
     onFilesState: (handler) =>
       listen<{ id: string; available: boolean; message: string }>('files-state', (e) => handler(e.payload)),
+    snippetsList: () => invoke('snippets_list'),
+    snippetsSave: (list) => invoke('snippets_save', { list }),
+    snippetVariables: (body) => invoke('snippet_variables', { body }),
+    snippetSend: (id, index, values) => invoke('snippet_send', { id, index, values }),
+    keygenDefaults: () => invoke('keygen_defaults'),
+    keygenPathExists: (path) => invoke('keygen_path_exists', { path }),
+    keygenPickPath: () => invoke('keygen_pick_path'),
+    keygenGenerate: (args) => invoke('keygen_generate', { args }),
+    forwardList: (id) => invoke('forward_list', { id }),
+    forwardStart: (id, kind, bind, port, host, targetPort) =>
+      invoke('forward_start', { id, kind, bind, port, host, targetPort }),
+    forwardStop: (id, forwardId) => invoke('forward_stop', { id, forwardId }),
     onChallenge: (handler) => listen<Challenge>('challenge', (e) => handler(e.payload)),
     onSessionState: (handler) =>
       listen<SessionStateEvent>('session-state', (e) => handler(e.payload)),
