@@ -600,3 +600,9 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - Rustの新しい画面は`rust/crates/hashi-desktop-tauri`（Tauri 2 + React + Fluent UI + xterm.js）。egui版は移行が済むまで残す。
   画面とはcommand/eventだけで話し、認証要求の照合・信頼情報の保存・秘密の保持は常にRust側。`freezePrototype`は入れない。
   端末入力は順番を保つ（`inputQueue.ts`）。npm依存は`package-lock.json`で固定し、`npm ci`（`ignore-scripts`）で入れる。画面の外部読込は禁止（CSP）。
+- Web画面のエディタ（`editor.rs`）は`hashi_core::editor::Document`を使い、保存先パス・元バイト列はRust側が持つ。画面が渡すのはテキストかHEXの[位置,値]だけ。
+  未保存数はRust側の台帳が数え、確認前に終了処理を始めない（`request_exit`）。権限補助は接続ごとに利用者が有効にし、既定では何も緩めない。
+  終了時の復元未完了・転送停止の未確認は警告として画面へ返す（記録は残す）。外部連携（MCP）はAIと同じBrokerで、画面は許可の設定と承認の表示だけ。
+- 2ペイン（`local.rs`）: ローカルで開くフォルダはRust側が持ち、転送の依頼は「そのフォルダ内の名前」だけ（画面からローカルの絶対パスを受け取って読み書きしない）。
+  ペイン間ドラッグはHTML5 DnDではなくポインタ操作（Windowsのファイルドロップ受信と両立させるため）。運ぶのはペインの印だけで、対象は受け側が選択状態から決める。
+  同期ブラウズの状態機械は`hashi_core::sync_browse::SyncState`（egui版と共有）。追随の失敗はエラーにせず通知にする。
