@@ -449,10 +449,21 @@ impl ApiProvider {
                         let entry = calls
                             .entry(call["index"].as_u64().unwrap_or_default())
                             .or_default();
-                        entry.0.push_str(call["id"].as_str().unwrap_or_default());
-                        entry
-                            .1
-                            .push_str(call["function"]["name"].as_str().unwrap_or_default());
+                        // idと名前は最初の断片にだけ載るのが普通だが、毎回同じ値を繰り返す実装もある。
+                        // 連結すると名前が壊れるので、最初に届いた値を使う。引数だけは断片を連結する。
+                        if let Some(id) = call["id"].as_str().filter(|id| !id.is_empty()) {
+                            if entry.0.is_empty() {
+                                entry.0 = id.to_owned();
+                            }
+                        }
+                        if let Some(name) = call["function"]["name"]
+                            .as_str()
+                            .filter(|name| !name.is_empty())
+                        {
+                            if entry.1.is_empty() {
+                                entry.1 = name.to_owned();
+                            }
+                        }
                         entry
                             .2
                             .push_str(call["function"]["arguments"].as_str().unwrap_or_default());
@@ -636,6 +647,18 @@ mod stream_tests {
             request.contains("POST /v1/chat/completions") && request.contains("Bearer sk-test")
         );
         assert!(request.contains("\"tools\""));
+    }
+
+    #[test]
+    fn repeated_ids_and_names_in_chat_chunks_are_not_concatenated() {
+        let (reply, _, _) = run("chat", concat!(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":\"run_command\",\"arguments\":\"{\\\"a\"}}]}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":\"run_command\",\"arguments\":\"\\\":1}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n"));
+        assert_eq!(
+            reply.unwrap().tool_calls,
+            vec![json!({"id": "c1", "name": "run_command", "arguments": {"a": 1}})]
+        );
     }
 
     #[test]

@@ -17,7 +17,36 @@ mod snippets;
 
 use tauri::{Manager, WindowEvent};
 
+/// Rust側の異常終了（panic）を設定フォルダの`rust-panic.log`へ残す。画面が固まったときの調査用。
+fn record_panics() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if let Ok(root) = hashi_storage::paths::config_root(hashi_storage::paths::Channel::Preview)
+        {
+            use std::io::Write;
+            let thread = std::thread::current();
+            let text = format!(
+                "[{}] thread={} {info}\n",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0),
+                thread.name().unwrap_or("?"),
+            );
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(root.join("rust-panic.log"))
+            {
+                let _ = file.write_all(text.as_bytes());
+            }
+        }
+        default(info);
+    }));
+}
+
 fn main() {
+    record_panics();
     let state = match app::AppState::new() {
         Ok(state) => state,
         Err(error) => {

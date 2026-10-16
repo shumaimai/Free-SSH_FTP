@@ -158,7 +158,9 @@ export function AiDock({ api, targets }: Props) {
   const [selected, setSelected] = useState<string[]>([]);
   const [mode, setMode] = useState<ShareMode>('consult');
   const [preview, setPreview] = useState<string | null>(null);
-  const endRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // 確認窓で「戻る」を押したとき、入力欄へ戻す質問。
+  const pendingText = useRef('');
 
   const current = useMemo(() => services.find((s) => s.id === service), [services, service]);
   const isUrlService = service === 'local' || service === 'custom';
@@ -226,7 +228,11 @@ export function AiDock({ api, targets }: Props) {
     return () => clearTimeout(timer);
   }, [api, base, service, setup, isUrlService]);
 
-  useEffect(() => endRef.current?.scrollIntoView({ block: 'end' }), [messages, running]);
+  // 会話欄だけを末尾へ送る。scrollIntoViewは外側の枠（アプリ全体）まで動かし、画面がずれることがある。
+  useEffect(() => {
+    const box = scrollRef.current;
+    if (box) box.scrollTop = box.scrollHeight;
+  }, [messages, running]);
   // 終わった端末は共有対象から外す。
   useEffect(() => {
     setSelected((old) => old.filter((id) => targets.some((t) => t.sessionId === id)));
@@ -279,6 +285,7 @@ export function AiDock({ api, targets }: Props) {
       if (result.preview !== null) {
         // 送る前の確認。会話はまだ始まっていない。
         setRunning(false);
+        pendingText.current = text;
         setPreview(result.preview);
       }
     } catch (error) {
@@ -491,7 +498,7 @@ export function AiDock({ api, targets }: Props) {
           {sharing ? MODE_HELP[mode] : '端末は見せていません。質問だけがAIに届きます。'}
         </Caption1>
       </div>
-      <div className={styles.scroll}>
+      <div className={styles.scroll} ref={scrollRef}>
         {messages.length === 0 && (
           <div className={styles.examples}>
             <Body1 className={styles.note}>何でも質問できます。上で端末を選ぶと、その画面を見せて相談できます。</Body1>
@@ -522,7 +529,6 @@ export function AiDock({ api, targets }: Props) {
             <Caption1 className={styles.note}>考えています…</Caption1>
           </div>
         )}
-        <div ref={endRef} />
       </div>
       <Textarea
         resize="none"
@@ -557,7 +563,13 @@ export function AiDock({ api, targets }: Props) {
         onCancel={() => {
           setPreview(null);
           void api.aiCancelPreview();
-          setMessages((old) => [...old, { role: 'note', text: '送信を取りやめました。' }]);
+          // 送らなかった質問は会話から外し、入力欄へ戻す。
+          const text = pendingText.current;
+          setMessages((old) => {
+            const last = old[old.length - 1];
+            return last?.role === 'user' && last.text === text ? old.slice(0, -1) : old;
+          });
+          setQuestion((current) => current || text);
         }}
       />
     </div>

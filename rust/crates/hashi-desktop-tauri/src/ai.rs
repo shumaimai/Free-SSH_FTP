@@ -34,8 +34,15 @@ pub struct AiState {
     conn: Mutex<Option<Conn>>,
     conversation: Mutex<Option<Arc<tokio::sync::Mutex<Conversation>>>>,
     running: Mutex<Option<CancellationToken>>,
-    preview: Mutex<Option<String>>,
+    /// 確認待ちの送信（質問・実行モード・対象）。確認されるまで実行モードは与えない。
+    preview: Mutex<Option<Pending>>,
     connecting: Mutex<bool>,
+}
+
+struct Pending {
+    question: String,
+    mode: Mode,
+    ids: Vec<(String, u64)>,
 }
 
 #[derive(Clone)]
@@ -87,6 +94,9 @@ impl AiState {
 
     fn new_conversation(&self) {
         self.cancel_running();
+        if let Ok(mut preview) = self.preview.lock() {
+            *preview = None;
+        }
         let provider = self.provider.lock().ok().and_then(|p| p.clone());
         let conversation = provider.map(|provider| {
             Arc::new(tokio::sync::Mutex::new(Conversation {
@@ -584,40 +594,58 @@ pub async fn ai_send(
         return Err("AIが未接続です".into());
     }
     let ids = crate::session::bindings_for(&state, &targets);
+    let mode = parse_mode(&mode)?;
+    if ids.is_empty() {
+        state
+            .ai
+            .broker
+            .configure(mode, &ids, SHARE_LIFETIME)
+            .map_err(|error| error.to_string())?;
+        begin(&app, &state, question, String::new(), mode)?;
+        return Ok(SendResult { preview: None });
+    }
+    // 送る前の確認のあいだは、読み取りだけを許す。選んだ実行モードは確認されてから与える。
     state
         .ai
         .broker
-        .configure(parse_mode(&mode)?, &ids, SHARE_LIFETIME)
+        .configure(Mode::Consult, &ids, SHARE_LIFETIME)
         .map_err(|error| error.to_string())?;
-    if ids.is_empty() {
-        begin(&app, &state, question, String::new())?;
-        return Ok(SendResult { preview: None });
-    }
     let context = hashi_ai::observe::context_snapshot(&state.ai.broker);
-    *state.ai.preview.lock().map_err(|_| "状態が不正です")? = Some(question);
+    *state.ai.preview.lock().map_err(|_| "状態が不正です")? = Some(Pending {
+        question,
+        mode,
+        ids,
+    });
     Ok(SendResult {
         preview: Some(context),
     })
 }
 
 /// 確認した内容でAIへ送る。画面で編集した内容をそのまま使う。
+/// 失敗しても確認待ちは消える（画面の確認窓は閉じているため、残すと以後の送信がすべて断られる）。
 #[tauri::command]
-pub fn ai_confirm(
+pub async fn ai_confirm(
     app: AppHandle,
     state: State<'_, AppState>,
     context: String,
 ) -> Result<(), String> {
-    if context.len() > 512 * 1024 {
-        return Err("送る内容が大きすぎます".into());
-    }
-    let question = state
+    let pending = state
         .ai
         .preview
         .lock()
         .map_err(|_| "状態が不正です")?
         .take()
         .ok_or("確認待ちの送信がありません")?;
-    begin(&app, &state, question, context)
+    if context.len() > 512 * 1024 {
+        state.ai.broker.stop();
+        return Err("送る内容が大きすぎます".into());
+    }
+    state
+        .ai
+        .broker
+        .configure(pending.mode, &pending.ids, SHARE_LIFETIME)
+        .map_err(|error| error.to_string())?;
+    begin(&app, &state, pending.question, context, pending.mode)
 }
 
 #[tauri::command]
@@ -633,6 +661,7 @@ fn begin(
     state: &AppState,
     question: String,
     context: String,
+    mode: Mode,
 ) -> Result<(), String> {
     let conversation = state
         .ai
@@ -645,7 +674,7 @@ fn begin(
     *state.ai.running.lock().map_err(|_| "状態が不正です")? = Some(token.clone());
     let (delta_tx, mut deltas) = mpsc::channel::<String>(256);
     let forward = app.clone();
-    tauri::async_runtime::spawn(async move {
+    let forwarder = tauri::async_runtime::spawn(async move {
         while let Some(text) = deltas.recv().await {
             let _ = forward.emit("ai-delta", text);
         }
@@ -657,9 +686,11 @@ fn begin(
             // 停止で取り消した前回のtokenを使い回さない。
             conversation.tools.cancel = token.child_token();
             conversation
-                .ask(&question, &context, &token, delta_tx)
+                .ask_mode(&question, &context, &token, delta_tx, mode == Mode::Consult)
                 .await
         };
+        // 途中の文字列をすべて画面へ渡してから終わりを知らせる（順番が逆だと本文が二重になる）。
+        let _ = forwarder.await;
         let state = app.state::<AppState>();
         if let Ok(mut running) = state.ai.running.lock() {
             *running = None;

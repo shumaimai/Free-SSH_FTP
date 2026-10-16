@@ -40,6 +40,7 @@ import { SnippetBar } from './SnippetBar';
 import { EditorPane } from './EditorView';
 import { KeygenDialog } from './KeygenDialog';
 import { ImportDialog } from './ImportDialog';
+import { ErrorBoundary } from './ErrorBoundary';
 import { ForwardDialog } from './ForwardDialog';
 import { ExternalDialog } from './ExternalDialog';
 import { ApprovalDialog } from './ApprovalDialog';
@@ -541,7 +542,9 @@ export function App({ api }: { api: Api }) {
               />
             </div>
             <div style={{ height: 'calc(100% - 40px)', minHeight: 0, display: dockTab === 'ai' ? 'block' : 'none' }}>
-              <AiDock api={api} targets={shareTargets} />
+              <ErrorBoundary>
+                <AiDock api={api} targets={shareTargets} />
+              </ErrorBoundary>
             </div>
           </aside>
         )}
