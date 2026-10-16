@@ -14,8 +14,8 @@ export interface Appearance {
 }
 
 export const DEFAULT_APPEARANCE: Appearance = {
-  mode: 'dark',
-  accent: 'mint',
+  mode: 'system',
+  accent: 'teal',
   uiFont: 'system',
   termFont: 'cascadia',
   termSize: 14,
@@ -29,7 +29,6 @@ export const MODES: { id: ThemeMode; label: string }[] = [
 ];
 
 export const ACCENTS: { id: string; label: string; color: string }[] = [
-  { id: 'mint', label: 'ミント（最初の画面）', color: '#56ccb2' },
   { id: 'teal', label: 'ティール', color: '#0f8b7d' },
   { id: 'blue', label: 'ブルー', color: '#0f6cbd' },
   { id: 'green', label: 'グリーン', color: '#2f8f46' },
@@ -153,75 +152,10 @@ export function brandRamp(base: string): BrandVariants {
   return out as unknown as BrandVariants;
 }
 
-/** 最初のegui版（theme.rs）の配色・角丸。暗い画面ではFluentの無彩色ではなく、この青みのある暗色を使う。 */
-const EGUI = {
-  bg: '#111318',
-  surface: '#181b21',
-  card: '#1f232b',
-  cardHover: '#282d38',
-  border: '#303642',
-  text: '#e6e9ef',
-  muted: '#8992a3',
-  danger: '#eb756c',
-  warn: '#e6b85c',
-  ok: '#62d28e',
-  onAccent: '#0a1c18',
-};
-
-function eguiDark(base: Theme, accent: string): Theme {
-  return {
-    ...base,
-    colorNeutralBackground1: EGUI.card,
-    colorNeutralBackground1Hover: EGUI.cardHover,
-    colorNeutralBackground1Pressed: EGUI.cardHover,
-    colorNeutralBackground1Selected: EGUI.cardHover,
-    colorNeutralBackground2: EGUI.bg,
-    colorNeutralBackground3: EGUI.surface,
-    colorNeutralBackground4: EGUI.bg,
-    colorNeutralBackground5: '#0c0e12',
-    colorNeutralBackground6: EGUI.card,
-    colorSubtleBackgroundHover: EGUI.cardHover,
-    colorSubtleBackgroundPressed: EGUI.cardHover,
-    colorNeutralForeground1: EGUI.text,
-    colorNeutralForeground1Hover: EGUI.text,
-    colorNeutralForeground1Pressed: EGUI.text,
-    colorNeutralForeground2: EGUI.text,
-    colorNeutralForeground3: EGUI.muted,
-    colorNeutralForeground4: EGUI.muted,
-    colorNeutralStroke1: EGUI.border,
-    colorNeutralStroke1Hover: accent,
-    colorNeutralStroke2: EGUI.border,
-    colorNeutralStroke3: EGUI.border,
-    colorNeutralStrokeAccessible: EGUI.muted,
-    colorPaletteRedForeground1: EGUI.danger,
-    colorPaletteRedForeground3: EGUI.danger,
-    colorPaletteYellowForeground1: EGUI.warn,
-    colorPaletteGreenForeground1: EGUI.ok,
-    colorBrandForeground1: accent,
-    colorBrandForegroundLink: accent,
-    colorBrandStroke1: accent,
-    colorCompoundBrandStroke: accent,
-    colorCompoundBrandForeground1: accent,
-    colorBrandBackground: accent,
-    colorBrandBackgroundHover: `color-mix(in srgb, ${accent} 88%, white)`,
-    colorBrandBackgroundPressed: `color-mix(in srgb, ${accent} 80%, black)`,
-    colorBrandBackground2: `color-mix(in srgb, ${accent} 22%, ${EGUI.card})`,
-    colorBrandBackground2Hover: `color-mix(in srgb, ${accent} 30%, ${EGUI.card})`,
-    colorNeutralForegroundOnBrand: EGUI.onAccent,
-    borderRadiusMedium: '8px',
-    borderRadiusLarge: '10px',
-    borderRadiusXLarge: '12px',
-    fontSizeBase300: '15px',
-    lineHeightBase300: '22px',
-    fontSizeBase200: '13px',
-  };
-}
-
 export function fluentTheme(dark: boolean, accentId: string): Theme {
   const accent = ACCENTS.find((a) => a.id === accentId) ?? ACCENTS[0];
   const ramp = brandRamp(accent.color);
-  if (!dark) return createLightTheme(ramp);
-  return eguiDark(createDarkTheme(ramp), accent.color);
+  return dark ? createDarkTheme(ramp) : createLightTheme(ramp);
 }
 
 export function termTheme(schemeId: string, dark: boolean, accentId: string): ITheme {
@@ -229,7 +163,7 @@ export function termTheme(schemeId: string, dark: boolean, accentId: string): IT
   if (scheme?.theme) return scheme.theme;
   const accent = ACCENTS.find((a) => a.id === accentId) ?? ACCENTS[0];
   return dark
-    ? { background: '#14171d', foreground: '#dadee6', cursor: accent.color, selectionBackground: '#2a4a48' }
+    ? { background: '#1b1b1f', foreground: '#e6e6e6', cursor: accent.color, selectionBackground: '#3a5f7a' }
     : { background: '#ffffff', foreground: '#1f1f1f', cursor: accent.color, selectionBackground: '#b7d7f0' };
 }
 
