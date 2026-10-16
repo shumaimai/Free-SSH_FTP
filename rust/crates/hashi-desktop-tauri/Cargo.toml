@@ -1,0 +1,28 @@
+[package]
+name = "hashi-desktop-tauri"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[[bin]]
+name = "Hashi-Preview"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "=2.7.3", features = [] }
+
+[dependencies]
+hashi-core = { path = "../hashi-core" }
+hashi-storage = { path = "../hashi-storage" }
+hashi-terminal = { path = "../hashi-terminal" }
+tauri = { version = "=2.12.4", features = [] }
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+serde.workspace = true
+serde_json.workspace = true
+anyhow = "1"
+russh = { version = "=0.64.1", default-features = false, features = ["ring", "rsa", "flate2"] }
+rfd = "0.17"
+uuid = { version = "1", features = ["v4"] }

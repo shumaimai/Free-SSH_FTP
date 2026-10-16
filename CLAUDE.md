@@ -597,3 +597,6 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - Rust版の画面（`theme.rs`/`home_view.rs`/`ai_view.rs`/`file_view.rs`）はPython版の意匠を再現しない作り直し。色・余白は`theme.rs`だけで決め、直書きしない。
   接続先はホームのカード、編集は専用窓。AI欄は右ドックで、サービス選択→キー→「接続する」の1操作にし、API形式・種別・URL検証は内部で決める（詳細は互換表）。
   安全確認（ホスト鍵・権限・AIへ送る内容・外部操作の承認）は画面中央の窓で出し、1クリックで確定させない設計を保つ。カード内の文字は選択不可にしてクリックを奪わせない。
+- Rustの新しい画面は`rust/crates/hashi-desktop-tauri`（Tauri 2 + React + Fluent UI + xterm.js）。egui版は移行が済むまで残す。
+  画面とはcommand/eventだけで話し、認証要求の照合・信頼情報の保存・秘密の保持は常にRust側。`freezePrototype`は入れない。
+  端末入力は順番を保つ（`inputQueue.ts`）。npm依存は`package-lock.json`で固定し、`npm ci`（`ignore-scripts`）で入れる。画面の外部読込は禁止（CSP）。

@@ -11,6 +11,42 @@ def sha256(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def collect_npm_licenses(root, target):
+    """Web画面（Tauri）が同梱する実行時のnpm依存のライセンスを集める。開発用依存は同梱しない。"""
+    frontend = root / 'rust/crates/hashi-desktop-tauri/frontend'
+    lock = frontend / 'package-lock.json'
+    if not lock.exists():
+        return []
+    packages = json.loads(lock.read_text(encoding='utf-8'))['packages']
+    target.mkdir(parents=True, exist_ok=True)
+    collected = []
+    for path, meta in sorted(packages.items()):
+        if not path or meta.get('dev') or meta.get('optional') and meta.get('devOptional'):
+            continue
+        directory = frontend / path
+        if not (directory / 'package.json').exists():
+            raise ValueError(f'npm依存が未インストールです（npm ci が必要）: {path}')
+        manifest = json.loads((directory / 'package.json').read_text(encoding='utf-8'))
+        license_name = manifest.get('license') or meta.get('license')
+        if isinstance(license_name, dict):
+            license_name = license_name.get('type')
+        if not license_name:
+            raise ValueError(f"ライセンス不明（npm）: {manifest.get('name', path)}")
+        name = manifest['name'].replace('/', '__')
+        destination = target / f"{name}-{manifest['version']}"
+        destination.mkdir(exist_ok=True)
+        files = set()
+        for pattern in ('LICENSE*', 'LICENCE*', 'COPYING*', 'NOTICE*'):
+            files.update(p for p in directory.glob(pattern) if p.is_file())
+        for index, file in enumerate(sorted(files)):
+            shutil.copy2(file, destination / f'{index:02d}-{file.name}')
+        # ライセンス本文を持たない依存でも、作者・ライセンス表記を残す。
+        shutil.copy2(directory / 'package.json', destination / 'package.json')
+        collected.append({'name': manifest['name'], 'version': manifest['version'], 'license': license_name,
+                          'license_files': len(files)})
+    return collected
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
@@ -51,6 +87,7 @@ def main():
             shutil.copy2(path, target / f'{index:02d}-{path.name}')
         (target / 'package.json').write_text(json.dumps(info, indent=2, ensure_ascii=False), encoding='utf-8')
         dependencies.append(info)
+    npm_dependencies = collect_npm_licenses(root, notices / 'npm')
     shutil.copy2(root / 'LICENSE', notices / 'Hashi-LICENSE')
     shutil.copy2(root / 'rust/crates/hashi-desktop-native/assets/OFL.txt', notices / 'NotoSansJP-OFL.txt')
     shutil.copy2(root / 'rust/THIRD_PARTY.md', destination / 'THIRD_PARTY.md')
@@ -61,9 +98,9 @@ def main():
               'helpers': {helper.name: sha256(helper) for helper in args.helper},
               'cargo_lock_sha256': sha256(root / 'rust/Cargo.lock'),
               'font_sha256': sha256(root / 'rust/crates/hashi-desktop-native/assets/NotoSansJP.ttf'),
-              'dependencies': dependencies}
+              'dependencies': dependencies, 'npm_dependencies': npm_dependencies}
     (destination / 'build-info.json').write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding='utf-8')
-    print(f"候補成果物を作成: {args.binary.name}, {len(dependencies)} packages")
+    print(f"候補成果物を作成: {args.binary.name}, {len(dependencies)} packages, {len(npm_dependencies)} npm packages")
 
 
 if __name__ == '__main__':

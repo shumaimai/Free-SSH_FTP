@@ -460,3 +460,4 @@ ruff check .
 - Rust AIで、完了イベントのない応答のツールを実行しないこと。APIキーをSSH資格情報や設定JSONへ保存しないこと。送信前確認を省かないこと。
 - Rust画面の色・余白は`rust/crates/hashi-desktop-native/src/theme.rs`だけで決めること（直書き禁止）。Python版の意匠・設定画面構成を持ち込まないこと。
 - Rust AIの接続設定は`ai_connection`だけ。種別/API形式/URL検証は内部で決め、画面へ出す選択肢を増やさないこと。公式サービスの接続先は固定を維持すること。
+- Web画面（`hashi-desktop-tauri/frontend`）はTauriのcommand/event以外でRust側と話さないこと。外部URL・CDN・プラグインを足さないこと。秘密・認証要求の照合を画面側へ移さないこと。

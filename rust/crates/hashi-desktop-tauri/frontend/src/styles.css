@@ -1,0 +1,3 @@
+html, body, #root { height: 100%; margin: 0; }
+body { overflow: hidden; font-family: "Segoe UI Variable Text", "Segoe UI", "Yu Gothic UI", "Meiryo UI", system-ui, sans-serif; }
+* { box-sizing: border-box; }

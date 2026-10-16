@@ -8,7 +8,8 @@ Issue #170の完了条件をこの表で省略しない。候補に存在する�
 | 旧版との保存先分離・実行中マーカー | shared/exclusive OSロック、PID+開始時刻、記録失敗は警告してPython起動、旧journalの検出 | マーカー非対応旧版停止の取り込みUI確認、Darwin照会 |
 | Profile/Settings/known_hosts/export | 全旧フィールド、atomic state、v1、追加のみmerge | 全設定UI、旧データ取り込み・ロールバックUI |
 | SSH/AI秘密・クラウド暗号 | 分離ファイル、scrypt/Fernet、WinVaultの2種類のTargetNameとPython互換Enterprise永続化 | OSストア/暗号化ファイルの選択UI、実Python keyring双方互換 |
-| 日本語ネイティブGUI | eframe/egui、NotoSansJP、新しい画面構成（ホームの接続カード、接続の編集窓、上部タブ、右の「ファイル/AI」ドック、ツールメニュー）、受付停止→処理/復元待ち→接続終了 | テーマ・DPI、IME実機、全終了故障行列。旧Python版の画面構成は意図して再現しない（機能の対応だけを本表で追う） |
+| Web画面（Tauri 2 + WebView2） | `hashi-desktop-tauri`。Fluent UIのホーム（接続カード）・編集窓・上部タブ・xterm.js端末（ローカルCMD/SSH）・ホスト鍵/秘密入力の確認窓、終了時の接続/PTY回収 | ファイル/AIドック、スニペット・設定・権限補助・ポート転送・鍵生成・エディタ・MCP承認の移植（現在はegui版）、Windows実機・IME・拡大表示、WebView2の有無の案内 |
+| 日本語ネイティブGUI（egui版） | eframe/egui、NotoSansJP、新しい画面構成（ホームの接続カード、接続の編集窓、上部タブ、右の「ファイル/AI」ドック、ツールメニュー）、受付停止→処理/復元待ち→接続終了 | テーマ・DPI、IME実機、全終了故障行列。旧Python版の画面構成は意図して再現しない（機能の対応だけを本表で追う） |
 | SSH認証・ホスト鍵 | key/password/agent、RSA SHA-2、公開鍵blob指紋、対象付き認証応答 | 全鍵形式・SHA-1専用サーバー等の暗号行列、Windows agent実環境、パスフレーズ再入力行列 |
 | ProxyJump | SSH configのHost解決、複数hop、鍵→agent→passwordの別認証、接続失敗時のhop回収 | Match/Includeの対応、全失敗行列、実運用の多段接続 |
 | ポート転送 | -L/-R/-D、SOCKS5 CONNECT、GUI開始/停止、限定経路、個別取消、停止の受付token確保後にハンドルを移す | 実Windowsの全経路、停止通信失敗時の待受残存検証 |
@@ -173,3 +174,24 @@ Command CodeのURLは「その他」に入力したときだけ自動で専用�
 会話欄の上で選び、送信のたびにBrokerへ設定する。「外部連携（MCP）」はMCPクライアント向けの共有だけを扱う。
 GUI実描画（新UI）で、ローカルの互換API偽サーバーを相手に、1回の接続操作→再起動後の自動復元→送信内容の確認→
 AIのsend_input要求がBroker経由でCMDへ届き、ツール結果を返して最終応答を表示するまでを確認した。実サービスは未確認。
+
+## Web画面（Tauri）の方針
+
+見た目を標準的なWindowsアプリに近づけるため、画面だけをWeb（Tauri 2 + WebView2、Fluent UI、xterm.js）で作り直している。
+SSH・転送・権限補助・AI・保存などの核はRustのまま共有し、画面とはcommand/eventだけで話す。WebView2が使えない環境では
+起動できないため、egui版を移行が済むまで残す。「WebViewなし」は旧方針で、Web画面版では採らない。
+
+- 画面は同梱の静的ファイルだけを読む。CSPは`default-src 'none'`起点で、外部URL・CDN・フォントを使わない。
+  Tauriのプラグイン（fs/shell/dialog等）は使わず、権限は`core:event`/`core:window`の既定だけ。
+  秘密鍵の選択はRust側のOSダイアログで行い、画面へ返すのはパスだけ。
+- `freezePrototype`は使わない（ReactとFluent UIの初期化が`Attempted to assign to readonly property`で失敗し、画面が真っ白になる。実測）。
+- ホスト鍵・秘密入力の要求はRust側が控え、画面からの応答は`challenge_id`だけで照合する。対象（host/port/user/hop/世代）を
+  画面から受け取らない。変更されたホスト鍵は`trust`の入力を要求し、Rust側（hashi-core）でも照合する。
+- 端末入力は`session_input`を順番どおりに送る（IPCは追い越し得るため、送信中に溜まった分を1回にまとめる）。1回1MiBまで。
+  端末出力は生のバイト列（`Channel`のRaw）で渡し、同じ出力をhashi-terminalのモデルへも流す（AI観測・ログ用。描画には使わない）。
+- xterm.jsのOSC52（クリップボード書込み）・リンク起動の拡張は読み込まない。貼り付けは利用者の操作だけ。
+- 終了はウィンドウを閉じる要求を止め、全セッションを取消→端末/接続の終了→受信タスクの回収（上限付き）の順に終えてから閉じる。
+  Xvfb上でローカルPTYとSSHを開いたまま閉じ、2秒以内にプロセスが消えて子プロセスが残らないことを確認した。
+- 画面の確認は、WebView2と同じChromium系でモックのバックエンドを描画して行う（`VITE_MOCK`。製品のビルドには入らない）。
+  実バックエンドはXvfb + WebKitGTKで、ローカルCMDの実行、実sshdへの鍵認証、ホスト鍵確認、シェル操作を確認した。
+  Windows実機（WebView2、IME、拡大表示）は未確認。
