@@ -18,6 +18,7 @@ hashi-core = { path = "../hashi-core" }
 hashi-storage = { path = "../hashi-storage" }
 hashi-terminal = { path = "../hashi-terminal" }
 hashi-ai = { path = "../hashi-ai" }
+hashi-mcp = { path = "../hashi-mcp" }
 tauri = { version = "=2.12.4", features = [] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }

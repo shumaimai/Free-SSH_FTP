@@ -36,6 +36,19 @@ function mockDoc(sessionId: string | null, path: string): OpenedDoc {
 export function mockApi(): Api {
   let localOpens = 0;
   let permEnabled = false;
+  let mcpOn = false;
+  let ext: { shared: number; mode: 'consult' | 'confirm' | 'auto'; expires: number } = { shared: 0, mode: 'consult', expires: 0 };
+  const extStatus = () => ({
+    shared: ext.shared,
+    mode: ext.mode,
+    seconds: Math.max(0, Math.floor((ext.expires - Date.now()) / 1000)),
+    active: 0,
+    mcpRunning: mcpOn,
+    mcpStarting: false,
+    mcpConfig: mcpOn
+      ? JSON.stringify({ mcpServers: { 'hashi-rust-preview': { type: 'stdio', command: 'C:\\Hashi\\HashiMCP-RustPreview.exe', args: ['C:\\Temp\\hashi\\endpoint.json'] } } }, null, 2)
+      : '',
+  });
   let stored: import('./appearance').Appearance | null = null;
   let profiles: Profile[] = [
     { ...emptyProfile(), name: '本番サーバー', host: 'prod.example.com', username: 'deploy' },
@@ -221,6 +234,23 @@ export function mockApi(): Api {
     onFilesState: async (h) => {
       setTimeout(() => h({ id: 'ssh-1', available: true, message: '' }), 100);
       return () => {};
+    },
+    externalStatus: async () => extStatus(),
+    externalShare: async (mode, targets) => {
+      ext = { shared: targets.length, mode, expires: Date.now() + 15 * 60_000 };
+      return extStatus();
+    },
+    externalStop: async () => {
+      ext = { shared: 0, mode: 'consult', expires: 0 };
+      return extStatus();
+    },
+    mcpStart: async () => {
+      mcpOn = true;
+      return extStatus();
+    },
+    mcpStop: async () => {
+      mcpOn = false;
+      return extStatus();
     },
     permissionsStatus: async () => ({ enabled: permEnabled, busy: false, note: permEnabled ? '旧版の残存マーカー0件、復旧記録の確認先1件（未復元0件）。旧記録は変更していません。' : null }),
     permissionsEnable: async () => {

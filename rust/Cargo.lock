@@ -2510,6 +2510,7 @@ dependencies = [
  "base64 0.22.1",
  "hashi-ai",
  "hashi-core",
+ "hashi-mcp",
  "hashi-storage",
  "hashi-terminal",
  "rfd",

@@ -5,6 +5,7 @@
 mod ai;
 mod app;
 mod editor;
+mod external;
 mod files;
 mod forwards;
 mod keygen;
@@ -67,6 +68,11 @@ fn main() {
             editor::editor_set_dirty,
             editor::editor_close,
             app::app_quit,
+            external::external_status,
+            external::external_share,
+            external::external_stop,
+            external::mcp_start,
+            external::mcp_stop,
             files::permissions_status,
             files::permissions_enable,
             files::permissions_recover,

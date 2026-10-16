@@ -28,6 +28,7 @@ import type {
   OpenedDoc,
   SavedDoc,
   PermissionStatus,
+  ExternalStatus,
 } from './types';
 
 export interface Api {
@@ -77,6 +78,11 @@ export interface Api {
   onFilesChanged(handler: (sessionId: string) => void): Promise<() => void>;
   onFileDrop(handler: (count: number) => void): Promise<() => void>;
   onFilesState(handler: (event: { id: string; available: boolean; message: string }) => void): Promise<() => void>;
+  externalStatus(): Promise<ExternalStatus>;
+  externalShare(mode: ShareMode, targets: string[]): Promise<ExternalStatus>;
+  externalStop(): Promise<ExternalStatus>;
+  mcpStart(): Promise<ExternalStatus>;
+  mcpStop(): Promise<ExternalStatus>;
   permissionsStatus(id: string): Promise<PermissionStatus>;
   permissionsEnable(id: string, legacyStopped: boolean): Promise<PermissionStatus>;
   permissionsRecover(id: string): Promise<string>;
@@ -172,6 +178,11 @@ async function tauriApi(): Promise<Api> {
     onFileDrop: (handler) => listen<number>('file-drop', (e) => handler(e.payload)),
     onFilesState: (handler) =>
       listen<{ id: string; available: boolean; message: string }>('files-state', (e) => handler(e.payload)),
+    externalStatus: () => invoke('external_status'),
+    externalShare: (mode, targets) => invoke('external_share', { mode, targets }),
+    externalStop: () => invoke('external_stop'),
+    mcpStart: () => invoke('mcp_start'),
+    mcpStop: () => invoke('mcp_stop'),
     permissionsStatus: (id) => invoke('permissions_status', { id }),
     permissionsEnable: (id, legacyStopped) => invoke('permissions_enable', { id, legacyStopped }),
     permissionsRecover: (id) => invoke('permissions_recover', { id }),

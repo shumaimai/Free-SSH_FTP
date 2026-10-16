@@ -1,4 +1,5 @@
 //! アプリ全体の状態とcommand。保存データ・認証要求の台帳・セッション一覧を持つ。
+use crate::external::External;
 use crate::{
     ai::AiState, editor::Editors, files::FileJobs, session::Session, settings::UpdateInfo,
 };
@@ -30,6 +31,7 @@ pub struct AppState {
     pub ai: AiState,
     pub files: FileJobs,
     pub editors: Editors,
+    pub external: External,
     pub update: Mutex<Option<UpdateInfo>>,
     exiting: AtomicBool,
 }
@@ -58,6 +60,7 @@ impl AppState {
             ai: AiState::new(),
             files: FileJobs::new(),
             editors: Editors::default(),
+            external: External::default(),
             update: Mutex::new(None),
             exiting: AtomicBool::new(false),
         })
@@ -304,6 +307,7 @@ pub async fn shutdown(app: &AppHandle) {
     let state = app.state::<AppState>();
     // AI処理・共有・承認待ちを先に止めてから、端末と接続を終える。
     state.ai.stop_all();
+    state.external.close();
     if let Ok(sessions) = state.sessions.lock() {
         for id in sessions.keys() {
             state.files.cancel_session(id);

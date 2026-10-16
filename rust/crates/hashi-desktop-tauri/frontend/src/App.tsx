@@ -25,7 +25,7 @@ import {
   ToggleButton,
   tokens,
 } from '@fluentui/react-components';
-import { Dismiss12Regular, DocumentEdit20Regular, FolderOpen20Regular, Key20Regular, PanelRight20Regular, PlugConnected20Filled, Wrench20Regular, Home20Regular, Settings20Regular, WindowConsole20Regular, PlugConnected20Regular } from '@fluentui/react-icons';
+import { Bot20Regular, Dismiss12Regular, DocumentEdit20Regular, FolderOpen20Regular, Key20Regular, PanelRight20Regular, PlugConnected20Filled, Wrench20Regular, Home20Regular, Settings20Regular, WindowConsole20Regular, PlugConnected20Regular } from '@fluentui/react-icons';
 import type { Api } from './api';
 import type { OpenedDoc, UpdateInfo, ApprovalRequest, Challenge, ChallengeAnswer, Profile, SessionInfo, SessionState } from './types';
 import { emptyProfile } from './types';
@@ -40,6 +40,7 @@ import { SnippetBar } from './SnippetBar';
 import { EditorPane } from './EditorView';
 import { KeygenDialog } from './KeygenDialog';
 import { ForwardDialog } from './ForwardDialog';
+import { ExternalDialog } from './ExternalDialog';
 import { ApprovalDialog } from './ApprovalDialog';
 import { DEFAULT_APPEARANCE, UI_FONTS, fluentTheme, sanitize, type Appearance } from './appearance';
 
@@ -132,6 +133,7 @@ export function App({ api }: { api: Api }) {
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [keygenOpen, setKeygenOpen] = useState(false);
   const [forwardOpen, setForwardOpen] = useState(false);
+  const [externalOpen, setExternalOpen] = useState(false);
   const [dockTab, setDockTab] = useState<'files' | 'ai'>('files');
   const [filesState, setFilesState] = useState<Record<string, { available: boolean; message: string }>>({});
   const autoOpened = useRef(false);
@@ -379,6 +381,9 @@ export function App({ api }: { api: Api }) {
                 <MenuItem icon={<Key20Regular />} onClick={() => setKeygenOpen(true)}>
                   SSH鍵を作る...
                 </MenuItem>
+                <MenuItem icon={<Bot20Regular />} onClick={() => setExternalOpen(true)}>
+                  外部連携（MCP）...
+                </MenuItem>
                 <MenuItem icon={<PlugConnected20Filled />} onClick={() => setForwardOpen(true)}>
                   ポート転送...
                 </MenuItem>
@@ -569,6 +574,7 @@ export function App({ api }: { api: Api }) {
         label={activeTab?.label ?? ''}
         onClose={() => setForwardOpen(false)}
       />
+      <ExternalDialog api={api} open={externalOpen} targets={shareTargets} onClose={() => setExternalOpen(false)} />
       <ApprovalDialog
         request={approvals[0] ?? null}
         onAnswer={(allow) => {

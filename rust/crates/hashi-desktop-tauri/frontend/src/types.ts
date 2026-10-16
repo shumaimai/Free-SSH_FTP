@@ -193,6 +193,16 @@ export interface UpdateInfo {
   url: string;
 }
 
+export interface ExternalStatus {
+  shared: number;
+  mode: 'consult' | 'confirm' | 'auto';
+  seconds: number;
+  active: number;
+  mcpRunning: boolean;
+  mcpStarting: boolean;
+  mcpConfig: string;
+}
+
 export interface PermissionStatus {
   enabled: boolean;
   busy: boolean;
