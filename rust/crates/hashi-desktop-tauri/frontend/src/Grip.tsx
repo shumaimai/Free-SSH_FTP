@@ -3,6 +3,18 @@
 import { useRef, useState } from 'react';
 import { makeStyles, mergeClasses, tokens } from '@fluentui/react-components';
 
+/** ドラッグ中の印。端末は大きさを合わせる前に一瞬はみ出すので、その間のスクロールバーを隠す(styles.css)。 */
+let releaseTimer: number | undefined;
+function markResizing(on: boolean) {
+  window.clearTimeout(releaseTimer);
+  if (on) {
+    document.documentElement.dataset.resizing = 'true';
+  } else {
+    // 離した直後の大きさ合わせ(TerminalViewは少し待ってから合わせる)が終わるまで隠しておく。
+    releaseTimer = window.setTimeout(() => delete document.documentElement.dataset.resizing, 200);
+  }
+}
+
 const useStyles = makeStyles({
   grip: {
     width: '6px',
@@ -47,6 +59,7 @@ export function Grip({ label, onBegin, onMove, onReset, className }: Props) {
         e.currentTarget.setPointerCapture(e.pointerId);
         start.current = e.clientX;
         setDragging(true);
+        markResizing(true);
         onBegin();
       }}
       onPointerMove={(e) => {
@@ -55,11 +68,13 @@ export function Grip({ label, onBegin, onMove, onReset, className }: Props) {
       onPointerUp={(e) => {
         start.current = null;
         setDragging(false);
+        markResizing(false);
         if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
       }}
       onPointerCancel={() => {
         start.current = null;
         setDragging(false);
+        markResizing(false);
       }}
       onDoubleClick={onReset}
       onKeyDown={(e) => {
