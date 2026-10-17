@@ -99,6 +99,8 @@ export function ExternalDialog({ api, open, targets, onClose }: Props) {
 
   const live = targets.filter((t) => selected.includes(t.sessionId)).map((t) => t.sessionId);
   const sharing = status ? status.shared > 0 : false;
+  // 共有中(MCP起動中)は設定を固定する。変えるには停止して、設定し直してから開始する。
+  const locked = sharing || (status?.mcpRunning ?? false);
 
   return (
     <Dialog open={open} onOpenChange={(_, d) => !d.open && onClose()}>
@@ -110,7 +112,7 @@ export function ExternalDialog({ api, open, targets, onClose }: Props) {
             <Caption1>
               アプリ内のAIに見せる端末は、AIパネルで選びます。端末の出力は信頼できない観測データで、秘密の除去は完全ではありません。
             </Caption1>
-            <RadioGroup value={mode} onChange={(_, d) => setMode(d.value as ShareMode)}>
+            <RadioGroup value={locked && status ? status.mode : mode} disabled={locked} onChange={(_, d) => setMode(d.value as ShareMode)}>
               {(Object.keys(MODE_LABEL) as ShareMode[]).map((m) => (
                 <Radio key={m} value={m} label={MODE_LABEL[m]} />
               ))}
@@ -122,6 +124,7 @@ export function ExternalDialog({ api, open, targets, onClose }: Props) {
                 key={t.sessionId}
                 label={t.label}
                 checked={selected.includes(t.sessionId)}
+                disabled={locked}
                 onChange={(_, d) =>
                   setSelected((old) =>
                     d.checked ? [...old.filter((id) => id !== t.sessionId), t.sessionId] : old.filter((id) => id !== t.sessionId),
@@ -129,11 +132,11 @@ export function ExternalDialog({ api, open, targets, onClose }: Props) {
                 }
               />
             ))}
-            <Caption1>共有を開始するとMCPも始まります。期限はありません。端末を選び直すか停止すると、実行許可も取り消します。</Caption1>
+            <Caption1>共有を開始するとMCPも始まります。期限はありません。共有中は設定を変えられません。変えるときは停止して、設定し直してから開始してください。</Caption1>
             <div style={{ display: 'flex', gap: 8 }}>
               <Button
                 appearance="primary"
-                disabled={busy || live.length === 0}
+                disabled={busy || locked || live.length === 0}
                 onClick={() => void run(() => api.externalShare(mode, live), `${live.length}端末の共有を開始しました`)}
               >
                 共有を開始
