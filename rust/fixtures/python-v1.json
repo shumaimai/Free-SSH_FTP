@@ -1,0 +1,111 @@
+{
+  "profiles": [
+    {
+      "name": "試験サーバー",
+      "host": "server.invalid",
+      "port": 2222,
+      "username": "demo",
+      "auth_method": "key",
+      "key_path": "",
+      "initial_path": "",
+      "proxy_jump": "hop.invalid",
+      "agent_forwarding": true,
+      "save_secrets": true,
+      "sudo_same_as_password": true,
+      "tags": [
+        "試験"
+      ],
+      "color": "#61afef",
+      "last_connected": 0.0
+    }
+  ],
+  "settings": {
+    "sudo_autofill": true,
+    "permission_override": false,
+    "right_click_paste": true,
+    "update_check": true,
+    "keepalive_interval": 30,
+    "auto_reconnect": true,
+    "auto_reconnect_max": 5,
+    "terminal_font_size": 11,
+    "terminal_theme": "Hashi",
+    "terminal_font_family": "",
+    "editor_font_size": 12,
+    "editor_tab_width": 4,
+    "open_text_in_editor": true,
+    "external_autoupload": true,
+    "session_log": false,
+    "session_log_dir": "",
+    "bookmarks": {},
+    "dual_pane": false,
+    "local_start_dir": "",
+    "local_terminal_start_dir": "",
+    "terminal_dual_pane": false,
+    "ai_api_kind": "openai",
+    "ai_api_profiles": {},
+    "sync_browse": false
+  },
+  "known_hosts": {
+    "server.invalid:2222": {
+      "key_type": "ssh-rsa",
+      "fingerprint": "SHA256:FEGPK5RtUI7OoO27nKHwInG7VGHb/GzELdlOA2BFd0k"
+    }
+  },
+  "passphrase": "テスト🔑é",
+  "plaintext": "e8a9a6e9a893e38387e383bce382bf0a",
+  "cloud_envelope": {
+    "format": "hashi-cloudsync",
+    "version": 1,
+    "kdf": "scrypt",
+    "salt": "lmhmsfHP1GHQ89QSCiInTg==",
+    "token": "gAAAAABqz282MUfMeR1bhmlhRQ6tyM82kzi5cMAzsEFO2XGFxLS7BOOE3hp6Gw9akPlQ5jRV92YPLQmolq96nlaiUo0SJAYGe-2RpevaOTO7n6_KQqMEB6Q=",
+    "updated_at": 1791979318.4032195
+  },
+  "secret_values": {
+    "demo@server.invalid:2222": {
+      "password": "試験パスワード",
+      "passphrase": "試験秘密鍵"
+    }
+  },
+  "encrypted_secrets": {
+    "kdf": "scrypt",
+    "salt": "jSELGks11F0MdvzQ3sInHA==",
+    "token": "gAAAAABqz2827CCRMT7pUzwa-5TVK81t9bbdF1k3XjMPjFa4f7x4Q281Gc36fh9WaLF_6drFNzoTldsc4mQvt6IWwYl5ZMMYIXF5s5P7khUgyCkXWGY2yuPkEBHeHpPPPa7axHIS_ScBXQxQn5W2dHkl3-ZtJNFQCUoiuaeimOF4N5aMB-_aQTBWGP99nbMDg223Eg5UQ-ck6jNfsJE6rj02g6LCu-oSnqbHYZlNP7uPW9kJ9EKfI2deG7vtMyOWosdoOHebbmLC"
+  },
+  "fernet_key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+  "fernet_plaintext": {
+    "demo@server.invalid:2222:password": "試験秘密"
+  },
+  "fernet_token": "gAAAAABqz282IkbljiQYGznTDbW4dD31jV6h_epV3b9loNdfI09VmYVDKeZ1ej5Pv77JqBqF0P4M8y8-8Ua3hEZAoMPh6IpLBi19l1qGdk9QmNub5BuKUprq8pamTz0DqMOnQCXLOwKfiC0qWQ2ak3_EPBcEZYPgIDRagK692ejezsBEEf4QZlY=",
+  "bundle": {
+    "format": "hashi-export",
+    "version": 1,
+    "profiles": [
+      {
+        "name": "試験サーバー",
+        "host": "server.invalid",
+        "port": 2222,
+        "username": "demo",
+        "auth_method": "key",
+        "key_path": "",
+        "initial_path": "",
+        "proxy_jump": "hop.invalid",
+        "agent_forwarding": true,
+        "save_secrets": true,
+        "sudo_same_as_password": true,
+        "tags": [
+          "試験"
+        ],
+        "color": "#61afef",
+        "last_connected": 0.0
+      }
+    ],
+    "known_hosts": {
+      "server.invalid:2222": {
+        "key_type": "ssh-rsa",
+        "fingerprint": "SHA256:FEGPK5RtUI7OoO27nKHwInG7VGHb/GzELdlOA2BFd0k"
+      }
+    }
+  },
+  "public_key_blob": "AAAAB3NzaC1yc2EAAAADAQABAAABAQDC/Ba1q0lGTJjw24JQLhzn8u/kzsVGFtFCpIWqNy0ETwpEGwXL9zKE6BJjQ351C5x7jMDt9EY/rmF+VJJsLYdIZYFuHoTj9hJsyS4bocYv7SW56Q/a1UOMyYDToQc/zyF+3FI9zI9Pg96p9T1YYDitu7J5mgA36Xj9B+voreDiOQrQO0+pTXCRDCu7AO2ey+hkCl0MO8c2/yResrwdKtpVAcVISS6/Ea2CSjkjY8HUeOh7oCNIAWqJN7tNWB1u7ZlViMZvEPvtIb5ZzXj0Baw9KmSQ9WCHXFFC0gW9tLo8+MT6GiKEhl4OAhYnIJ6/ktimly2EcOtrSluqJbSdzzU5"
+}

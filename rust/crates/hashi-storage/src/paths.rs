@@ -74,6 +74,22 @@ pub fn runtime_root() -> io::Result<PathBuf> {
     Ok(base.join("Hashi-Migration/runtime"))
 }
 
+/// 復旧記録はXDG_RUNTIME_DIRへ保存しない。ログアウト後もpreview/nativeで共用する。
+pub fn permission_journal_root() -> io::Result<PathBuf> {
+    let base = if cfg!(windows) {
+        match env::var_os("LOCALAPPDATA") {
+            Some(value) if !value.is_empty() => PathBuf::from(value),
+            _ => home()?.join("AppData/Local"),
+        }
+    } else {
+        config_root(Channel::Native)?
+            .parent()
+            .ok_or_else(|| io::Error::other("永続保存先が不明です"))?
+            .to_path_buf()
+    };
+    Ok(base.join("Hashi-Rust-Coordination/permission-journal-v2"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
