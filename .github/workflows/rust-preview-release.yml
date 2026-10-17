@@ -47,9 +47,9 @@ jobs:
           PY
       - name: Release build
         working-directory: rust
-        run: cargo build --locked --release --bin Hashi-RustPreview --bin HashiMCP-RustPreview --bin Hashi-Preview
+        run: cargo build --locked --release --bin HashiMCP-RustPreview --bin Hashi-Preview
       - name: 版の証跡と依存ライセンス
-        run: python tools/rust_artifact.py --profile release --tag "${{ github.ref_name }}" --binary rust/target/release/Hashi-RustPreview.exe --helper rust/target/release/HashiMCP-RustPreview.exe --helper rust/target/release/Hashi-Preview.exe --output rust/target/preview
+        run: python tools/rust_artifact.py --profile release --tag "${{ github.ref_name }}" --binary rust/target/release/Hashi-Preview.exe --helper rust/target/release/HashiMCP-RustPreview.exe --output rust/target/preview
       - name: zip 化
         shell: pwsh
         run: Compress-Archive -Path rust/target/preview/* -DestinationPath "rust/target/Hashi-RustPreview-${{ github.ref_name }}-windows-x64.zip"
