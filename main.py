@@ -71,17 +71,21 @@ def main(argv: list[str] | None = None) -> int:
     app.setApplicationName("Hashi")
     apply_dark_theme(app)
 
-    from hashi.runtime_guard import PythonRuntime
+    from hashi.runtime_guard import MigrationBusyError, PythonRuntime
     runtime = PythonRuntime()
     try:
-        runtime.__enter__()
-    except (OSError, RuntimeError):
-        logging.getLogger(__name__).warning("移行ガードを取得できません", exc_info=True)
+        runtime.start_best_effort()
+    except MigrationBusyError:
+        logging.getLogger(__name__).warning("移行処理中のため起動を中止します")
         QMessageBox.critical(None, "Hashiを起動できません",
-                             "移行処理中か、実行中マーカーを作成できません。\n"
-                             "移行処理の終了と保存先の権限を確認してください。")
+                             "移行処理が実行中です。終了してから起動してください。")
         return 1
     try:
+        if runtime.warnings:
+            logging.getLogger(__name__).warning("; ".join(runtime.warnings))
+            QMessageBox.warning(None, "移行時の停止確認について",
+                                "移行用の実行状態を完全に記録できませんでした。Hashiは起動します。\n"
+                                "Rust版で移行や権限変更をする前に、このHashiを必ず終了してください。")
         return _run_application(app, mode, ns)
     finally:
         runtime.close()

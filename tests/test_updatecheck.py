@@ -96,3 +96,26 @@ def test_launcher_banner_show_and_close(qapp, tmp_config, monkeypatch):
     assert "v0.7.0" in w._update_label.text()
     assert "ダウンロード" in w._update_label.text()
     w.close()
+
+
+@pytest.mark.parametrize("tag", ["rust-v9.0.0", "rust-preview-v9.0.0-alpha.1", "nightly", "v9"])
+def test_worker_ignores_rust_and_unknown_tags(qapp, tag):
+    from hashi.updatecheck import UpdateCheckWorker, is_python_release_tag
+
+    assert not is_python_release_tag(tag)
+    payload = json.dumps(
+        {"tag_name": tag, "html_url": "https://example.com/rust"}
+    ).encode("utf-8")
+    with patch(
+        "hashi.updatecheck.urllib.request.urlopen", return_value=BytesIO(payload)
+    ):
+        worker = UpdateCheckWorker(current_version="1.0.0")
+        worker.new_version.connect(lambda *_: pytest.fail("Rust版のタグで通知した"))
+        worker.run()
+
+
+def test_python_release_tags_are_accepted():
+    from hashi.updatecheck import is_python_release_tag
+
+    assert is_python_release_tag("v1.1.2")
+    assert is_python_release_tag("1.2.3-beta")

@@ -21,6 +21,14 @@ DEFAULT_RELEASES_URL = (
     "https://api.github.com/repos/shumaimai/Free-SSH_FTP/releases/latest"
 )
 _REQUEST_TIMEOUT = 5
+# Python版のタグだけを通知する。Rust版の rust-v / rust-preview-v は別チャネル(#170)。
+# 解析失敗に頼らず、形式で明示的に除外する。
+_PYTHON_TAG = re.compile(r"^[vV]?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
+
+
+def is_python_release_tag(tag: str) -> bool:
+    """旧Python版のリリースタグか。"""
+    return bool(_PYTHON_TAG.match(tag))
 
 
 def _parse_version(v: str) -> tuple[int, ...]:
@@ -73,6 +81,9 @@ class UpdateCheckWorker(QThread):
                 logger.debug(
                     "GitHub Releases API から必要なフィールドが返りませんでした。"
                 )
+                return
+            if not is_python_release_tag(tag):
+                logger.debug("Python版以外のリリースタグを無視しました: %s", tag)
                 return
             latest = tag.lstrip("vV")
             if not _is_newer(self.current_version, latest):
