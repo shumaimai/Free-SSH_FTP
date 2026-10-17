@@ -8,10 +8,10 @@
 
 ## 確認したこと
 
-- [ ] `QT_QPA_PLATFORM=offscreen pytest` が通る
-- [ ] `python -m compileall main.py hashi tools` が通る
-- [ ] GUI に絡む変更の場合、実際に起動して確認した(環境: )
-- [ ] 権限無視まわり(`privilege.py` / `permjournal.py`)を触った場合、テストを追加・更新した
+- [ ] `cargo fmt --all --check` / `cargo clippy --locked --workspace --all-targets -- -D warnings` / `cargo test --locked --workspace` が通る(`rust/` で実行)
+- [ ] 画面を触った場合、`npm run build` が通り、実際に起動して確認した(環境: )
+- [ ] 権限補助・転送の確定処理・復旧記録を触った場合、テストを追加・更新した
+- [ ] 旧Python版や `tools/` を触った場合、`pytest` / `compileall` / `ruff check .` が通る
 
 ## 未検証の点(あれば正直に)
 

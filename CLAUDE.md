@@ -7,6 +7,18 @@
 
 ## 0. 現在の状況(引き継ぎ・最初に読む)
 
+- **最新リリースは v2.0.0(2026-10-17)。** Rust 移行(#170)の積み上げPR #171〜#182 を main へ取り込んで公開した。
+  初回の Release ビルドは `tools/rust_artifact.py` の文字コード(Windows runner の cp1252)で失敗し、#183 で直して
+  タグを打ち直した。**Python で書くスクリプトは、子プロセス出力・stdout を UTF-8 に固定すること**(release.yml は
+  `PYTHONUTF8` を設定していない)。
+- **オーナーの方針(2026-10-17)**: ChatGPT サインイン(#158)は Tauri 版へ移植した(`hashi_ai::chatgpt`)。
+  **公式 Claude Code の内蔵起動(#160)は移植しない**(利用条件の確認が難しいため。ローカル MCP で連携する)。
+  **クラウド同期(#65)はまだ先**(一人では荷が重い。勝手に始めない)。**オーナーの手元に Windows 実機は無い**ので、
+  実機の確認は CI と利用者からの報告に頼る。未確認は未確認と書く。
+- **コード署名は SignPath Foundation を申し込む準備まで済み**(`docs/code-signing-policy.md`・`docs/signpath-setup.md`・
+  `.signpath/artifact-configuration.xml`)。申し込み・SignPath の設定・Secrets の登録はオーナーが行う。
+  `SIGNPATH_API_TOKEN` が無いあいだ release.yml は署名を飛ばす。**新しい通信先を増やしたらポリシーのプライバシー節も直す**
+  (SignPath の条件。勝手な外部通信を足さない)。
 - **v2.0.0 から配布物は Rust + Tauri 版**(`rust/crates/hashi-desktop-tauri`)。版の単一ソースは
   `rust/Cargo.toml` の `workspace.package.version`。`release.yml` は `vX.Y.Z` タグで Tauri 版をビルドし、
   Cargo の版と照合する。旧Python版(v1.x、`hashi/__init__.py`)はリリースしない(コードは残す)。
@@ -34,13 +46,13 @@
   - **リモートファイル検索**(#102、Devin の PR をレビュー・修正のうえ取り込み)。
   - **ブックマーク / 隠しファイルトグル**(#80)。
 
-### 残っているオープン Issue(3 件)
+### 残っているオープン Issue(1 件)
 
 | # | 内容 | 状態 |
 |---|---|---|
-| **#129** | Windows 実機の通し検証 | 実マウス D&D 等の手動検証項目が残るためオープン維持 |
-| **#82** | ローカル⇔リモートのデュアルペイン(WinSCP 流。目玉機能) | **第 1 段 + 第 2 段(同期ブラウズ)を実装済み。** 実機確認待ちで close 可否はオーナー判断 |
-| **#65** | クラウド同期のバックエンド再検討 | **オーナー合意待ち。勝手に実装しない。** 再開時は Firebase 案が本命 |
+| **#65** | クラウド同期のバックエンド再検討 | **オーナー判断で先送り。勝手に実装しない。** 再開時は Firebase 案が本命 |
+
+#129(Windows 実機の通し検証)と #82(2ペイン)は v2.0.0 で閉じた。実機での確認は済んでいない(上の方針を参照)。
 
 2026-07-29: **#135**(Windows 鍵の保存先警告、案 3、PR #136)と **#100 第 2 段**
 (過去出力の全画面リフロー、PR #137)をマージしクローズ。概要は `changes.md` 参照。
@@ -85,7 +97,8 @@ GUIスレッドだけで行う。台帳の読み取りはQtに依存しない。
 SFTP ファイルブラウザを 1 つに統合したデスクトップアプリ。コンセプトは **PuTTY + WinSCP を
 別々に開かなくていい**こと。**1 接続 = 1 タブ**で、ターミナルと SFTP ブラウザが横並びになる。
 
-- 技術選定: **Python 3.10+ / PySide6 / paramiko / pyte / wcwidth**(Electron は重いので不採用)。
+- 技術選定(v2 以降): **Rust + Tauri 2(画面は React / Fluent UI / xterm.js)/ russh / alacritty_terminal**。
+  旧 Python 版(v1.x)は **Python 3.10+ / PySide6 / paramiko / pyte / wcwidth**(Electron は重いので不採用だった)。
 - UI・コメント・コミットメッセージは**日本語**で統一している。踏襲すること。
 - リポジトリは **`shumaimai/Free-SSH_FTP`**。
 - 作者は Linux サーバー運用・iOS/Flask/Discord bot 開発の経験がある高校生。直接的で
@@ -95,6 +108,22 @@ SFTP ファイルブラウザを 1 つに統合したデスクトップアプリ
 ---
 
 ## 2. セットアップ / 実行 / テスト
+
+v2(Rust + Tauri。配布物はこちら):
+
+```bash
+cd rust/crates/hashi-desktop-tauri/frontend && npm ci && npm run build   # 画面。VITE_MOCK=1 npx vite でモック表示
+cd rust
+cargo fmt --all --check
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace
+cargo clippy --locked -p hashi-desktop-tauri --target x86_64-pc-windows-gnu -- -D warnings   # Windows向けの確認
+cargo run --locked --bin Hashi
+```
+
+- ディスクの割り当てが小さい環境では `rust/target/debug` が 20GB を超えて書けなくなる。不要なら消して作り直す。
+
+旧 Python 版(v1.x。リリースしないがコードとテストは残す):
 
 ```bash
 python -m venv .venv && . .venv/bin/activate      # 任意
@@ -345,13 +374,17 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 
 ---
 
-## 8. ビルド & リリース手順
+## 8. ビルド & リリース手順(v2 以降)
 
-1. `hashi/__init__.py` の `__version__` を上げる。
-2. `CHANGELOG.md` に追記(`[Unreleased]` → 新バージョン)。
-3. コミットして **`vX.Y.Z` タグ**を push(タグは `__version__` と一致必須。CI が検証する)。
-4. `.github/workflows/release.yml` が windows-latest で PyInstaller ビルド → GitHub Release を
-   作成し `Hashi.exe` と zip を添付する(GITHUB_TOKEN は自動。secret 設定不要)。
+1. `rust/Cargo.toml` の `workspace.package.version` と `rust/crates/hashi-desktop-tauri/tauri.conf.json` の
+   `version` を上げる(`cargo update --offline -p hashi-core` 等で `Cargo.lock` の版も更新される)。
+2. `CHANGELOG.md` に追記(`[Unreleased]` → 新バージョン)。リリースノートはこの節から作られる。
+3. main へ入れたあと、オーナーが **`vX.Y.Z` タグ**を push(タグは Cargo の版と一致必須。CI が検証する)。
+4. `.github/workflows/release.yml` が windows-latest で画面と Rust をビルドし、`tools/rust_artifact.py` で
+   zip を作って GitHub Release に添付する。SignPath の Secrets があれば、zip にする前に署名(オーナーの承認待ち)を挟む。
+5. Release の zip が `Hashi.exe`・`HashiMCP-RustPreview.exe`・`WebView2Loader.dll`・`build-info.json` を含むことを確認する。
+
+旧 Python 版(v1.x)の手順は下の注意と `Hashi.spec` の記述を参考に残す(リリースはしない)。
 
 > 注意: **エージェント環境ではタグ push が 403 で拒否される**(`refs/heads/*` は許可、
 > `refs/tags/*` は不許可)。GitHub MCP にもタグ作成ツールは無い。**タグはオーナーが手元で
@@ -361,8 +394,11 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 > git tag vX.Y.Z <merged-sha>
 > git push origin vX.Y.Z
 > ```
-> タグを打つ前に、**ローカルで `pyinstaller --noconfirm Hashi.spec` を通して spec を
-> 検証しておく**とビルド失敗でタグを打ち直す事故を避けられる(v0.8.0 でそうした)。
+> タグを打つ前に、**ローカルで `cargo build --release --target x86_64-pc-windows-gnu --bin Hashi --bin HashiMCP-RustPreview`
+> と `tools/rust_artifact.py --zip` を通しておく**と、ビルド失敗でタグを打ち直す事故を減らせる。
+> ただし Windows runner 固有の問題(文字コード等)はタグを打つまで出ない(v2.0.0 で実際に踏んだ)。
+> 失敗したら Release は作られないので、修正を main へ入れてからタグを消して打ち直してよい。
+> Release が公開済みのタグは消さない(Release が下書きに戻る)。次の版を出す。
 
 - keyring は凍結時にバックエンドを取りこぼすため `Hashi.spec` で `collect_submodules("keyring")` と
   `win32ctypes` を明示収集している。Windows の資格情報マネージャ backend が動かない症状が出たら
@@ -494,6 +530,7 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - AI秘密はHashi.AIまたは専用暗号化ファイルに保存し、SSH資格情報と設定JSONへ混ぜない。
 
 ### ChatGPT OAuth (#158)
+旧 Python 版の実装。Rust 版(`hashi_ai::chatgpt`)も同じ規則で移植済み(下の「Rust版ChatGPTサインイン」)。
 - `chatgpt_oauth.py` は公式OSS Sign in with ChatGPTを利用。auth.openai.comと公開Responses APIのみ。
 - 初回はdynamic_agent_client、戻りの発行IDで交換。再認証は保存済みclient_id/host_idを再利用。
 - loopbackは127.0.0.1/auth/callback。state/nonce/PKCE、ID署名/issuer/aud/exp/subと許可scopeを検証する。
@@ -507,6 +544,7 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - 操作はCommandBrokerを通す。notificationからの操作は禁止。切断で承認待ちを取り消す。
 
 ### 未改変の公式CLI (#160)
+**旧 Python 版だけの機能。Rust + Tauri 版へは移植しない(2026-10-17 オーナー判断。利用条件の確認が難しいため)。**
 - `claude_cli.py`はWindowsネイティブ版をConPTYで起動。未導入なら`claude_install.py`で未改変の公式install.ps1を実行する。
 - 導入はワーカーで行い、キャンセル/締切で開始したプロセスツリーを終了。認証・請求は本人の公式CLIへ任せる。
 - CLIバイナリ・認証方式を変更しない。Claude OAuthを取得/複製/保存しない。`--bare`や承認迂回フラグを使わない。
@@ -624,6 +662,16 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
   AIの「読むだけ」では道具を渡さず、確認・編集した観測データだけを送る。端末への貼り付けは制御文字を除き、複数行は確認する。
   ホスト鍵の保存は接続側と同じ条件(変わった鍵は「trust」入力)。ファイルのドロップはリモート一覧の上に落としたときだけ送信する。
 - AIへの添付（`attach.rs`）は画面が読んだ中身(base64)だけを受け取り、パスは受け取らない。画像は先頭バイトで判定（PNG/JPEG/GIF/WebP、5MB）、文字はUTF-8（200KB）を本文へ埋め込む。4件まで、会話全体で画像12枚まで。
+- Rust版ChatGPTサインイン（`hashi_ai::chatgpt`・Tauri `chatgpt.rs`）はPython版`chatgpt_oauth.py`と同じ手順。PKCE/state/nonce、
+  127.0.0.1の`/auth/callback`でHostを照合、別stateの雑音で試みを終えない。IDトークンはRS256だけ（`ring`で検証）、iss/aud/exp/iat/subと
+  `chatgpt.tokens.use.direct`を確認。jwks・失効の接続先は発行者と同じホストだけ。トークンはAI専用ストアの`oauth:accounts`だけに置き、
+  画面へは名前・サインイン中かどうかだけ返す。更新は期限60秒前、取引はプロセス内Mutex＋`ai-oauth.guard`のファイルロックで直列化。
+  サインアウトは遠隔失効を試み、結果に関係なくトークンを消す（名前は残す）。接続は要求ごとに`TokenSource`からトークンを得て、
+  関数はnamespace `hashi`へまとめる（返った`hashi.名前`は戻す）。登録は`ai_models`の`service: chatgpt`＋`account`。
+  旧Python版のChatGPT登録は取り込まない（もう一度サインインする）。実アカウントでの確認は未実施（偽サーバーまで）。
+- コード署名（SignPath）: 署名するのは`Hashi.exe`と`HashiMCP-RustPreview.exe`だけ。どちらも製品名`Hashi`・版を埋め込む
+  （ヘルパーは`hashi-mcp/build.rs`）。`.signpath/artifact-configuration.xml`はSignPath画面へ貼る控え。署名後は
+  `Get-AuthenticodeSignature`で確かめてから差し替える。
 - AIモデルは「AIモデルの管理」ページ（`ai_models.rs`・`AiModelsPage.tsx`）で複数登録し、AIドックは選ぶだけにする。設定ダイアログと混ぜない。
   キーは同じサービス・URLで共有しAI専用ストアだけに置き、画面へ返さない。削除は登録とキーを別操作にし、主要な操作ボタンの横に並べない。
   使用中の変更・削除は接続を読み直す/外す。確認（通信）と保存は別操作で、確認はキーも設定も書き換えない。
