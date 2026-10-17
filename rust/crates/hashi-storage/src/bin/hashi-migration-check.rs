@@ -6,23 +6,31 @@ fn main() -> io::Result<()> {
         Some(value) => PathBuf::from(value),
         None => hashi_storage::paths::runtime_root()?,
     };
-    let hold = match args.next() {
-        Some(value) if value == "--hold" => true,
-        Some(_) => {
+    let mut hold = false;
+    let mut legacy_root = None;
+    while let Some(value) = args.next() {
+        if value == "--hold" {
+            hold = true;
+        } else if value == "--legacy-root" {
+            legacy_root = Some(PathBuf::from(args.next().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "旧保存先を指定してください")
+            })?));
+        } else {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "不明な引数です",
-            ))
+            ));
         }
-        None => false,
-    };
-    if args.next().is_some() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "引数が多すぎます",
-        ));
     }
     let lease = hashi_storage::migration::acquire(&directory)?;
+    if let Some(root) = legacy_root {
+        let status = hashi_storage::legacy_permissions::inspect(&root, &lease.stale_markers)?;
+        status.require_clear()?;
+        eprintln!(
+            "旧復旧記録の確認先: {}件、未復元0件（読取のみ）",
+            status.paths.len()
+        );
+    }
     println!("guard-acquired");
     if hold {
         use std::io::Write;
