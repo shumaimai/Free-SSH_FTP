@@ -369,6 +369,16 @@ ruff check .
 - W端末の操作先は `SessionTab.active_terminal()`。SSH固有操作は `terminal` を使い、CMDへ保存パスワードを渡さない。
 
 - AI/MCPの端末操作はCommandBrokerを通す。許可と対象ID/世代はユーザーが選ぶ。モデルからモード変更禁止。
+- MCPヘルパーは引数なしで接続情報を毎回読み直す(未起動でも落とさない)。登録は`mcpServers.hashi-rust-preview`1項目だけ、バックアップを残し壊れたファイルは上書きしない。
+- send_keysは名前付きキー(Ctrl+X/Esc/矢印等)専用で未知名は確認前に拒否。
+- send_inputは`enter`必須。Enter未送信を結果と承認窓で明示し、完了/終了コードは推測しない。
+- send_inputの本文にCR・ESCなどの制御文字(改行とタブ以外)を通さないこと(確認窓に見えずに実行されるため)。
+- 同期ブラウズで区切り・`:`・`..`を含む名前を写さないこと。ローカル一覧で`..`を含むパスを開かないこと。
+- 承認窓の「許可」を表示直後に押せるようにしないこと。Brokerの見えない文字の拒否を外さないこと。
+- AIの「読むだけ」で端末を読む道具を渡さないこと(確認画面を迂回されるため)。端末の貼り付けで制御文字を通さないこと。
+- ホスト鍵は接続側と同じ条件でだけ保存すること。ドロップをリモート一覧の外で送信しないこと。
+- AIへの添付はファイルの中身だけを受け取り、画面からのパスで読まないこと。画像は中身で種類を判定すること。
+- Tauri版のAIドックと外部連携(MCP)は別々のBrokerを維持すること(片方の共有開始・停止で他方の許可を変えないため)。
 - 対話入力の完了はunknown。独立実行は別チャネル/別CMDで行い、対話端末のcwdを推測しない。
 
 - AIの観測データは未信頼。送信前に対象と内容をユーザーが確認する。会話/許可は永続化しない。
@@ -401,6 +411,9 @@ ruff check .
 - SSHのPTY種別xterm-256colorからシェルを推測せず、shellはunknownを公開する。独立execの本文はサーバー側の解釈に任せる。
 
 - ConPTY終了時はsocket shutdown/native cancel_io/joinでpywinpty内部readerも回収する。
+
+- Python移行ガードはOSロック競合だけ起動を停止する。他の異常は警告し、取得済み共有ロックを保つ。
+- マーカー不在で旧版停止を認定しない。Rustの移行/権限補助は旧版停止確認を要求する。
 - socket shutdown/native cancel_io/joinでpywinpty内部readerも回収する。
 
 ## Rust候補 (#170)
@@ -415,5 +428,54 @@ ruff check .
 - Rustリモート編集はPOSIX rename未対応を変更前に拒否し、外部変更を照合する。権限緩和を無断で追加しない。
 
 - Rust SFTP一覧の要求ID/取消/件数・bytes上限を維持する。navの取消をxferへ波及させない。
-- Rust再帰転送はリンク追跡と転送先リンク上書きを拒否する。既存policyは追加時に固定し、取消で部分ファイルを勝手に削除しない。
+- Rust再帰転送はリンク追跡と転送先リンク上書きを拒否する。既存policyは追加時に固定し、resumeの部分ファイルを勝手に削除しない。通常転送のprivate tempのみcleanupする。
 - Rust一覧の全Stringを毎frame複製しない。dropは対象領域/layerを照合し一度だけ消費する。
+
+- Rust端末の結合文字セル上限/全角flag保持を維持する。paste/可視http(s) URL起動は明示操作だけ。
+- OSC52/OSC8からclipboard/URL機能を起動しない。満杯のresize送信は最後のサイズを保持する。
+
+- Rust権限補助は明示的に有効化し、旧Python版停止の確認と排他OS guardを保持する。
+- 復旧journalは永続領域でpreview/native共用。runtime/temp領域へ確定記録を保存しない。
+- chmod前に記録/fsyncを完了し、ACK途中の取消でも所有タスクで復元する。mode読戻し一致まで記録を消さない。
+- nav/xferは対象/祖先の既存Grantへ参加する。復元は深い順で、子の未復元記録があれば親も延期する。
+- 別表記/親リンクはrealpath照合で拒否する。破損した確定記録を上書きせず、準備tempは復元対象と分ける。
+- 権限候補はSFTP所有ファイルのみ。sudo・旧Python journal引継ぎは互換表の未完了条件を維持する。
+- 有効なRust権限補助の一覧/転送/復旧取引はタブをまたいで直列化し、復元までoperation guardを保持する。低レベルacquireを画面側から直接使わない。
+
+- Rust原本保持転送は原本へ直接truncateせずprivate tempへ書き、サイズ/metadataと同期を確認して確定する。
+- remote uploadのfsync/POSIX rename対応は変更前に確認する。EXCL open成功を確認したtempだけcleanupする。
+- 確定済み/確定結果不明/ローカル失敗をリモートchmod再試行へ流さない。復元エラーで確定状態を消さない。
+- GUIの取消はtokenで伝え、確定ACKと権限復元を待つ。確定後の取消は元へ戻ったと断定しない。
+- uid/gid/modeを保持できないUnix転送は確定前に拒否。Windows readonlyは確定handleで読戻す。
+
+- Rust終了は新規受付停止→token取消→操作/確定ACK/temp削除/権限復元待ち→接続/PTY終了の順を守る。
+- Work close後も子cleanupを追跡する。temp削除は親mode復元前にawaitし、失敗は通知しjournalを保持する。
+- 未保存/処理中の編集を確認する。30秒後の明示終了は未確認を伝え、PTY DropでGUIのjoinを待たない。
+
+- Rustの転送方式は原本保持（既定）/直接書込みをジョブごとに明示する。失敗時に自動fallbackしない。直接書込み/resumeの変更後エラーをchmod再試行へ流さない。
+- 新規ファイルは0666と実環境umaskを適用する。原本保持のpayload tempは0600、mode probeは空だけ。既存置換のために親writeを増やさず、同一batchの別ファイル用grantも流用しない。
+- 権限補助の追加bitはowner最小限だけ。旧Pythonの既定/残存markerのdata_rootを読取検査し、未復元・破損・不明なら拒否、旧記録を変更しない。
+- Rust権限補助のowner最小bitはsudo非対応の前提。sudo対応時はPython版a+wとの差を見直すこと。
+- Rust直接書込みは既存ファイルのopenへmode属性を送らないこと。書込み前の失敗を部分更新と表示しないこと。
+- RemoteTempのfallback/commit所有タスクはBatchのcleanup tokenを保持し、親mode復元は削除完了後にする。失敗を隠さない。
+- ポート転送停止は受付tokenを確保してから所有handleを外す。GUIのPTY resizeでblocking lockを取らず、保留サイズを次frameで再試行する。回収済みPID/PGIDへkillを再送しない。
+
+- Rustセッションログで、GUIスレッドからファイル書込みを待たないこと。満杯/失敗を黙って欠落させないこと。
+- Rustスニペットで、解析できない保存値を空として上書きしないこと。
+- Rust版のReleaseを`make_latest`にしないこと。Python版の更新通知へRustのタグを混ぜないこと。
+- Rust鍵生成で既存の秘密鍵を黙って上書きしないこと。authorized_keysを全体書換えしないこと。
+- Rust同期ブラウズで絶対パスを写さないこと。跳ね返り防止を消費されない待ちフラグにしないこと。
+- Rustの端末操作をBrokerを通さずに行わないこと。MCPのnotificationからツールを実行しないこと。監査記録へ本文を入れないこと。
+- MCPのstdout（stdioヘルパー）へJSON-RPC以外を書かないこと。
+- Rust AIで、完了イベントのない応答のツールを実行しないこと。APIキーをSSH資格情報や設定JSONへ保存しないこと。送信前確認を省かないこと。
+- Rust画面の色・余白は`rust/crates/hashi-desktop-native/src/theme.rs`だけで決めること（直書き禁止）。Python版の意匠・設定画面構成を持ち込まないこと。
+- Rust AIの接続設定は`ai_connection`だけ。種別/API形式/URL検証は内部で決め、画面へ出す選択肢を増やさないこと。公式サービスの接続先は固定を維持すること。
+- Web画面（`hashi-desktop-tauri/frontend`）はTauriのcommand/event以外でRust側と話さないこと。外部URL・CDN・プラグインを足さないこと。秘密・認証要求の照合を画面側へ移さないこと。
+- Web画面のエディタはRust側が保存先パスと元バイト列を持つこと。画面からパスを受け取って保存しないこと。HEXはサイズ不変を維持すること。
+- 2ペインのローカル側は、Rust側が持つ開いているフォルダ内の「名前」だけで転送を依頼すること（画面からローカルの絶対パスを受け取らない）。ペイン間ドラッグはHTML5 DnDを使わないこと。
+- 権限補助は接続ごとに利用者が有効にしたときだけ入れ、既定で何も緩めないこと。復元できなかったことは握り潰さず警告すること。
+- 旧版(Python)からの取り込みは読み取り専用にし、旧版の保存先・資格情報へ書かないこと。旧版停止の確認と共有の排他ガード(`shared_legacy_lease`)を保つこと。
+- 取り込みでホスト鍵は無いものだけ追加し、食い違いを上書きしないこと。秘密の値を画面へ返さないこと。
+- 保存済みの秘密は接続先の最終ホストにだけ使い、踏み台へ使わないこと。拒否されたら入力へ戻し、同じ秘密を繰り返し試さないこと。
+- AIモデルの登録・変更・削除は管理ページだけで行い、AIドックに入力欄を戻さないこと。キーは同じサービス・URLで共有し、画面へ返さないこと。削除は主要な操作と分けること。
+- 配布zip・動作確認用exeは`tools/rust_artifact.py`だけで作り、手で`cp`しないこと。本体は`Hashi.exe`（Tauri版。版は`rust/Cargo.toml`、`v*`タグのリリースはTauri版）で、egui版`Hashi-RustPreview.exe`を本体にしないこと（取り違え事故の再発防止。スクリプトが名前・中身・アイコン資源を検査する）。

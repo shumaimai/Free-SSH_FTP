@@ -5,3 +5,5 @@ pub const EDITOR_KEYWORD: egui::Color32 = egui::Color32::from_rgb(198, 120, 221)
 pub const EDITOR_STRING: egui::Color32 = egui::Color32::from_rgb(152, 195, 121);
 pub const EDITOR_COMMENT: egui::Color32 = egui::Color32::from_rgb(127, 132, 142);
 pub const EDITOR_NUMBER: egui::Color32 = egui::Color32::from_rgb(209, 154, 102);
+
+pub const TERMINAL_SELECTION: egui::Color32 = egui::Color32::from_rgb(50, 76, 112);

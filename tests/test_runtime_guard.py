@@ -1,4 +1,5 @@
 """旧版の複数起動・強制終了と、Rust移行ガードのOSロック互換。"""
+import errno
 import json
 import os
 import subprocess
@@ -7,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from hashi.runtime_guard import MigrationGuard, PythonRuntime, process_start
+from hashi.runtime_guard import MigrationBusyError, MigrationGuard, PythonRuntime, process_start
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKER = """
@@ -139,6 +140,99 @@ def test_main_does_not_touch_data_when_guard_unavailable(qapp, tmp_path, monkeyp
     monkeypatch.setattr(main, "_run_application", lambda *_: pytest.fail("移行中に起動した"))
     with MigrationGuard(tmp_path, exclusive=True):
         assert main.main(["main.py"]) == 1
+
+
+@pytest.mark.parametrize('failure', ['lock_unsupported', 'path_denied', 'start_unknown',
+                                  'marker_denied', 'start_command', 'marker_unicode'])
+def test_main_warns_and_runs_when_marker_support_is_unavailable(qapp, tmp_path, monkeypatch, failure):
+    import hashi.runtime_guard as module
+    import main
+    monkeypatch.setattr(module, 'runtime_dir', lambda: tmp_path / 'runtime')
+    monkeypatch.setattr(main, 'QApplication', lambda _argv: qapp)
+    monkeypatch.setattr(main, 'apply_dark_theme', lambda _app: None)
+    warnings = []
+    monkeypatch.setattr(main.QMessageBox, 'warning', lambda *_args: warnings.append(True))
+    monkeypatch.setattr(main.QMessageBox, 'critical', lambda *_: pytest.fail('競合以外で起動を止めた'))
+    def fail(*_args, **_kwargs):
+        if failure == 'start_unknown':
+            raise RuntimeError('開始時刻未対応')
+        if failure == 'start_command':
+            raise subprocess.CalledProcessError(1, 'ps')
+        if failure == 'marker_unicode':
+            raise UnicodeEncodeError('utf-8', '\udcff', 0, 1, 'fixture')
+        raise OSError(errno.ENOTSUP if failure == 'lock_unsupported' else errno.EACCES, 'fixture')
+    target = {'lock_unsupported': '_lock', 'path_denied': 'runtime_dir',
+              'start_unknown': 'process_start', 'marker_denied': 'save_json_atomic',
+              'start_command': 'process_start', 'marker_unicode': 'save_json_atomic'}[failure]
+    monkeypatch.setattr(module, target, fail)
+    ran = []
+    def run(*_args):
+        ran.append(True)
+        if failure in ('start_unknown', 'marker_denied', 'start_command', 'marker_unicode'):
+            # マーカーだけ失敗しても共有ロックでRust側を防ぐ。
+            with pytest.raises(MigrationBusyError):
+                with MigrationGuard(tmp_path / 'runtime', exclusive=True):
+                    pass
+        return 7
+    monkeypatch.setattr(main, '_run_application', run)
+    assert main.main(['main.py']) == 7
+    assert ran == [True] and warnings == [True]
+
+
+def test_best_effort_marker_failure_keeps_lock_until_normal_close(tmp_path, monkeypatch):
+    import hashi.runtime_guard as module
+    def fail(*_args):
+        raise RuntimeError('開始時刻を照会できない')
+    monkeypatch.setattr(module, 'process_start', fail)
+    runtime = PythonRuntime(tmp_path, data_root=tmp_path).start_best_effort()
+    try:
+        assert runtime.warnings
+        with pytest.raises(MigrationBusyError):
+            with MigrationGuard(tmp_path, exclusive=True):
+                pass
+    finally:
+        runtime.close()
+    with MigrationGuard(tmp_path, exclusive=True):
+        pass
+
+
+@pytest.mark.skipif(os.name == 'nt', reason='Unixのシンボリックリンク検証')
+def test_best_effort_does_not_write_into_rejected_runtime_directory(tmp_path):
+    target = tmp_path / 'target'
+    target.mkdir()
+    link = tmp_path / 'link'
+    link.symlink_to(target, target_is_directory=True)
+    runtime = PythonRuntime(link, data_root=tmp_path).start_best_effort()
+    try:
+        assert runtime.warnings
+        assert not list(target.iterdir())
+        assert runtime.marker is None
+    finally:
+        runtime.close()
+
+
+@pytest.mark.parametrize('kind', ['pending', 'corrupt', 'clear'])
+def test_rust_checks_stale_marker_data_root_read_only(tmp_path, rust_binary, kind):
+    from hashi.permjournal import PermJournal
+    directory = tmp_path / 'runtime'
+    legacy = tmp_path / 'legacy'
+    legacy.mkdir()
+    process = python_worker(directory, legacy)
+    process.kill()
+    process.wait(timeout=15)
+    path = legacy / 'perm_journal.json'
+    if kind == 'pending':
+        PermJournal(path).record('fixture@host:22', '/fixture', 0o640, process.pid)
+    else:
+        path.write_bytes(b'{' if kind == 'corrupt' else b'{}')
+    original = path.read_bytes()
+    result = subprocess.run([str(rust_binary), str(directory), '--legacy-root', str(tmp_path / 'default')],
+                            capture_output=True, text=True, timeout=15)
+    assert (result.returncode == 0) == (kind == 'clear'), result.stderr
+    assert path.read_bytes() == original
+    assert len(list(directory.glob('python-*.json'))) == 1
+    if kind == 'clear':
+        assert '確認先: 2件' in result.stderr
 
 
 @pytest.fixture
