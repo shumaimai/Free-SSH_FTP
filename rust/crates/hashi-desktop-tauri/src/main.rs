@@ -12,6 +12,7 @@ mod forwards;
 mod import;
 mod keygen;
 mod local;
+mod mcp_register;
 mod session;
 mod settings;
 mod snippets;
@@ -117,6 +118,8 @@ fn main() {
             external::external_stop,
             external::mcp_start,
             external::mcp_stop,
+            mcp_register::mcp_register_status,
+            mcp_register::mcp_register_desktop,
             local::local_list,
             local::local_pick_dir,
             local::local_roots,

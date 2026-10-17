@@ -239,6 +239,14 @@ SSH・転送・権限補助・AI・保存などの核はRustのまま共有し�
   停止・端末の選び直しで進行中・承認待ちの要求も取り消す。承認はRust側の要求を画面の確認窓へ出し、画面を閉じる操作は拒否として扱う。
   MCPは`hashi-mcp`をそのまま使い、127.0.0.1の認証つきIPC（本人限定フォルダのendpoint・instance/token照合）で、画面に出す設定は
   同じフォルダのHashiMCP-RustPreview.exe（stdioヘルパー）を指す。Hashiを終了する/停止するとendpointを削除する（終了時にMCPも閉じる）。
+  接続情報は利用者ごとの固定フォルダ（Windowsは`%LOCALAPPDATA%\Hashi-RustPreview\mcp`、他は`XDG_RUNTIME_DIR`か`~/.local/state`）に置き、本人専用の権限にする。
+  ヘルパーは引数なしで動き、要求のたびに接続情報を読み直す。Hashi未起動でも落ちず、初期化と`tools/list`には答え、`tools/call`は
+  「Hashiを起動してMCPを開始してください」を返す。後から開始/再起動したHashiへは、記録した初期化を再生してつなぐ。
+  そのため登録はヘルパーのパスだけで、Hashiを再起動しても貼り直さない。tokenは起動ごとに変え、停止時は自分の接続情報だけ消す。
+  画面の「Claudeに登録」は`claude_desktop_config.json`の`mcpServers.hashi-rust-preview`1項目だけを書く（バックアップ3世代、
+  読めない/形が違うファイルは上書きしない）。Claude Codeは`claude mcp add`のコマンドを表示する。
+  未確認: Windows実機のClaude Desktop/Claude Code（Store版の設定パス・起動中の上書き・実際のツール呼び出し）。
+  Claude Desktopが起動中かは判定していない（Claude CodeのCLIも`claude.exe`のため誤判定する）。画面で終了を案内し、登録状況は画面で再確認できる。
   AIドックの送信も同じBrokerを設定し直すため、MCPの共有はAIの送信で置き換わる（egui版と同じ）。
   Xvfb + 実sshdで、共有開始→MCP開始→stdioヘルパー経由のlist_sessions/send_input→承認窓で許可→端末で実行（セッションログで確認）、終了でendpointが消えることを確認した。
   未確認: Claude Desktop等の実クライアントからの接続、Windows実機。

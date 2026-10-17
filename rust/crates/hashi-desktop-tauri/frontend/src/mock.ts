@@ -69,6 +69,16 @@ export function mockApi(): Api {
   let localOpens = 0;
   let permEnabled = false;
   let mcpOn = false;
+  let registered: 'registered' | 'notRegistered' = 'notRegistered';
+  const registerStatus = (backup: string | null = null) => ({
+    helperFound: true,
+    helperPath: 'C:\\Hashi\\HashiMCP-RustPreview.exe',
+    desktopConfigPath: 'C:\\Users\\me\\AppData\\Roaming\\Claude\\claude_desktop_config.json',
+    desktopState: registered,
+    codeCommand: 'claude mcp add --scope user hashi-rust-preview -- "C:\\Hashi\\HashiMCP-RustPreview.exe"',
+    manualConfig: JSON.stringify({ mcpServers: { 'hashi-rust-preview': { command: 'C:\\Hashi\\HashiMCP-RustPreview.exe', args: [] } } }, null, 2),
+    backup,
+  });
   let ext: { shared: number; mode: 'consult' | 'confirm' | 'auto'; expires: number } = { shared: 0, mode: 'consult', expires: 0 };
   const extStatus = () => ({
     shared: ext.shared,
@@ -78,7 +88,7 @@ export function mockApi(): Api {
     mcpRunning: mcpOn,
     mcpStarting: false,
     mcpConfig: mcpOn
-      ? JSON.stringify({ mcpServers: { 'hashi-rust-preview': { type: 'stdio', command: 'C:\\Hashi\\HashiMCP-RustPreview.exe', args: ['C:\\Temp\\hashi\\endpoint.json'] } } }, null, 2)
+      ? JSON.stringify({ mcpServers: { 'hashi-rust-preview': { type: 'stdio', command: 'C:\\Hashi\\HashiMCP-RustPreview.exe', args: [] } } }, null, 2)
       : '',
   });
   let stored: import('./appearance').Appearance | null = null;
@@ -344,6 +354,11 @@ export function mockApi(): Api {
     mcpStop: async () => {
       mcpOn = false;
       return extStatus();
+    },
+    mcpRegisterStatus: async () => registerStatus(),
+    mcpRegisterDesktop: async () => {
+      registered = 'registered';
+      return registerStatus('C:\\Users\\me\\AppData\\Roaming\\Claude\\claude_desktop_config.json.hashi-backup-1');
     },
     importLegacyInspect: async (legacyStopped) => {
       if (!legacyStopped) throw new Error('旧Python版をすべて終了したことの確認が必要です');

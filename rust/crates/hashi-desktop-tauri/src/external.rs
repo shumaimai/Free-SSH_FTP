@@ -126,7 +126,7 @@ pub async fn mcp_start(state: State<'_, AppState>) -> Result<ExternalStatus, Str
         }
         *starting = true;
     }
-    let result = McpBridge::start(state.ai.broker.clone()).await;
+    let result = McpBridge::start_fixed(state.ai.broker.clone()).await;
     if let Ok(mut starting) = state.external.starting.lock() {
         *starting = false;
     }

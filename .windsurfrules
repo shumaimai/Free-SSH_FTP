@@ -369,6 +369,7 @@ ruff check .
 - W端末の操作先は `SessionTab.active_terminal()`。SSH固有操作は `terminal` を使い、CMDへ保存パスワードを渡さない。
 
 - AI/MCPの端末操作はCommandBrokerを通す。許可と対象ID/世代はユーザーが選ぶ。モデルからモード変更禁止。
+- MCPヘルパーは引数なしで接続情報を毎回読み直す(未起動でも落とさない)。登録は`mcpServers.hashi-rust-preview`1項目だけ、バックアップを残し壊れたファイルは上書きしない。
 - send_keysは名前付きキー(Ctrl+X/Esc/矢印等)専用で未知名は確認前に拒否。
 - send_inputは`enter`必須。Enter未送信を結果と承認窓で明示し、完了/終了コードは推測しない。
 - 対話入力の完了はunknown。独立実行は別チャネル/別CMDで行い、対話端末のcwdを推測しない。

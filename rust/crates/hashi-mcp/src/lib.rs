@@ -27,6 +27,86 @@ pub const HELPER_NAME: &str = if cfg!(windows) {
     "HashiMCP-RustPreview"
 };
 
+/// MCPクライアントに登録するサーバー名。
+pub const SERVER_NAME: &str = "hashi-rust-preview";
+/// 固定フォルダを差し替える環境変数(試験用)。
+pub const DIRECTORY_ENV: &str = "HASHI_MCP_DIR";
+
+/// 接続情報の固定フォルダ。Windowsは%LOCALAPPDATA%、他はXDG_RUNTIME_DIRか~/.local/state。
+pub fn default_directory() -> Result<PathBuf> {
+    if let Some(value) = std::env::var_os(DIRECTORY_ENV).filter(|v| !v.is_empty()) {
+        return Ok(PathBuf::from(value));
+    }
+    let home = || {
+        std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .context("ホームフォルダが不明です")
+    };
+    Ok(if cfg!(windows) {
+        match std::env::var_os("LOCALAPPDATA").filter(|v| !v.is_empty()) {
+            Some(value) => PathBuf::from(value),
+            None => home()?.join("AppData/Local"),
+        }
+        .join("Hashi-RustPreview/mcp")
+    } else {
+        match std::env::var_os("XDG_RUNTIME_DIR").filter(|v| !v.is_empty()) {
+            Some(value) => PathBuf::from(value).join("hashi-rust-preview-mcp"),
+            None => home()?.join(".local/state/hashi-rust-preview/mcp"),
+        }
+    })
+}
+
+/// 固定フォルダの接続情報ファイル。
+pub fn default_endpoint() -> Result<PathBuf> {
+    Ok(default_directory()?.join("endpoint.json"))
+}
+
+/// Hashi本体と同じフォルダにあるstdioヘルパー。
+pub fn helper_path() -> Result<PathBuf> {
+    let executable = std::env::current_exe()?.with_file_name(HELPER_NAME);
+    if !executable.is_file() {
+        bail!("{HELPER_NAME}をHashiと同じフォルダに配置してください");
+    }
+    Ok(executable)
+}
+
+/// Hashiに接続できない間のstdioヘルパーの応答。起動の成否をMCPクライアントに見せず、
+/// ツールの呼び出し時に原因と対処を返す。操作は一切実行しない。
+pub fn offline_reply(message: &Value) -> Value {
+    const OFFLINE: &str = "Hashiに接続できません。Hashiを起動し、「外部連携(MCP)」で「MCPを開始」してから、もう一度お試しください。";
+    let Some(id) = message.get("id").filter(|id| !id.is_null()) else {
+        return Value::Null;
+    };
+    let result = match message["method"].as_str().unwrap_or_default() {
+        "initialize" => initialize_result(&message["params"]),
+        "ping" => json!({}),
+        "tools/list" => tool_list(),
+        "tools/call" => json!({"content": [{"type": "text", "text": OFFLINE}], "isError": true}),
+        _ => {
+            return json!({"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32601, "message": "Method not found"}})
+        }
+    };
+    json!({"jsonrpc": "2.0", "id": id, "result": result})
+}
+
+fn initialize_result(params: &Value) -> Value {
+    let requested = params["protocolVersion"].as_str().unwrap_or_default();
+    let version = VERSIONS
+        .iter()
+        .find(|v| **v == requested)
+        .copied()
+        .unwrap_or(VERSIONS[0]);
+    json!({"protocolVersion": version,
+        "capabilities": {"tools": {}}, "serverInfo": {"name": "Hashi", "version": "1"}})
+}
+
+fn tool_list() -> Value {
+    json!({"tools": tools::definitions().into_iter().map(|d| json!({
+        "name": d["name"], "description": d["description"], "inputSchema": d["parameters"]})).collect::<Vec<_>>()})
+}
+
 struct Client {
     ready: bool,
     cancel: CancellationToken,
@@ -37,6 +117,8 @@ pub struct McpBridge {
     instance: String,
     token: String,
     directory: PathBuf,
+    /// 固定フォルダ(利用者ごとに1つ)を使うとき真。停止時はフォルダではなく自分のendpointだけ消す。
+    fixed: bool,
     endpoint: PathBuf,
     port: u16,
     clients: Mutex<HashMap<String, Client>>,
@@ -53,12 +135,31 @@ fn private_directory() -> Result<PathBuf> {
         .prefix("hashi-mcp-")
         .tempdir()?
         .keep();
-    let result = (|| -> Result<()> {
+    if let Err(error) = restrict_directory(&directory) {
+        let _ = std::fs::remove_dir_all(&directory);
+        return Err(error);
+    }
+    Ok(directory)
+}
+
+/// 接続情報の固定フォルダ。リンクは辿らず、本人だけが使える権限にしてから使う。
+fn fixed_directory(directory: &Path) -> Result<PathBuf> {
+    std::fs::create_dir_all(directory)?;
+    let meta = std::fs::symlink_metadata(directory)?;
+    if !meta.is_dir() || meta.file_type().is_symlink() {
+        bail!("MCPの接続情報フォルダが不正です");
+    }
+    restrict_directory(directory)?;
+    Ok(directory.to_owned())
+}
+
+fn restrict_directory(directory: &Path) -> Result<()> {
+    (|| -> Result<()> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))?;
-            let mode = std::fs::metadata(&directory)?.permissions().mode();
+            std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700))?;
+            let mode = std::fs::metadata(directory)?.permissions().mode();
             if mode & 0o077 != 0 {
                 bail!("一時フォルダの権限を制限できません");
             }
@@ -87,7 +188,7 @@ fn private_directory() -> Result<PathBuf> {
                 bail!("ユーザーSIDを確認できません");
             }
             let status = std::process::Command::new("icacls")
-                .arg(&directory)
+                .arg(directory)
                 .args(["/inheritance:r", "/grant:r"])
                 .arg(format!("*{sid}:(OI)(CI)F"))
                 .arg("*S-1-5-18:(OI)(CI)F")
@@ -100,12 +201,7 @@ fn private_directory() -> Result<PathBuf> {
             }
         }
         Ok(())
-    })();
-    if let Err(error) = result {
-        let _ = std::fs::remove_dir_all(&directory);
-        return Err(error);
-    }
-    Ok(directory)
+    })()
 }
 
 fn same(left: &str, right: &str) -> bool {
@@ -119,8 +215,23 @@ fn same(left: &str, right: &str) -> bool {
 
 impl McpBridge {
     /// tokioのruntime上で待受を開始する。接続数は同時8まで。
+    /// 接続情報は起動ごとの一時フォルダへ置く(主にテスト用)。
     pub async fn start(broker: Arc<Broker>) -> Result<Arc<Self>> {
-        let directory = private_directory()?;
+        Self::start_in(broker, private_directory()?, false).await
+    }
+
+    /// 利用者ごとの固定フォルダへ接続情報を置いて開始する。MCPクライアントへの登録は
+    /// ヘルパーのパスだけで済み、Hashiを再起動しても登録し直さなくてよい。
+    pub async fn start_fixed(broker: Arc<Broker>) -> Result<Arc<Self>> {
+        Self::start_in(broker, fixed_directory(&default_directory()?)?, true).await
+    }
+
+    /// 指定した固定フォルダで開始する(`start_fixed`と同じ扱い。フォルダは終了後も残す)。
+    pub async fn start_at(broker: Arc<Broker>, directory: &Path) -> Result<Arc<Self>> {
+        Self::start_in(broker, fixed_directory(directory)?, true).await
+    }
+
+    async fn start_in(broker: Arc<Broker>, directory: PathBuf, fixed: bool) -> Result<Arc<Self>> {
         let started = async {
             let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
             let port = listener.local_addr()?.port();
@@ -130,6 +241,7 @@ impl McpBridge {
                 token: random_hex() + &random_hex(),
                 endpoint: directory.join("endpoint.json"),
                 directory: directory.clone(),
+                fixed,
                 port,
                 clients: Mutex::new(HashMap::new()),
                 stopped: CancellationToken::new(),
@@ -145,7 +257,7 @@ impl McpBridge {
             anyhow::Ok(bridge)
         }
         .await;
-        if started.is_err() {
+        if started.is_err() && !fixed {
             let _ = std::fs::remove_dir_all(&directory);
         }
         started
@@ -157,15 +269,16 @@ impl McpBridge {
         self.port
     }
     /// MCPクライアントへ登録するstdio設定。ヘルパーはHashiと同じフォルダに置く。
+    /// 固定フォルダ方式ではヘルパーが接続情報の場所を知っているので、引数は要らない。
     pub fn config(&self) -> Result<Value> {
-        let executable = std::env::current_exe()?.with_file_name(HELPER_NAME);
-        if !executable.is_file() {
-            bail!("{HELPER_NAME}をHashiと同じフォルダに配置してください");
-        }
-        Ok(
-            json!({"mcpServers": {"hashi-rust-preview": {"type": "stdio",
-            "command": executable, "args": [self.endpoint]}}}),
-        )
+        let executable = helper_path()?;
+        let args: Vec<&Path> = if self.fixed {
+            vec![]
+        } else {
+            vec![&self.endpoint]
+        };
+        Ok(json!({"mcpServers": {SERVER_NAME: {"type": "stdio",
+            "command": executable, "args": args}}}))
     }
     async fn serve(self: Arc<Self>, listener: TcpListener) {
         let slots = Arc::new(Semaphore::new(8));
@@ -293,12 +406,6 @@ impl McpBridge {
                 if clients.contains_key(client) {
                     return respond(Err(anyhow::anyhow!("このクライアントは初期化済みです")));
                 }
-                let requested = params["protocolVersion"].as_str().unwrap_or_default();
-                let version = VERSIONS
-                    .iter()
-                    .find(|v| **v == requested)
-                    .copied()
-                    .unwrap_or(VERSIONS[0]);
                 clients.insert(
                     client.to_owned(),
                     Client {
@@ -306,8 +413,7 @@ impl McpBridge {
                         cancel: self.stopped.child_token(),
                     },
                 );
-                return respond(Ok(json!({"protocolVersion": version,
-                    "capabilities": {"tools": {}}, "serverInfo": {"name": "Hashi", "version": "1"}})));
+                return respond(Ok(initialize_result(&params)));
             }
             let Some(state) = clients.get_mut(client) else {
                 return respond(Err(anyhow::anyhow!("初期化してください")));
@@ -335,10 +441,7 @@ impl McpBridge {
         }
         let result = match method {
             "ping" => Ok(json!({})),
-            "tools/list" => Ok(
-                json!({"tools": tools::definitions().into_iter().map(|d| json!({
-                "name": d["name"], "description": d["description"], "inputSchema": d["parameters"]})).collect::<Vec<_>>()}),
-            ),
+            "tools/list" => Ok(tool_list()),
             "tools/call" => {
                 let tools = tools::TerminalTools {
                     broker: self.broker.clone(),
@@ -374,7 +477,17 @@ impl McpBridge {
         }
         self.stopped.cancel();
         self.broker.stop();
-        let _ = std::fs::remove_dir_all(&self.directory);
+        if !self.fixed {
+            let _ = std::fs::remove_dir_all(&self.directory);
+        } else if let Ok(raw) = std::fs::read(&self.endpoint) {
+            // 別のHashiが書いた接続情報は消さない(自分の起動分だけ消す)。
+            let mine = serde_json::from_slice::<Value>(&raw)
+                .ok()
+                .is_some_and(|v| v["instance"].as_str() == Some(self.instance.as_str()));
+            if mine {
+                let _ = std::fs::remove_file(&self.endpoint);
+            }
+        }
     }
 }
 impl Drop for McpBridge {
@@ -575,6 +688,55 @@ mod tests {
         bridge.close();
         assert!(!directory.exists(), "停止で接続情報を削除する");
         assert_eq!(broker.permission_snapshot()["mode"], "consult");
+    }
+
+    #[test]
+    fn offline_replies_never_run_tools_and_explain_what_to_do() {
+        let init = offline_reply(&json!({"jsonrpc":"2.0","id":1,"method":"initialize",
+            "params":{"protocolVersion":"2025-06-18"}}));
+        assert_eq!(init["result"]["protocolVersion"], "2025-06-18");
+        let list = offline_reply(&json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}));
+        assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 7);
+        let call = offline_reply(&json!({"jsonrpc":"2.0","id":3,"method":"tools/call",
+            "params":{"name":"send_input","arguments":{}}}));
+        assert_eq!(call["result"]["isError"], true);
+        assert!(call["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("MCPを開始"));
+        // notificationには何も返さない。
+        assert!(
+            offline_reply(&json!({"jsonrpc":"2.0","method":"notifications/initialized"})).is_null()
+        );
+        assert_eq!(
+            offline_reply(&json!({"jsonrpc":"2.0","id":4,"method":"nope"}))["error"]["code"],
+            -32601
+        );
+    }
+
+    #[tokio::test]
+    async fn fixed_directory_is_private_reused_and_only_removes_its_own_endpoint() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("mcp");
+        let broker = || Arc::new(Broker::new(Arc::new(Registry::default()), None));
+        let first = McpBridge::start_at(broker(), &directory).await.unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&directory).unwrap().permissions().mode();
+            assert_eq!(mode & 0o077, 0, "本人以外に権限を与えない");
+        }
+        let config = first.config().ok();
+        if let Some(config) = config {
+            assert_eq!(config["mcpServers"][SERVER_NAME]["args"], json!([]));
+        }
+        // 後から起動した別のHashiが接続情報を書き換える。先に終わった方は消さない。
+        let second = McpBridge::start_at(broker(), &directory).await.unwrap();
+        first.close();
+        assert!(second.endpoint().is_file(), "他のHashiの接続情報は残す");
+        second.close();
+        assert!(!second.endpoint().exists());
+        assert!(directory.is_dir(), "固定フォルダ自体は残す");
     }
 
     #[tokio::test]

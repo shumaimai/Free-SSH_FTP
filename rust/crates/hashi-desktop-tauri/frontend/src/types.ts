@@ -232,6 +232,16 @@ export interface ExternalStatus {
   mcpConfig: string;
 }
 
+export interface RegisterStatus {
+  helperFound: boolean;
+  helperPath: string;
+  desktopConfigPath: string | null;
+  desktopState: 'registered' | 'notRegistered' | 'otherPath' | 'unreadable' | 'noConfig';
+  codeCommand: string;
+  manualConfig: string;
+  backup: string | null;
+}
+
 export interface PermissionStatus {
   enabled: boolean;
   busy: boolean;

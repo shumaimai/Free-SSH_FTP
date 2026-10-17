@@ -84,3 +84,93 @@ async fn helper_relays_json_rpc_and_disconnect() {
     );
     bridge.close();
 }
+
+fn exchange(
+    stdin: &mut std::process::ChildStdin,
+    stdout: &mut BufReader<std::process::ChildStdout>,
+    message: Value,
+) -> Value {
+    writeln!(stdin, "{message}").unwrap();
+    let mut line = String::new();
+    stdout.read_line(&mut line).unwrap();
+    serde_json::from_str(&line).unwrap()
+}
+
+/// 登録は固定(引数なし)。Hashiより先にヘルパーが起動しても落ちず、後から開始した/
+/// 再起動したHashiへ、初期化をやり直さずにつながる。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn helper_without_arguments_follows_hashi_start_and_restart() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("mcp");
+    let registry = Arc::new(Registry::default());
+    let (input, _received) = tokio::sync::mpsc::channel(8);
+    let (id, generation) = registry.register(
+        None,
+        Registration {
+            label: "端末".into(),
+            kind: Kind::Local,
+            shell: "unknown".into(),
+            cwd: None,
+            shareable: true,
+            input,
+            ssh: None,
+        },
+    );
+    let broker = Arc::new(Broker::new(registry, None));
+    broker
+        .configure(Mode::Consult, &[(id, generation)], Duration::from_secs(60))
+        .unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_HashiMCP-RustPreview"))
+        .env(hashi_mcp::DIRECTORY_ENV, &directory)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let list_sessions = |n: u64| {
+        json!({"jsonrpc":"2.0","id":n,"method":"tools/call",
+        "params":{"name":"list_sessions","arguments":{}}})
+    };
+
+    // 1. Hashiが未起動でも初期化と一覧は成功し、呼び出しは原因を返す。
+    let init = exchange(
+        &mut stdin,
+        &mut stdout,
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}),
+    );
+    assert_eq!(init["result"]["serverInfo"]["name"], "Hashi");
+    writeln!(
+        stdin,
+        "{}",
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"})
+    )
+    .unwrap();
+    let tools = exchange(
+        &mut stdin,
+        &mut stdout,
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}),
+    );
+    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 7);
+    let offline = exchange(&mut stdin, &mut stdout, list_sessions(3));
+    assert_eq!(offline["result"]["isError"], true);
+
+    // 2. 後からHashiがMCPを開始する。ヘルパーの再起動は要らない。
+    let bridge = hashi_mcp::McpBridge::start_at(broker.clone(), &directory)
+        .await
+        .unwrap();
+    let online = exchange(&mut stdin, &mut stdout, list_sessions(4));
+    assert_eq!(online["result"]["isError"], false, "{online}");
+    bridge.close();
+
+    // 3. Hashiを再起動(instanceとtokenが変わる)しても、同じヘルパーでつながる。
+    let again = hashi_mcp::McpBridge::start_at(broker.clone(), &directory)
+        .await
+        .unwrap();
+    let restarted = exchange(&mut stdin, &mut stdout, list_sessions(5));
+    assert_eq!(restarted["result"]["isError"], false, "{restarted}");
+    again.close();
+    drop(stdin);
+    let _ = child.wait();
+}

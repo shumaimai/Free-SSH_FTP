@@ -593,6 +593,7 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - Rust操作仲介（`hashi_core::broker`）はAI/MCP共通の唯一の窓口。許可はメモリ内15分、停止/対象変更で承認待ち・実行中も取消。端末ID+接続世代を毎回照合。監査記録へ本文・出力を入れない。perform中のFuture破棄でも実行中記録を残さない。
 - `send_keys`はCtrl+X/Esc/矢印などの名前付きキー専用（Broker経由、未知名は確認前に拒否）。文字入力は`send_input`。
 - `send_input`は`enter`必須（本文の改行に頼らない）。結果の`enter_sent`/`note`でEnter未送信を明示し、承認窓にもEnterの有無を出す。
+- MCPの接続情報は固定の本人専用フォルダ。stdioヘルパーは引数なしで要求ごとに読み直し、未起動でも落ちず、新しいHashiへは初期化を再生する。登録（`mcp_register.rs`）は`mcpServers.hashi-rust-preview`だけを書き、バックアップを残し、読めないファイルは上書きしない。
 - Rust MCP（`hashi-mcp`）は本人限定フォルダのendpoint、instance/token照合、notificationからの実行禁止、切断で取消。stdioヘルパーはstdoutへJSON-RPCだけ。
 - 独立実行は専用exec/別プロセス。対話端末のcwd・環境を継承しない。子孫のパイプ保持でEOF待ちに停止を塞がない。
 - Rust AI（`hashi-ai`）: APIキーはAI専用暗号化ストアだけ。完了イベントのない応答のツールを実行しない。相談専用ではtoolsを送らず返されたツール要求も実行しない。認証付き通信のリダイレクト禁止・POST自動再送なし。共有対象がある送信は観測データを送信前に確認/編集させる。

@@ -30,6 +30,7 @@ import type {
   SavedDoc,
   PermissionStatus,
   ExternalStatus,
+  RegisterStatus,
   LocalListing,
   ImportPreview,
   ImportOptions,
@@ -102,6 +103,8 @@ export interface Api {
   externalStop(): Promise<ExternalStatus>;
   mcpStart(): Promise<ExternalStatus>;
   mcpStop(): Promise<ExternalStatus>;
+  mcpRegisterStatus(): Promise<RegisterStatus>;
+  mcpRegisterDesktop(): Promise<RegisterStatus>;
   permissionsStatus(id: string): Promise<PermissionStatus>;
   permissionsEnable(id: string, legacyStopped: boolean): Promise<PermissionStatus>;
   permissionsRecover(id: string): Promise<string>;
@@ -223,6 +226,8 @@ async function tauriApi(): Promise<Api> {
     externalStop: () => invoke('external_stop'),
     mcpStart: () => invoke('mcp_start'),
     mcpStop: () => invoke('mcp_stop'),
+    mcpRegisterStatus: () => invoke('mcp_register_status'),
+    mcpRegisterDesktop: () => invoke('mcp_register_desktop'),
     permissionsStatus: (id) => invoke('permissions_status', { id }),
     permissionsEnable: (id, legacyStopped) => invoke('permissions_enable', { id, legacyStopped }),
     permissionsRecover: (id) => invoke('permissions_recover', { id }),
