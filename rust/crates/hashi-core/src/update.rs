@@ -12,14 +12,14 @@ pub const REPOSITORY: &str = "shumaimai/Free-SSH_FTP";
 pub enum UpdateChannel {
     /// `rust-preview-vX.Y.Z-alpha.N`。GitHub上はprerelease。
     Preview,
-    /// `rust-vX.Y.Z`。GitHub上はprereleaseではない。
+    /// 正式版`vX.Y.Z`(v2.0.0からTauri版)。GitHub上はprereleaseではない。
     Stable,
 }
 impl UpdateChannel {
     pub fn tag_prefix(self) -> &'static str {
         match self {
             Self::Preview => "rust-preview-v",
-            Self::Stable => "rust-v",
+            Self::Stable => "v",
         }
     }
     /// タグから版を取り出す。チャネルの接頭辞とSemVerに完全一致しなければNone。
@@ -110,19 +110,26 @@ mod tests {
             Some(Version::parse("0.1.0-alpha.2").unwrap())
         );
         assert!(Stable.parse_tag("rust-preview-v0.1.0-alpha.2").is_none());
-        assert!(Preview.parse_tag("rust-v1.0.0").is_none());
-        assert!(Stable.parse_tag("rust-v1.0.0-rc.1").is_none());
-        assert!(Stable.parse_tag("v1.1.2").is_none(), "Python版のタグを除外");
-        assert!(Stable.parse_tag("rust-v1.0").is_none());
-        assert!(Stable.parse_tag("rust-v1.0.0+build").is_none());
+        assert!(Preview.parse_tag("v1.0.0").is_none());
+        assert!(Stable.parse_tag("v1.0.0-rc.1").is_none());
+        assert_eq!(
+            Stable.parse_tag("v1.1.2"),
+            Some(Version::parse("1.1.2").unwrap())
+        );
+        assert!(
+            Stable.parse_tag("v2.0.0-rc.1").is_none(),
+            "正式版はprereleaseを含まない"
+        );
+        assert!(Stable.parse_tag("v1.0").is_none());
+        assert!(Stable.parse_tag("v1.0.0+build").is_none());
         assert!(Preview.parse_tag("rust-preview-v01.0.0").is_none());
     }
 
     #[test]
-    fn prerelease_semver_order_and_python_releases_are_ignored() {
+    fn prerelease_semver_order_and_older_releases_are_ignored() {
         let releases = json!([
-            release("v9.9.9", false),
-            release("rust-v2.0.0", false),
+            release("v1.1.2", false),
+            release("v2.0.0", false),
             release("rust-preview-v0.1.0-alpha.10", true),
             release("rust-preview-v0.1.0-alpha.9", true),
             release("rust-preview-v0.1.0-beta.1", false),
@@ -146,16 +153,16 @@ mod tests {
             &releases,
         )
         .unwrap();
-        assert_eq!(stable.tag, "rust-v2.0.0");
+        assert_eq!(stable.tag, "v2.0.0");
     }
 
     #[test]
     fn foreign_urls_and_malformed_entries_are_rejected() {
-        let mut forged = release("rust-v3.0.0", false);
-        forged["html_url"] = json!("https://evil.example/rust-v3.0.0");
+        let mut forged = release("v3.0.0", false);
+        forged["html_url"] = json!("https://evil.example/v3.0.0");
         let releases = json!([
             forged,
-            {"tag_name": "rust-v4.0.0", "html_url": release_page("rust-v4.0.0")},
+            {"tag_name": "v4.0.0", "html_url": release_page("v4.0.0")},
             {"tag_name": 5, "prerelease": false, "draft": false},
             "text",
         ]);

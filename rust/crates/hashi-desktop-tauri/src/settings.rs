@@ -115,7 +115,7 @@ pub fn start_update_check(app: AppHandle) {
     }
     tauri::async_runtime::spawn(async move {
         let found = tokio::task::spawn_blocking(|| {
-            update::check(UpdateChannel::Preview, env!("CARGO_PKG_VERSION"), None)
+            update::check(UpdateChannel::Stable, env!("CARGO_PKG_VERSION"), None)
         })
         .await;
         if let Ok(Ok(Some(update))) = found {

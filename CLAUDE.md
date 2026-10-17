@@ -7,7 +7,11 @@
 
 ## 0. 現在の状況(引き継ぎ・最初に読む)
 
-- **最新リリース: v1.0.1**(2026-08-01)。バージョンの単一ソースは
+- **v2.0.0 から配布物は Rust + Tauri 版**(`rust/crates/hashi-desktop-tauri`)。版の単一ソースは
+  `rust/Cargo.toml` の `workspace.package.version`。`release.yml` は `vX.Y.Z` タグで Tauri 版をビルドし、
+  Cargo の版と照合する。旧Python版(v1.x、`hashi/__init__.py`)はリリースしない(コードは残す)。
+  Tauri版の更新通知は正式版`vX.Y.Z`(prereleaseでない)だけを見る。保存先・MCPヘルパー名は互換のため据え置き。
+- 旧: **Python版の最終リリースは v1.1.2**。バージョンの単一ソースは
   `hashi/__init__.py`。**タグ `vX.Y.Z` はオーナーが手元で push する**(エージェントは
   タグ push が 403。手順は §8 参照)。
 - 端末/AI開発ブランチのローカルLinuxテストは **550 passed, 8 skipped**(2026-10-02)。
@@ -612,7 +616,7 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - 旧版からの取り込み（`import.rs`・`hashi_storage::legacy_import`）は読み取り専用。旧版の保存先・資格情報（Windows資格情報マネージャ/`creds.dat`）へ書かない。
   旧版停止の確認＋`shared_legacy_lease`（権限補助と共有）を保つ。秘密の値はRust側だけが持ち、画面へは名前・件数・有無だけ返す。
   ホスト鍵は無いものだけ追加し、食い違いは上書きしない。保存済みの秘密（`hashi_storage::vault`）は接続時の最初の1回だけ使い、拒否されたら入力へ戻す。踏み台には使わない。
-- 配布zip・動作確認用exeは必ず`tools/rust_artifact.py`で作る（手で`cp`しない）。本体は`Hashi-Preview.exe`（Tauri版）。
+- 配布zip・動作確認用exeは必ず`tools/rust_artifact.py`で作る（手で`cp`しない）。本体は`Hashi.exe`（Tauri版。v2.0.0で`Hashi-Preview.exe`から改名）。
   `Hashi-RustPreview.exe`はegui版で、配布の本体にしない（名前を付け替えて同梱した事故がある）。
   スクリプトは名前・中身（`hashi-desktop-tauri`の有無）・アイコン資源(.rsrc)を検査し、違えば止まる。ローカルのGNU cross-buildでも`--zip`まで同じ経路を使う。
 - セキュリティ監査の対応(2026-10): 同期ブラウズは区切り・`:`・`..`を含む名前を写さず、ローカル一覧は`..`を含むパスを開かない。

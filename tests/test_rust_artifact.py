@@ -23,19 +23,19 @@ def fake_pe(sections, payload=b''):
 
 def test_tauri_binary_with_resources_is_accepted():
     data = fake_pe(['.text', '.rsrc'], b'src/hashi-desktop-tauri/main.rs')
-    rust_artifact.check_gui_binary('Hashi-Preview.exe', data)
+    rust_artifact.check_gui_binary('Hashi.exe', data)
 
 
 def test_egui_binary_renamed_as_tauri_is_rejected():
     data = fake_pe(['.text', '.rsrc'], b'hashi-desktop-native/src/main.rs')
     with pytest.raises(ValueError, match='Tauri版ではありません'):
-        rust_artifact.check_gui_binary('Hashi-Preview.exe', data)
+        rust_artifact.check_gui_binary('Hashi.exe', data)
 
 
 def test_binary_with_both_markers_is_rejected():
     data = fake_pe(['.text', '.rsrc'], b'hashi-desktop-tauri hashi-desktop-native')
     with pytest.raises(ValueError):
-        rust_artifact.check_gui_binary('Hashi-Preview.exe', data)
+        rust_artifact.check_gui_binary('Hashi.exe', data)
 
 
 def test_egui_file_name_is_rejected():
@@ -47,9 +47,9 @@ def test_egui_file_name_is_rejected():
 def test_missing_icon_resource_is_rejected():
     data = fake_pe(['.text', '.data'], b'hashi-desktop-tauri')
     with pytest.raises(ValueError, match='rsrc'):
-        rust_artifact.check_gui_binary('Hashi-Preview.exe', data)
+        rust_artifact.check_gui_binary('Hashi.exe', data)
 
 
 def test_non_pe_is_rejected():
     with pytest.raises(ValueError, match='PE'):
-        rust_artifact.check_gui_binary('Hashi-Preview.exe', b'\x7fELF hashi-desktop-tauri')
+        rust_artifact.check_gui_binary('Hashi.exe', b'\x7fELF hashi-desktop-tauri')

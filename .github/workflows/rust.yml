@@ -84,7 +84,7 @@ jobs:
         run: python -m pytest -v -x tests/test_runtime_guard.py tests/test_rust_storage_compat.py tests/test_rust_ssh_live.py tests/test_rust_sftp_compat.py tests/test_rust_native_gui.py
       - name: Candidate build identity and licenses
         if: runner.os == 'Windows'
-        run: python tools/rust_artifact.py --binary rust/target/debug/Hashi-Preview.exe --helper rust/target/debug/HashiMCP-RustPreview.exe --output rust/target/candidate
+        run: python tools/rust_artifact.py --binary rust/target/debug/Hashi.exe --helper rust/target/debug/HashiMCP-RustPreview.exe --output rust/target/candidate
       - name: Native candidate artifact
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v7

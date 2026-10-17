@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Hashi Preview",
-  "version": "0.1.0",
+  "productName": "Hashi",
+  "version": "2.0.0",
   "identifier": "jp.hashi.preview",
   "build": {
     "frontendDist": "frontend/dist"
@@ -11,7 +11,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Hashi Preview",
+        "title": "Hashi",
         "width": 1280,
         "height": 800,
         "minWidth": 900,

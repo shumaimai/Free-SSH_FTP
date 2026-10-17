@@ -9,8 +9,8 @@ import zipfile
 from pathlib import Path
 
 # 配布の本体はTauri版。egui版(Hashi-RustPreview)は移行が済むまで残すだけで、配布zipの本体にしない。
-# 名前の取り違え(egui版をHashi-Preview.exeとして同梱)を防ぐため、中身で確かめる。
-GUI_BINARY = 'Hashi-Preview.exe'
+# 名前の取り違え(egui版をHashi.exeとして同梱)を防ぐため、中身で確かめる。
+GUI_BINARY = 'Hashi.exe'
 TAURI_MARKER = b'hashi-desktop-tauri'
 NATIVE_MARKER = b'hashi-desktop-native'
 
@@ -89,7 +89,7 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--cargo', default='cargo')
     parser.add_argument('--profile', choices=['debug', 'release'], default='debug')
-    parser.add_argument('--tag', default='', help='公開するrust-preview-vタグ。CI成果物では空')
+    parser.add_argument('--tag', default='', help='公開するタグ(正式版はvX.Y.Z)。CI成果物では空')
     parser.add_argument('--zip', type=Path, help='出力フォルダをzipにする（最上位は出力フォルダ名）')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
@@ -134,7 +134,7 @@ def main():
     shutil.copy2(root / 'rust/crates/hashi-desktop-native/assets/OFL.txt', notices / 'NotoSansJP-OFL.txt')
     shutil.copy2(root / 'rust/THIRD_PARTY.md', destination / 'THIRD_PARTY.md')
     shutil.copy2(root / 'tools/rust_preview_readme.txt', destination / 'README.txt')
-    record = {'channel': 'rust-preview', 'release': bool(args.tag), 'tag': args.tag or None,
+    record = {'channel': 'stable' if args.tag.startswith('v') else 'rust-preview', 'release': bool(args.tag), 'tag': args.tag or None,
               'profile': args.profile,
               'source_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip(),
               'binary': args.binary.name, 'binary_kind': 'tauri', 'binary_sha256': sha256(args.binary),
