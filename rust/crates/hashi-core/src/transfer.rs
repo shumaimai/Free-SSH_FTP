@@ -448,6 +448,15 @@ pub async fn upload_resume(
     )
 }
 
+/// リモートの一覧で返った子の名前。パスの区切りや親への移動を含むものだけを拒否する
+/// (`a:b`や`NUL`はLinuxでは正当な名前なので、リモート上の操作では拒否しない)。
+fn remote_child_name(name: &str) -> Result<()> {
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\0']) {
+        bail!("リモートのファイル名が不正です");
+    }
+    Ok(())
+}
+
 pub async fn delete_tree(
     session: &SftpSession,
     path: &str,
@@ -469,7 +478,9 @@ pub async fn delete_tree(
             } else {
                 stack.push((path.clone(), true));
                 for entry in session.read_dir(&path).await? {
-                    safe_name(&entry.file_name())?;
+                    // ここはリモート上の削除なので、ローカル保存用の検査(Windowsの予約名など)はかけない。
+                    // 階層の外へ出る名前だけを拒否する。
+                    remote_child_name(&entry.file_name())?;
                     stack.push((entry.path(), false));
                 }
             }
@@ -489,5 +500,14 @@ mod tests {
             assert!(safe_name(name).is_err());
         }
         assert!(safe_name("日本語.txt").is_ok());
+    }
+    #[test]
+    fn remote_child_names_only_reject_escapes() {
+        for name in ["", ".", "..", "a/b", "\0"] {
+            assert!(remote_child_name(name).is_err());
+        }
+        for name in ["a:b.log", "NUL", "end.", "a\\b", "日本語"] {
+            assert!(remote_child_name(name).is_ok());
+        }
     }
 }

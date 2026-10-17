@@ -74,7 +74,7 @@ pub fn helper_path() -> Result<PathBuf> {
 /// Hashiに接続できない間のstdioヘルパーの応答。起動の成否をMCPクライアントに見せず、
 /// ツールの呼び出し時に原因と対処を返す。操作は一切実行しない。
 pub fn offline_reply(message: &Value) -> Value {
-    const OFFLINE: &str = "Hashiに接続できません。Hashiを起動し、「外部連携(MCP)」で「MCPを開始」してから、もう一度お試しください。";
+    const OFFLINE: &str = "Hashiに接続できません。Hashiを起動し、「外部連携(MCP)」で端末の「共有を開始」をしてから、もう一度お試しください。";
     let Some(id) = message.get("id").filter(|id| !id.is_null()) else {
         return Value::Null;
     };
@@ -703,7 +703,7 @@ mod tests {
         assert!(call["result"]["content"][0]["text"]
             .as_str()
             .unwrap()
-            .contains("MCPを開始"));
+            .contains("共有を開始"));
         // notificationには何も返さない。
         assert!(
             offline_reply(&json!({"jsonrpc":"2.0","method":"notifications/initialized"})).is_null()

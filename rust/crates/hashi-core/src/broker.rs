@@ -544,6 +544,16 @@ impl Broker {
         if request.text.chars().count() > TEXT_LIMIT || request.text.contains('\0') {
             bail!("入力が長すぎるか不正です");
         }
+        // 対話入力の制御文字(CR・ESCなど)は確認窓に見えず、Enterや操作キーとして働くため拒否する。
+        // 改行(Enter)は'\n'だけで表し、特殊キーはsend_keysで名前を指定させる。
+        if request.action == Action::SendInput
+            && request
+                .text
+                .chars()
+                .any(|c| c.is_control() && c != '\n' && c != '\t')
+        {
+            bail!("入力に制御文字は使えません。Enterはenter、特殊キーはsend_keysで送ってください");
+        }
         // キー名の誤りは、利用者へ確認を出す前に拒否する。
         if request.action == Action::SendKeys {
             keys_to_bytes(&request.text)?;
@@ -827,6 +837,30 @@ mod tests {
             timeout: Duration::from_secs(5),
             cancel: None,
         }
+    }
+
+    #[tokio::test]
+    async fn send_input_rejects_hidden_control_characters_before_asking() {
+        let (approval, mut asked) = mpsc::channel(4);
+        let (broker, id, generation, mut rx) = setup(Some(approval));
+        broker
+            .configure(Mode::Confirm, &[(id.clone(), generation)], NO_LIMIT)
+            .unwrap();
+        for text in [
+            "rm -rf ~/work\r",
+            "\x1b[201~ls",
+            "a\x08b",
+            "x\u{9b}y",
+            "\x7f",
+        ] {
+            let err = broker
+                .perform(request(&id, generation, Action::SendInput, text))
+                .await
+                .unwrap_err();
+            assert!(err.to_string().contains("制御文字"), "{text:?}");
+        }
+        assert!(asked.try_recv().is_err());
+        assert!(rx.try_recv().is_err());
     }
 
     #[test]

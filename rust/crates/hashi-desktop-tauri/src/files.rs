@@ -449,6 +449,8 @@ fn schedule(app: &AppHandle) {
         let RuntimeHandle::Tokio(handle) = tauri::async_runtime::handle();
         let task_files = files.clone();
         let permissions = files.permissions();
+        let (failed_id, failed_session, failed_cancel) =
+            (job_id.clone(), session_id.clone(), cancel.clone());
         let spawned = files.work.spawn(&handle, async move {
             let context = TaskContext {
                 job: &job_id,
@@ -515,7 +517,15 @@ fn schedule(app: &AppHandle) {
             );
         });
         if spawned.is_err() {
-            // 終了処理中で受け付けられなかった。
+            // 終了処理中で受け付けられなかった。「実行中」のまま残すと全体の上限を占有し続けるので、
+            // 失敗として閉じる(何も始めていないので転送先は変更していない)。
+            finish(
+                app,
+                &failed_id,
+                Err("終了処理中のため開始できませんでした(転送先は変更していません)".into()),
+                &failed_cancel,
+                &failed_session,
+            );
         }
     }
 }
@@ -692,14 +702,22 @@ pub async fn files_download(
     if name.is_empty() || name.contains(['/', '\\']) || name == ".." || name == "." {
         return Err("ファイル名が不正です".into());
     }
+    // フォルダはリモートの名前のまま作るので、子要素と同じく保存できる名前か確かめる
+    // (Windowsの予約名・ADS・使えない文字)。ファイルは利用者がダイアログで名前を決める。
+    let usable = transfer::safe_name(&name);
+    if directory {
+        usable.as_ref().map_err(|e| e.to_string())?;
+    }
     let label_name = name.clone();
     let local = tokio::task::spawn_blocking(move || {
         if directory {
             rfd::FileDialog::new()
                 .pick_folder()
                 .map(|dir| dir.join(&name))
-        } else {
+        } else if usable.is_ok() {
             rfd::FileDialog::new().set_file_name(&name).save_file()
+        } else {
+            rfd::FileDialog::new().save_file()
         }
     })
     .await

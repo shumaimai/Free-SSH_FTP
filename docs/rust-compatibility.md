@@ -242,7 +242,7 @@ SSH・転送・権限補助・AI・保存などの核はRustのまま共有し�
   同じフォルダのHashiMCP-RustPreview.exe（stdioヘルパー）を指す。Hashiを終了する/停止するとendpointを削除する（終了時にMCPも閉じる）。
   接続情報は利用者ごとの固定フォルダ（Windowsは`%LOCALAPPDATA%\Hashi-RustPreview\mcp`、他は`XDG_RUNTIME_DIR`か`~/.local/state`）に置き、本人専用の権限にする。
   ヘルパーは引数なしで動き、要求のたびに接続情報を読み直す。Hashi未起動でも落ちず、初期化と`tools/list`には答え、`tools/call`は
-  「Hashiを起動してMCPを開始してください」を返す。後から開始/再起動したHashiへは、記録した初期化を再生してつなぐ。
+  「Hashiを起動して共有を開始してください」を返す。後から開始/再起動したHashiへは、記録した初期化を再生してつなぐ。
   そのため登録はヘルパーのパスだけで、Hashiを再起動しても貼り直さない。tokenは起動ごとに変え、停止時は自分の接続情報だけ消す。
   画面の「Claudeに登録」は`claude_desktop_config.json`の`mcpServers.hashi-rust-preview`1項目だけを書く（バックアップ3世代、
   読めない/形が違うファイルは上書きしない）。Claude Codeは`claude mcp add`のコマンドを表示する。

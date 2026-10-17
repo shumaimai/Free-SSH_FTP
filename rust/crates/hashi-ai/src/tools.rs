@@ -37,6 +37,7 @@ pub fn definitions() -> Vec<Value> {
             "対話端末へ文字を入力する。enterをtrueにした時だけ最後にEnterを押す。\
              コマンドを実行するにはenter=true。falseは文字を打つだけで実行されない\
              (パスワード入力途中や、まだ確定したくない入力用)。\
+             textの途中の改行もEnterとして送られる。CR・ESCなどの制御文字は使えない(特殊キーはsend_keys)。\
              送信できたことしか分からず、コマンドの完了や結果は不明。結果はread_outputで確認する",
             with(&[
                 ("text", json!({"type": "string"})),

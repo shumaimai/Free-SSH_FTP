@@ -270,7 +270,8 @@ pub async fn editor_save(
     work.mark_saved(&payload).map_err(|e| e.to_string())?;
     let size = payload.len();
     *doc = work;
-    entry.dirty.store(false, Ordering::SeqCst);
+    // 未保存の印はここで下ろさない。保存中に足された編集があるかどうかは画面だけが知っており、
+    // 画面が保存した内容と今の内容を比べて editor_set_dirty で知らせる。
     let (path, session_id) = match &target {
         Target::Local(path) => (path.to_string_lossy().into_owned(), None),
         Target::Remote { session_id, path } => (path.clone(), Some(session_id.clone())),
@@ -313,7 +314,7 @@ pub async fn editor_save_as(
     work.mark_saved(&payload).map_err(|e| e.to_string())?;
     *doc = work;
     *entry.target.lock().map_err(|_| "状態が不正です")? = Target::Local(path.clone());
-    entry.dirty.store(false, Ordering::SeqCst);
+    // 未保存の印は画面が比べて知らせる(editor_saveと同じ)。
     let path = path.to_string_lossy().into_owned();
     Ok(Some(Saved {
         name: file_name(&path),

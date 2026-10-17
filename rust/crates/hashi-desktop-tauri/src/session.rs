@@ -19,7 +19,7 @@ use tauri::{
     ipc::{Channel, InvokeResponseBody},
     AppHandle, Emitter, Manager, State,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 const MAX_INPUT: usize = 1024 * 1024;
@@ -40,7 +40,8 @@ pub struct Session {
     pub label: String,
     cancel: CancellationToken,
     input: mpsc::Sender<Vec<u8>>,
-    resize: Option<mpsc::Sender<(u32, u32)>>,
+    /// SSHへ伝える端末サイズ。最後の値だけを保持するので、連続したresizeでも取りこぼさない。
+    resize: Option<watch::Sender<(u32, u32)>>,
     local: Option<Arc<Mutex<LocalTerminal>>>,
     model: Arc<Mutex<Terminal>>,
     tracker: TaskTracker,
@@ -438,7 +439,7 @@ pub async fn session_connect(
         profile.name.clone()
     };
     let (input, mut input_rx) = mpsc::channel::<Vec<u8>>(32);
-    let (resize, mut resize_rx) = mpsc::channel::<(u32, u32)>(8);
+    let (resize, mut resize_rx) = watch::channel::<(u32, u32)>((cols.into(), rows.into()));
     let (mut session, stamp) = Session::new(label, cols, rows, input);
     session.resize = Some(resize);
     let session = register(&state, session)?;
@@ -554,6 +555,7 @@ pub async fn session_connect(
             }
             emit_state(&app, &id, "connected", connected_message);
             let (mut reader, writer) = channel.split();
+            let mut resize_closed = false;
             let outcome: anyhow::Result<()> = async {
                 loop {
                     tokio::select! {
@@ -569,11 +571,16 @@ pub async fn session_connect(
                             },
                             None => break,
                         },
-                        size = resize_rx.recv() => if let Some((columns, rows)) = size {
-                            tokio::select! {
-                                _ = cancel.cancelled() => break,
-                                result = writer.window_change(columns, rows, 0, 0) => result?,
+                        changed = resize_rx.changed(), if !resize_closed => match changed {
+                            Ok(()) => {
+                                // 送信中に届いたサイズは次の周回で拾う(最後の値だけが残る)。
+                                let (columns, rows) = *resize_rx.borrow_and_update();
+                                tokio::select! {
+                                    _ = cancel.cancelled() => break,
+                                    result = writer.window_change(columns, rows, 0, 0) => result?,
+                                }
                             }
+                            Err(_) => resize_closed = true,
                         },
                         message = reader.wait() => match message {
                             Some(russh::ChannelMsg::Data { data })
@@ -650,7 +657,7 @@ pub fn session_resize(
         model.resize(cols as usize, rows as usize);
     }
     if let Some(local) = &session.local {
-        // 終了処理が同じロックを持っている間は待たず、次のresizeに任せる。
+        // このロックを持つのは終了処理だけ。終了中なら伝える必要がないので待たない。
         if let Ok(local) = local.try_lock() {
             local
                 .resize(cols, rows)
@@ -658,8 +665,8 @@ pub fn session_resize(
         }
     }
     if let Some(resize) = &session.resize {
-        // 満杯なら最後のサイズだけが次の呼び出しで届けばよい。
-        let _ = resize.try_send((cols as u32, rows as u32));
+        // 最後のサイズで上書きする。接続の終了後(受信側なし)は伝える先がないので無視する。
+        resize.send_replace((cols as u32, rows as u32));
     }
     Ok(())
 }

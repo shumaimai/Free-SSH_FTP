@@ -64,6 +64,7 @@ export function ApprovalDialog({ request, onAnswer }: { request: ApprovalRequest
                 {request.action === 'send_input' && (
                   <Caption1>
                     {request.text.endsWith('\n') ? '入力のあと、Enterも送信します。' : 'Enterは送信しません(文字を打つだけです)。'}
+                    {request.text.slice(0, -1).includes('\n') && ' 途中の改行もEnterとして送るため、その行ごとに実行されます。'}
                   </Caption1>
                 )}
               </>

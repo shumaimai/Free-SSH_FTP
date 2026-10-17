@@ -414,12 +414,41 @@ pub async fn shutdown(app: &AppHandle) {
         .lock()
         .map(|mut sessions| sessions.drain().map(|(_, session)| session).collect())
         .unwrap_or_default();
+    // 接続ごとの終了待ち(確定ACK・権限復元を含む)は並行に行い、待ち時間を接続数に比例させない。
+    let mut closing = tokio::task::JoinSet::new();
     for session in sessions {
-        for warning in session.close(&state.ai.registry).await {
-            // 画面は閉じる途中なので、復旧記録が残ることだけ標準エラーへ出す。
-            eprintln!("Hashi: {warning}");
+        let registry = state.ai.registry.clone();
+        closing.spawn(async move { session.close(&registry).await });
+    }
+    let mut warnings = vec![];
+    while let Some(result) = closing.join_next().await {
+        match result {
+            Ok(list) => warnings.extend(list),
+            Err(_) => {
+                warnings.push("接続の終了処理が途中で止まりました(結果は確認できていません)".into())
+            }
         }
     }
+    if warnings.is_empty() {
+        return;
+    }
+    for warning in &warnings {
+        eprintln!("Hashi: {warning}");
+    }
+    // 配布版はコンソールが無いので、閉じる前に画面で知らせる(復旧記録は残してある)。
+    let text = format!(
+        "終了時に確認できなかった処理があります。\n\n{}\n\n権限の復旧記録は消していません。",
+        warnings.join("\n")
+    );
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        rfd::MessageDialog::new()
+            .set_level(rfd::MessageLevel::Warning)
+            .set_title("Hashi の終了")
+            .set_description(text)
+            .set_buttons(rfd::MessageButtons::Ok)
+            .show()
+    })
+    .await;
 }
 
 #[cfg(test)]

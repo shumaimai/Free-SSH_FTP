@@ -1,4 +1,4 @@
-//! 外部操作の共有（AIと同じBroker）とローカルMCP。端末の閲覧・操作は必ずBrokerを通す。
+//! 外部操作の共有（AIドックとは別のBroker）とローカルMCP。端末の閲覧・操作は必ずBrokerを通す。
 //! 許可はメモリ内だけで期限なし(停止・対象変更・アプリ終了まで)。停止・対象変更で進行中の要求も取り消す。
 //! MCPは127.0.0.1の認証つきIPCで、起動中のこのHashiへだけつながる（外部へ公開しない）。
 use crate::app::AppState;
@@ -41,7 +41,7 @@ pub struct ExternalStatus {
 }
 
 fn status(state: &AppState) -> ExternalStatus {
-    let broker = &state.ai.broker;
+    let broker = &state.ai.external_broker;
     let permission = broker.permission_snapshot();
     let audit = broker.audit_snapshot();
     let bridge = state.external.bridge.lock().ok().and_then(|b| b.clone());
@@ -90,11 +90,11 @@ pub async fn external_share(
     // 先に許可の中身を検証し、不正なら何も開始しない。
     state
         .ai
-        .broker
+        .external_broker
         .configure(mode, &ids, NO_LIMIT)
         .map_err(|error| error.to_string())?;
     if let Err(error) = start_mcp(&state).await {
-        state.ai.broker.stop();
+        state.ai.external_broker.stop();
         return Err(error);
     }
     Ok(status(&state))
@@ -103,7 +103,7 @@ pub async fn external_share(
 /// 共有を止め、MCPも閉じる(つながっているクライアントは切断される)。
 #[tauri::command]
 pub fn external_stop(state: State<'_, AppState>) -> ExternalStatus {
-    state.ai.broker.stop();
+    state.ai.external_broker.stop();
     state.external.close();
     status(&state)
 }
@@ -133,7 +133,7 @@ async fn start_mcp(state: &AppState) -> Result<(), String> {
         }
         *starting = true;
     }
-    let result = McpBridge::start_fixed(state.ai.broker.clone()).await;
+    let result = McpBridge::start_fixed(state.ai.external_broker.clone()).await;
     if let Ok(mut starting) = state.external.starting.lock() {
         *starting = false;
     }

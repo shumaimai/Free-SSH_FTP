@@ -24,7 +24,10 @@ use tokio_util::sync::CancellationToken;
 
 pub struct AiState {
     pub registry: Arc<Registry>,
+    /// AIドック専用の許可。外部連携(MCP)の許可とは別に持ち、互いに上書き・停止しない。
     pub broker: Arc<Broker>,
+    /// 外部連携(MCP)専用の許可。承認窓の経路だけAIと共有する。
+    pub external_broker: Arc<Broker>,
     approval_rx: Mutex<Option<mpsc::Receiver<ApprovalRequest>>>,
     approvals: Mutex<HashMap<String, ApprovalRequest>>,
     pub(crate) provider: Mutex<Option<Arc<ApiProvider>>>,
@@ -54,7 +57,8 @@ impl AiState {
         let registry = Arc::new(Registry::default());
         let (approval_tx, approval_rx) = mpsc::channel(16);
         Self {
-            broker: Arc::new(Broker::new(registry.clone(), Some(approval_tx))),
+            broker: Arc::new(Broker::new(registry.clone(), Some(approval_tx.clone()))),
+            external_broker: Arc::new(Broker::new(registry.clone(), Some(approval_tx))),
             registry,
             approval_rx: Mutex::new(Some(approval_rx)),
             approvals: Mutex::new(HashMap::new()),
@@ -71,6 +75,7 @@ impl AiState {
     pub fn stop_all(&self) {
         self.cancel_running();
         self.broker.stop();
+        self.external_broker.stop();
         if let Ok(mut approvals) = self.approvals.lock() {
             for (_, request) in approvals.drain() {
                 let _ = request.reply.send(false);
