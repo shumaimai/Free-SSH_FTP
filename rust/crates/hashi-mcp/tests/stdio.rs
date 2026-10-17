@@ -72,7 +72,7 @@ async fn helper_relays_json_rpc_and_disconnect() {
     .await
     .unwrap();
     assert_eq!(lines[0]["result"]["serverInfo"]["name"], "Hashi");
-    assert_eq!(lines[1]["result"]["tools"].as_array().unwrap().len(), 6);
+    assert_eq!(lines[1]["result"]["tools"].as_array().unwrap().len(), 7);
     assert_eq!(lines[2]["error"]["code"], -32700);
     assert_eq!(lines[3]["id"], "c1");
     assert_eq!(lines[3]["result"]["isError"], false);

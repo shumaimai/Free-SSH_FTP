@@ -121,7 +121,7 @@ export type ShareMode = 'consult' | 'confirm' | 'auto';
 export interface ApprovalRequest {
   id: string;
   actor: string;
-  action: 'send_input' | 'run_command' | 'interrupt';
+  action: 'send_input' | 'send_keys' | 'run_command' | 'interrupt';
   label: string;
   generation: number;
   cwd: string | null;

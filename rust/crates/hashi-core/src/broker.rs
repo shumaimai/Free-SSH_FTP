@@ -242,6 +242,8 @@ pub enum Mode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     SendInput,
+    /// Ctrl+X・Esc・矢印などの特殊キー(vi/nano等の操作用)。
+    SendKeys,
     RunCommand,
     Interrupt,
 }
@@ -249,6 +251,7 @@ impl Action {
     pub fn parse(name: &str) -> Result<Self> {
         Ok(match name {
             "send_input" => Self::SendInput,
+            "send_keys" => Self::SendKeys,
             "run_command" => Self::RunCommand,
             "interrupt" => Self::Interrupt,
             _ => bail!("不明な端末操作"),
@@ -257,10 +260,94 @@ impl Action {
     pub fn name(self) -> &'static str {
         match self {
             Self::SendInput => "send_input",
+            Self::SendKeys => "send_keys",
             Self::RunCommand => "run_command",
             Self::Interrupt => "interrupt",
         }
     }
+}
+
+/// 1回に送れるキー数。
+const KEYS_LIMIT: usize = 32;
+
+/// 空白区切りのキー名を端末へ送るバイト列にする。未知のキー名は丸ごと拒否する。
+/// 例: `Ctrl+X`, `Esc`, `Up`, `Alt+x`, `Shift+Tab`, `F5`。
+/// 通常の文字入力はsend_inputで行い、ここでは名前のあるキーだけを扱う。
+pub fn keys_to_bytes(spec: &str) -> Result<Vec<u8>> {
+    let names: Vec<&str> = spec.split_whitespace().collect();
+    if names.is_empty() || names.len() > KEYS_LIMIT {
+        bail!("キーは1〜{KEYS_LIMIT}個まで指定できます");
+    }
+    let mut out = Vec::new();
+    for name in names {
+        out.extend(key_bytes(name)?);
+    }
+    Ok(out)
+}
+
+fn key_bytes(name: &str) -> Result<Vec<u8>> {
+    let lower = name.to_ascii_lowercase();
+    let fixed: Option<&[u8]> = match lower.as_str() {
+        "enter" | "return" => Some(b"\r"),
+        "esc" | "escape" => Some(b"\x1b"),
+        "tab" => Some(b"\t"),
+        "shift+tab" | "backtab" => Some(b"\x1b[Z"),
+        "backspace" => Some(b"\x7f"),
+        "space" => Some(b" "),
+        "delete" | "del" => Some(b"\x1b[3~"),
+        "insert" => Some(b"\x1b[2~"),
+        "up" => Some(b"\x1b[A"),
+        "down" => Some(b"\x1b[B"),
+        "right" => Some(b"\x1b[C"),
+        "left" => Some(b"\x1b[D"),
+        "home" => Some(b"\x1b[H"),
+        "end" => Some(b"\x1b[F"),
+        "pageup" | "pgup" => Some(b"\x1b[5~"),
+        "pagedown" | "pgdn" => Some(b"\x1b[6~"),
+        "f1" => Some(b"\x1bOP"),
+        "f2" => Some(b"\x1bOQ"),
+        "f3" => Some(b"\x1bOR"),
+        "f4" => Some(b"\x1bOS"),
+        "f5" => Some(b"\x1b[15~"),
+        "f6" => Some(b"\x1b[17~"),
+        "f7" => Some(b"\x1b[18~"),
+        "f8" => Some(b"\x1b[19~"),
+        "f9" => Some(b"\x1b[20~"),
+        "f10" => Some(b"\x1b[21~"),
+        "f11" => Some(b"\x1b[23~"),
+        "f12" => Some(b"\x1b[24~"),
+        _ => None,
+    };
+    if let Some(bytes) = fixed {
+        return Ok(bytes.to_vec());
+    }
+    if let Some(rest) = lower.strip_prefix("ctrl+") {
+        let mut chars = rest.chars();
+        if let (Some(c), None) = (chars.next(), chars.next()) {
+            return match c {
+                'a'..='z' => Ok(vec![c as u8 - b'a' + 1]),
+                '[' => Ok(vec![0x1b]),
+                '\\' => Ok(vec![0x1c]),
+                ']' => Ok(vec![0x1d]),
+                '^' => Ok(vec![0x1e]),
+                '_' | '/' => Ok(vec![0x1f]),
+                '@' | ' ' => Ok(vec![0x00]),
+                _ => bail!("未対応のキーです: {name}"),
+            };
+        }
+    }
+    if let Some(rest) = name
+        .strip_prefix("Alt+")
+        .or_else(|| name.strip_prefix("alt+"))
+    {
+        let mut chars = rest.chars();
+        if let (Some(c), None) = (chars.next(), chars.next()) {
+            if c.is_ascii_graphic() {
+                return Ok(vec![0x1b, c as u8]);
+            }
+        }
+    }
+    bail!("未対応のキーです: {name}")
 }
 
 /// 確認モードで画面へ出す依頼。返答がないまま破棄されたら拒否扱い。
@@ -445,6 +532,10 @@ impl Broker {
         if request.text.chars().count() > TEXT_LIMIT || request.text.contains('\0') {
             bail!("入力が長すぎるか不正です");
         }
+        // キー名の誤りは、利用者へ確認を出す前に拒否する。
+        if request.action == Action::SendKeys {
+            keys_to_bytes(&request.text)?;
+        }
         let operation_id = request
             .request_id
             .clone()
@@ -591,6 +682,10 @@ impl Broker {
                 send(request.text.replace('\n', "\r").into_bytes())?;
                 Ok(json!({"status": "sent", "completion": "unknown", "exit_code": null}))
             }
+            Action::SendKeys => {
+                send(keys_to_bytes(&request.text)?)?;
+                Ok(json!({"status": "sent", "completion": "unknown", "exit_code": null}))
+            }
             Action::Interrupt => {
                 send(vec![0x03])?;
                 Ok(json!({"status": "interrupt_sent", "completion": "unknown"}))
@@ -659,6 +754,29 @@ fn hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn key_names_become_terminal_bytes_and_unknown_names_are_rejected() {
+        assert_eq!(keys_to_bytes("Ctrl+X").unwrap(), vec![0x18]);
+        assert_eq!(keys_to_bytes("ctrl+o Enter Ctrl+X").unwrap(), b"\x0f\r\x18");
+        assert_eq!(
+            keys_to_bytes("Esc Up Shift+Tab").unwrap(),
+            b"\x1b\x1b[A\x1b[Z"
+        );
+        assert_eq!(keys_to_bytes("Alt+x F5").unwrap(), b"\x1bx\x1b[15~");
+        for bad in [
+            "",
+            "   ",
+            "Ctrl+",
+            "Ctrl+Shift+X",
+            "Hyper",
+            "ls",
+            "Alt+\u{3042}",
+        ] {
+            assert!(keys_to_bytes(bad).is_err(), "{bad}");
+        }
+        assert!(keys_to_bytes(&"Tab ".repeat(33)).is_err());
+    }
+
     use super::*;
 
     fn setup(

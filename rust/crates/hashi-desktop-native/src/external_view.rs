@@ -305,6 +305,7 @@ impl App {
                     "操作: {}",
                     match request.action {
                         hashi_core::broker::Action::SendInput => "対話端末へ入力",
+                        hashi_core::broker::Action::SendKeys => "対話端末へキー送信",
                         hashi_core::broker::Action::RunCommand => "独立コマンドを実行",
                         hashi_core::broker::Action::Interrupt => "Ctrl+Cを送信",
                     }

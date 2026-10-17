@@ -17,6 +17,7 @@ import type { ApprovalRequest } from './types';
 
 const ACTION: Record<ApprovalRequest['action'], string> = {
   send_input: '対話端末へ入力',
+  send_keys: '対話端末へキー送信',
   run_command: '独立コマンドを実行',
   interrupt: 'Ctrl+Cを送信',
 };

@@ -44,6 +44,15 @@ pub fn definitions() -> Vec<Value> {
             ]),
         ),
         (
+            "send_keys",
+            "対話端末へ特殊キーを送る(vi/nano/lessなどの操作用)。keysは空白区切りのキー名。\
+             対応: Ctrl+A〜Ctrl+Z, Ctrl+[ Ctrl+\\ Ctrl+], Alt+文字, Esc, Enter, Tab, Shift+Tab, \
+             Backspace, Delete, Space, Up, Down, Left, Right, Home, End, PageUp, PageDown, Insert, F1〜F12。\
+             例: nanoの保存は\"Ctrl+O Enter Ctrl+X\"、viの保存終了は\"Esc\"のあとsend_inputで\":wq\"をenter=trueで送る。\
+             普通の文字入力にはsend_inputを使う。送信できたことしか分からず、画面の状態はread_outputで確認する",
+            with(&[("keys", json!({"type": "array", "items": {"type": "string"}}))]),
+        ),
+        (
             "run_command",
             "独立コマンドを実行。対話端末のcwd/環境は継承しない。ローカルにはcwd必須",
             with(&[
@@ -127,6 +136,19 @@ impl TerminalTools {
             return Ok(source);
         }
         let text = match arguments.get("text") {
+            None if name == "send_keys" => match arguments.get("keys") {
+                Some(Value::Array(keys)) => {
+                    let mut names = vec![];
+                    for key in keys {
+                        match key.as_str() {
+                            Some(key) if !key.contains(char::is_whitespace) => names.push(key),
+                            _ => bail!("キー名が不正です"),
+                        }
+                    }
+                    names.join(" ")
+                }
+                _ => bail!("keysが不正です"),
+            },
             None => String::new(),
             Some(Value::String(text)) => text.clone(),
             Some(_) => bail!("入力が不正です"),
@@ -162,6 +184,10 @@ impl TerminalTools {
                 cancel: Some(self.cancel.clone()),
             })
             .await?;
+        if name == "send_keys" {
+            result["note"] =
+                json!("キーを送信しました。画面の状態はread_outputで確認してください(結果は不明)");
+        }
         if name == "send_input" {
             result["enter_sent"] = json!(submitted);
             result["note"] = json!(if submitted {
@@ -215,7 +241,7 @@ mod tests {
             actor: "mcp:x".into(),
             cancel: CancellationToken::new(),
         };
-        assert_eq!(definitions().len(), 6);
+        assert_eq!(definitions().len(), 7);
         assert!(tools.call("unknown", &json!({}), None).await.is_err());
         assert!(tools
             .call("list_sessions", &json!({"extra": 1}), None)
@@ -250,6 +276,33 @@ mod tests {
             (Some("sent"), Some("7"))
         );
         assert_eq!(received.recv().await.unwrap(), b"ls\r");
+        // 特殊キー(Ctrl+X等)。名前の誤りは何も送らずに拒否する。
+        let keys = tools
+            .call(
+                "send_keys",
+                &json!({"session_id": id, "generation": generation, "keys": ["Ctrl+O", "Enter", "Ctrl+X"]}),
+                Some("11".into()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(keys["status"], "sent");
+        assert_eq!(received.recv().await.unwrap(), b"\x0f\r\x18");
+        for bad in [
+            json!(["Hyper"]),
+            json!([]),
+            json!(["Ctrl+X Enter"]),
+            json!("Ctrl+X"),
+        ] {
+            assert!(tools
+                .call(
+                    "send_keys",
+                    &json!({"session_id": id, "generation": generation, "keys": bad}),
+                    None
+                )
+                .await
+                .is_err());
+        }
+        assert!(received.try_recv().is_err());
         // Enterなしは文字だけ。結果で「未実行」を明示する。
         let typed = tools
             .call(

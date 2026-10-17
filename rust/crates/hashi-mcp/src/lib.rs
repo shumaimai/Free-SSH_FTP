@@ -526,7 +526,7 @@ mod tests {
             json!({"jsonrpc":"2.0","id":3,"method":"tools/list"}),
         )
         .await;
-        assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 6);
+        assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 7);
         let args = json!({"session_id": id, "generation": generation, "text": "ls", "enter": true});
         let note = call(
             &endpoint,

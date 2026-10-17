@@ -160,7 +160,7 @@ mod tests {
             _: &CancellationToken,
             on_text: &mut dyn FnMut(&str),
         ) -> Result<Reply> {
-            assert_eq!(tools.len(), 6);
+            assert_eq!(tools.len(), 7);
             let reply = self.0.lock().unwrap().remove(0);
             if messages.last().unwrap()["role"] == "tool" {
                 assert!(messages.last().unwrap()["content"]
@@ -360,7 +360,7 @@ mod tests {
             .ask_mode("y", "", &CancellationToken::new(), tx, false)
             .await
             .unwrap();
-        assert_eq!(*provider.1.lock().unwrap(), vec![2, 6]);
+        assert_eq!(*provider.1.lock().unwrap(), vec![2, 7]);
     }
 
     #[tokio::test]

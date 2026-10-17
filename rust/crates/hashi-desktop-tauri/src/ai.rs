@@ -136,6 +136,7 @@ pub fn start_pumps(app: AppHandle) {
                         "actor": request.actor,
                         "action": match request.action {
                             Action::SendInput => "send_input",
+                            Action::SendKeys => "send_keys",
                             Action::RunCommand => "run_command",
                             Action::Interrupt => "interrupt",
                         },
