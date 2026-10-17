@@ -102,6 +102,12 @@ def main():
     shutil.copy2(args.binary, destination / args.binary.name)
     for helper in args.helper:
         shutil.copy2(helper, destination / helper.name)
+    # Windowsの本体exeはWebView2Loader.dllを同じフォルダから読む。無いと起動できない。
+    loader = args.binary.parent / 'WebView2Loader.dll'
+    if loader.is_file():
+        shutil.copy2(loader, destination / loader.name)
+    elif b'WebView2Loader.dll' in args.binary.read_bytes():
+        raise SystemExit(f'{loader} がありません。本体exeだけでは起動できません')
     notices = destination / 'licenses'
     notices.mkdir(exist_ok=True)
     dependencies = []
