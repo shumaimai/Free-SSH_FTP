@@ -1,17 +1,12 @@
 //! 外部操作の共有（AIと同じBroker）とローカルMCP。端末の閲覧・操作は必ずBrokerを通す。
-//! 許可はメモリ内だけで15分。停止・対象変更で進行中の要求も取り消す。
+//! 許可はメモリ内だけで期限なし(停止・対象変更・アプリ終了まで)。停止・対象変更で進行中の要求も取り消す。
 //! MCPは127.0.0.1の認証つきIPCで、起動中のこのHashiへだけつながる（外部へ公開しない）。
 use crate::app::AppState;
-use hashi_core::broker::Mode;
+use hashi_core::broker::{Mode, NO_LIMIT};
 use hashi_mcp::McpBridge;
 use serde::Serialize;
-use std::{
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::sync::{Arc, Mutex};
 use tauri::State;
-
-const SHARE_LIFETIME: Duration = Duration::from_secs(15 * 60);
 
 #[derive(Default)]
 pub struct External {
@@ -35,7 +30,8 @@ pub struct ExternalStatus {
     shared: usize,
     /// consult / confirm / auto
     mode: String,
-    seconds: u64,
+    /// 残り秒数。期限なしならnull。
+    seconds: Option<u64>,
     /// 実行中・承認待ちの要求数。
     active: usize,
     mcp_running: bool,
@@ -59,7 +55,7 @@ fn status(state: &AppState) -> ExternalStatus {
     ExternalStatus {
         shared: broker.list_sessions().len(),
         mode: permission["mode"].as_str().unwrap_or("consult").to_owned(),
-        seconds: permission["seconds"].as_u64().unwrap_or(0),
+        seconds: permission["seconds"].as_u64(),
         active: audit["active"].as_array().map_or(0, Vec::len),
         mcp_running: bridge.is_some(),
         mcp_starting: state.external.starting.lock().map(|s| *s).unwrap_or(false),
@@ -81,30 +77,39 @@ fn parse_mode(mode: &str) -> Result<Mode, String> {
     }
 }
 
-/// 選んだ端末（接続のid）を15分だけ共有する。選び直すと以前の許可と進行中の要求は取り消される。
+/// 選んだ端末（接続のid）を共有する。MCPが止まっていれば一緒に開始する。
+/// 選び直すと以前の許可と進行中の要求は取り消される。
 #[tauri::command]
-pub fn external_share(
+pub async fn external_share(
     state: State<'_, AppState>,
     mode: String,
     targets: Vec<String>,
 ) -> Result<ExternalStatus, String> {
+    let mode = parse_mode(&mode)?;
     let ids = crate::session::bindings_for(&state, &targets);
+    // 先に許可の中身を検証し、不正なら何も開始しない。
     state
         .ai
         .broker
-        .configure(parse_mode(&mode)?, &ids, SHARE_LIFETIME)
+        .configure(mode, &ids, NO_LIMIT)
         .map_err(|error| error.to_string())?;
+    if let Err(error) = start_mcp(&state).await {
+        state.ai.broker.stop();
+        return Err(error);
+    }
     Ok(status(&state))
 }
 
+/// 共有を止め、MCPも閉じる(つながっているクライアントは切断される)。
 #[tauri::command]
 pub fn external_stop(state: State<'_, AppState>) -> ExternalStatus {
     state.ai.broker.stop();
+    state.external.close();
     status(&state)
 }
 
-#[tauri::command]
-pub async fn mcp_start(state: State<'_, AppState>) -> Result<ExternalStatus, String> {
+/// MCPを開始する。すでに開始済みなら何もしない。
+async fn start_mcp(state: &AppState) -> Result<(), String> {
     if state.is_exiting() {
         return Err("終了処理中です".into());
     }
@@ -114,15 +119,17 @@ pub async fn mcp_start(state: State<'_, AppState>) -> Result<ExternalStatus, Str
             .starting
             .lock()
             .map_err(|_| "状態が不正です")?;
-        if *starting
-            || state
-                .external
-                .bridge
-                .lock()
-                .map_err(|_| "状態が不正です")?
-                .is_some()
+        if state
+            .external
+            .bridge
+            .lock()
+            .map_err(|_| "状態が不正です")?
+            .is_some()
         {
-            return Err("MCPはすでに開始しています".into());
+            return Ok(());
+        }
+        if *starting {
+            return Err("MCPを開始しています。少し待ってください".into());
         }
         *starting = true;
     }
@@ -136,11 +143,5 @@ pub async fn mcp_start(state: State<'_, AppState>) -> Result<ExternalStatus, Str
         return Err("終了処理中です".into());
     }
     *state.external.bridge.lock().map_err(|_| "状態が不正です")? = Some(bridge);
-    Ok(status(&state))
-}
-
-#[tauri::command]
-pub fn mcp_stop(state: State<'_, AppState>) -> ExternalStatus {
-    state.external.close();
-    status(&state)
+    Ok(())
 }

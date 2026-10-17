@@ -118,8 +118,6 @@ fn main() {
             external::external_status,
             external::external_share,
             external::external_stop,
-            external::mcp_start,
-            external::mcp_stop,
             mcp_register::mcp_register_status,
             mcp_register::mcp_register_desktop,
             local::local_list,

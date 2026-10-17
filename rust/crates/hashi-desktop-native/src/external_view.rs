@@ -209,13 +209,15 @@ impl App {
                 let state = external.broker.permission_snapshot();
                 let shared = external.broker.list_sessions().len();
                 ui.label(format!(
-                    "{shared}端末を共有中 · {} · 残り{}分",
+                    "{shared}端末を共有中 · {} · {}",
                     match state["mode"].as_str() {
                         Some("confirm") => "操作ごとに確認",
                         Some("auto") => "自動実行",
                         _ => "読むだけ",
                     },
-                    state["seconds"].as_u64().unwrap_or(0) / 60
+                    state["seconds"]
+                        .as_u64()
+                        .map_or("期限なし".to_owned(), |s| format!("残り{}分", s / 60))
                 ));
                 let audit = external.broker.audit_snapshot();
                 let active = audit["active"].as_array().cloned().unwrap_or_default();

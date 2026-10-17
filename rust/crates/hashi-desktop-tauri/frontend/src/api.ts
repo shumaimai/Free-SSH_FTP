@@ -104,8 +104,6 @@ export interface Api {
   externalStatus(): Promise<ExternalStatus>;
   externalShare(mode: ShareMode, targets: string[]): Promise<ExternalStatus>;
   externalStop(): Promise<ExternalStatus>;
-  mcpStart(): Promise<ExternalStatus>;
-  mcpStop(): Promise<ExternalStatus>;
   mcpRegisterStatus(): Promise<RegisterStatus>;
   mcpRegisterDesktop(): Promise<RegisterStatus>;
   permissionsStatus(id: string): Promise<PermissionStatus>;
@@ -229,8 +227,6 @@ async function tauriApi(): Promise<Api> {
     externalStatus: () => invoke('external_status'),
     externalShare: (mode, targets) => invoke('external_share', { mode, targets }),
     externalStop: () => invoke('external_stop'),
-    mcpStart: () => invoke('mcp_start'),
-    mcpStop: () => invoke('mcp_stop'),
     mcpRegisterStatus: () => invoke('mcp_register_status'),
     mcpRegisterDesktop: () => invoke('mcp_register_desktop'),
     permissionsStatus: (id) => invoke('permissions_status', { id }),

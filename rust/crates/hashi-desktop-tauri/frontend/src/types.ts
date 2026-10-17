@@ -225,7 +225,8 @@ export interface UpdateInfo {
 export interface ExternalStatus {
   shared: number;
   mode: 'consult' | 'confirm' | 'auto';
-  seconds: number;
+  /** 残り秒数。期限なしならnull。 */
+  seconds: number | null;
   active: number;
   mcpRunning: boolean;
   mcpStarting: boolean;

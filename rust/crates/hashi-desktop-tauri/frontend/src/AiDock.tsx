@@ -92,7 +92,7 @@ const MODE_LABEL: Record<ShareMode, string> = { consult: '読むだけ', confirm
 const MODE_HELP: Record<ShareMode, string> = {
   consult: '画面を読むだけで、AIは操作しません。送る前に内容を確認できます。',
   confirm: 'AIが操作したいとき、そのつど許可を求めます。',
-  auto: '選んだ端末で、確認なしにAIが実行します（15分間）。',
+  auto: '選んだ端末で、確認なしにAIが実行します（停止するまで）。',
 };
 
 /** 本文を```で分け、コードの部分だけ等幅で出す。 */

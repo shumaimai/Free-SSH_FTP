@@ -24,7 +24,7 @@ Issue #170の完了条件をこの表で省略しない。候補に存在する�
 | SSH鍵生成・公開鍵登録 | Ed25519/ECDSA(256/384/521)/RSA(2048/3072/4096)、パスフレーズ（bcrypt-pbkdf）、全種別OpenSSH形式、no-clobber/明示上書き、Unix 0600と新規フォルダ0700、Windowsの~/.ssh外警告、SFTPで~/.ssh/authorized_keysへ末尾追記・重複防止 | Windows実機のACL、RSA 4096の体感時間、Python版はRSA/ECDSAを従来PEMで書く差（Python版はOpenSSH形式も読める） |
 | P2P・Google Drive同期 | 暗号v1契約のみ | X25519/SAS、通信、Google Drive現行backend、秘密同期と衝突処理 |
 | AI/API/OAuth | AI秘密形式、プロバイダー中立のツール定義/秘密除去/観測JSON、APIキー方式（OpenAI Responses・Anthropic Messages・互換Chat Completions・Command Code、モデル一覧、toolsなし接続確認、URL検証・リダイレクト禁止・SSE上限）、会話（最大8往復・取消・観測データの送信前確認/編集）、AI専用暗号化ストアへのキー保存、設定は`ai_connection`（Python版の`ai_api_kind`/`ai_api_profiles`は引き継がない） | ChatGPT OAuth（独立サインイン・アカウント選択・更新単一所有者）、実API（OpenAI/Anthropic/Command Code）での確認、OSの資格情報ストア |
-| CommandBroker/MCP/公式CLI | 端末台帳（ID・接続世代・共有可否・ANSI除去した出力/画面）、Broker（読むだけ/操作ごとに確認/自動実行、15分、停止で取消、actor+要求IDの重複防止、本文なし監査）、SSH専用exec/ローカル別プロセスの独立実行、`hashi-ai`の6ツール・秘密除去・観測JSON、`hashi-mcp`の認証付きloopback IPC（本人限定フォルダ・instance/token照合・notification実行禁止・切断で取消）と`HashiMCP-RustPreview` console stdio、GUIの共有/承認/MCP設定画面 | 未改変公式Claude CLIの導入/起動/MCP連携、Windows実機のicacls/ConPTY、AI会話画面 |
+| CommandBroker/MCP/公式CLI | 端末台帳（ID・接続世代・共有可否・ANSI除去した出力/画面）、Broker（読むだけ/操作ごとに確認/自動実行、期限なし（停止・終了で取消）、停止で取消、actor+要求IDの重複防止、本文なし監査）、SSH専用exec/ローカル別プロセスの独立実行、`hashi-ai`の6ツール・秘密除去・観測JSON、`hashi-mcp`の認証付きloopback IPC（本人限定フォルダ・instance/token照合・notification実行禁止・切断で取消）と`HashiMCP-RustPreview` console stdio、GUIの共有/承認/MCP設定画面 | 未改変公式Claude CLIの導入/起動/MCP連携、Windows実機のicacls/ConPTY、AI会話画面 |
 | 更新・配布 | Rust候補のWindows CI artifact。preview更新通知（Release一覧から`rust-preview-v`タグ・prerelease・公式URLだけを選ぶ）、Python版の更新通知はPythonタグ形式だけを通知、`rust-preview-v*`専用workflow（prerelease・make_latest:false・版照合・ライセンス同梱） | 実タグでのworkflow初回実行、stable `rust-v`のworkflow、署名/SmartScreen、MCP別EXEの同梱、戻し手順 |
 
 ## 試験の範囲
@@ -146,7 +146,7 @@ Windowsのドライブ/UNC共有はntpathと同じに分解し、ドライブを
 跳ね返り防止はPython版の「1回読み飛ばす」フラグではなく、追随で開始した一覧要求のStampだけを読み飛ばす。
 追随が失敗/取消されても待ち状態が残らず、次の本物の移動を取りこぼさない。失敗は通知だけで、ダイアログにしない。
 
-操作仲介はPython版`command_broker.py`の規則を引き継ぐ。許可はメモリ内だけで15分、モデルやMCPツールから変更できない。
+操作仲介はPython版`command_broker.py`の規則を引き継ぐ。許可はメモリ内だけで期限なし（停止・対象変更・アプリ終了で消える。利用者の判断で15分制限を外した）、モデルやMCPツールから変更できない。
 対象は端末IDと接続世代の組で、再接続（再登録）後の古い世代は拒否し、新しい世代も利用者が選び直す。
 確認モードの承認待ちは停止・MCP切断・要求取消で取り消す。実行中の記録はFutureが破棄されても残さない。
 対話入力は送信成功だけを返し、完了や終了コードを推測しない。独立実行はSSHの専用execチャネルか
@@ -236,7 +236,7 @@ SSH・転送・権限補助・AI・保存などの核はRustのまま共有し�
   Xvfb + 実sshdで、mode 000のフォルダが有効化後に開けて一覧され、フォルダごとの受信で中のファイルを取得でき、どちらも元の000へ戻ること、有効なまま終了できることを確認した。
   限界: 核は対象パスそのものを緩めるため、x権限の無いフォルダの中の単体ファイルは、フォルダを開く（一覧は成功する）だけでは受信できない（lstatが失敗する）。そのフォルダごと受信すれば取得できる。
   sudo・ACL・旧版の未復元記録の取り込みは未対応のまま（egui版と同じ）。
-- 外部連携（ツール→外部連携）はAIドックと同じBrokerを使い、端末の閲覧・操作の許可（読むだけ/操作ごとに確認/自動）を15分だけメモリ内に持つ。
+- 外部連携（ツール→外部連携）はAIドックと同じBrokerを使い、端末の閲覧・操作の許可（読むだけ/操作ごとに確認/自動）をメモリ内だけに持つ（期限なし、停止まで有効）。共有開始でMCPも始まり、停止で閉じる。
   停止・端末の選び直しで進行中・承認待ちの要求も取り消す。承認はRust側の要求を画面の確認窓へ出し、画面を閉じる操作は拒否として扱う。
   MCPは`hashi-mcp`をそのまま使い、127.0.0.1の認証つきIPC（本人限定フォルダのendpoint・instance/token照合）で、画面に出す設定は
   同じフォルダのHashiMCP-RustPreview.exe（stdioヘルパー）を指す。Hashiを終了する/停止するとendpointを削除する（終了時にMCPも閉じる）。

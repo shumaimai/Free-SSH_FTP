@@ -6,7 +6,7 @@ use hashi_ai::{
     connect::{self, PROTOCOLS, SERVICES},
     conversation::Conversation,
 };
-use hashi_core::broker::{Action, ApprovalRequest, Broker, Mode, Registry};
+use hashi_core::broker::{Action, ApprovalRequest, Broker, Mode, Registry, NO_LIMIT};
 use hashi_storage::{
     paths::Channel,
     secrets::{EncryptedSecrets, Namespace},
@@ -21,8 +21,6 @@ use std::{
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-
-const SHARE_LIFETIME: Duration = Duration::from_secs(15 * 60);
 
 pub struct AiState {
     pub registry: Arc<Registry>,
@@ -418,7 +416,7 @@ pub async fn ai_send(
         state
             .ai
             .broker
-            .configure(mode, &ids, SHARE_LIFETIME)
+            .configure(mode, &ids, NO_LIMIT)
             .map_err(|error| error.to_string())?;
         begin(&app, &state, question, String::new(), mode)?;
         return Ok(SendResult { preview: None });
@@ -427,7 +425,7 @@ pub async fn ai_send(
     state
         .ai
         .broker
-        .configure(Mode::Consult, &ids, SHARE_LIFETIME)
+        .configure(Mode::Consult, &ids, NO_LIMIT)
         .map_err(|error| error.to_string())?;
     let context = hashi_ai::observe::context_snapshot(&state.ai.broker);
     *state.ai.preview.lock().map_err(|_| "状態が不正です")? = Some(Pending {
@@ -462,7 +460,7 @@ pub async fn ai_confirm(
     state
         .ai
         .broker
-        .configure(pending.mode, &pending.ids, SHARE_LIFETIME)
+        .configure(pending.mode, &pending.ids, NO_LIMIT)
         .map_err(|error| error.to_string())?;
     begin(&app, &state, pending.question, context, pending.mode)
 }

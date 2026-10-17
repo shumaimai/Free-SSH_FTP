@@ -1,4 +1,4 @@
-// 外部連携。MCPクライアント（Claude Desktopなど）へ、選んだ端末の閲覧・操作を15分だけ許可する。
+// 外部連携。MCPクライアント（Claude Desktopなど）へ、選んだ端末の閲覧・操作を、停止するまで許可する。
 // 許可はメモリ内だけで、停止・選び直しで進行中の要求も取り消される。操作の承認はRust側が画面へ出す。
 import { useCallback, useEffect, useState } from 'react';
 import {
@@ -129,7 +129,7 @@ export function ExternalDialog({ api, open, targets, onClose }: Props) {
                 }
               />
             ))}
-            <Caption1>共有は15分間です。端末を選び直すか停止すると、実行許可も取り消します。</Caption1>
+            <Caption1>共有を開始するとMCPも始まります。期限はありません。端末を選び直すか停止すると、実行許可も取り消します。</Caption1>
             <div style={{ display: 'flex', gap: 8 }}>
               <Button
                 appearance="primary"
@@ -138,15 +138,15 @@ export function ExternalDialog({ api, open, targets, onClose }: Props) {
               >
                 共有を開始
               </Button>
-              <Button disabled={busy || !sharing} onClick={() => void run(() => api.externalStop(), '外部操作の共有を停止しました')}>
+              <Button disabled={busy || !(sharing || status?.mcpRunning)} onClick={() => void run(() => api.externalStop(), '共有とMCPを停止しました')}>
                 停止
               </Button>
             </div>
             {status && (
               <Caption1>
                 {status.shared}端末を共有中 ·{' '}
-                {status.mode === 'confirm' ? '操作ごとに確認' : status.mode === 'auto' ? '自動実行' : '読むだけ'} · 残り
-                {Math.floor(status.seconds / 60)}分
+                {status.mode === 'confirm' ? '操作ごとに確認' : status.mode === 'auto' ? '自動実行' : '読むだけ'} ·{' '}
+                {status.seconds === null ? '期限なし' : `残り${Math.floor(status.seconds / 60)}分`}
                 {status.active > 0 ? ` · 実行中・承認待ち ${status.active}件` : ''}
               </Caption1>
             )}
@@ -219,23 +219,6 @@ export function ExternalDialog({ api, open, targets, onClose }: Props) {
                 </Accordion>
               </>
             )}
-            <Divider />
-            <Text weight="semibold">MCPの接続</Text>
-            <Caption1>
-              「MCPを開始」すると、登録済みのClaudeから使えます。起動中のこのHashiへだけ接続でき、外部へ公開しません。Hashiを終了すると無効になります。
-            </Caption1>
-            <div>
-              {status && !status.mcpRunning && (
-                <Button disabled={busy || status.mcpStarting} onClick={() => void run(() => api.mcpStart(), 'MCPを開始しました')}>
-                  MCPを開始
-                </Button>
-              )}
-              {status?.mcpRunning && (
-                <Button disabled={busy} onClick={() => void run(() => api.mcpStop(), 'MCPを停止しました')}>
-                  MCPを停止
-                </Button>
-              )}
-            </div>
             {error && (
               <MessageBar intent="error" style={{ flexShrink: 0 }}>
                 <MessageBarBody>{error}</MessageBarBody>

@@ -384,13 +384,23 @@ struct Active {
 struct State {
     mode: Mode,
     targets: HashSet<(String, u64)>,
-    expires: Instant,
+    /// `None`は期限なし。共有の有無は`targets`で決まる(停止すると空になる)。
+    expires: Option<Instant>,
     epoch: u64,
     active: HashMap<(String, String), Active>,
     results: HashMap<(String, String), (String, Value)>,
     order: VecDeque<(String, String)>,
     audit: VecDeque<Value>,
 }
+
+impl State {
+    fn expired(&self) -> bool {
+        self.expires.is_some_and(|at| Instant::now() >= at)
+    }
+}
+
+/// `configure`へ渡すと共有に期限を付けない(停止・対象変更・アプリ終了までは有効)。
+pub const NO_LIMIT: Duration = Duration::MAX;
 
 pub struct Broker {
     pub registry: Arc<Registry>,
@@ -405,7 +415,7 @@ impl Broker {
             state: Mutex::new(State {
                 mode: Mode::Consult,
                 targets: HashSet::new(),
-                expires: Instant::now(),
+                expires: None,
                 epoch: 0,
                 active: HashMap::new(),
                 results: HashMap::new(),
@@ -414,7 +424,8 @@ impl Broker {
             }),
         }
     }
-    /// 利用者が画面で選んだ対象と期限（1秒〜1時間）。進行中の要求は取り消す。
+    /// 利用者が画面で選んだ対象と期限（1秒〜1時間。`NO_LIMIT`なら期限なし）。
+    /// 進行中の要求は取り消す。
     pub fn configure(
         &self,
         mode: Mode,
@@ -433,8 +444,9 @@ impl Broker {
         let mut state = self.state.lock().unwrap();
         state.mode = mode;
         state.targets = verified;
-        state.expires =
-            Instant::now() + lifetime.clamp(Duration::from_secs(1), Duration::from_secs(3600));
+        state.expires = (lifetime != NO_LIMIT).then(|| {
+            Instant::now() + lifetime.clamp(Duration::from_secs(1), Duration::from_secs(3600))
+        });
         Ok(())
     }
     /// 停止。相談のみへ戻し、対象を外し、進行中・承認待ちの要求をすべて取り消す。
@@ -487,15 +499,14 @@ impl Broker {
         if !shareable {
             bail!("この端末は外部操作の対象外です");
         }
-        if !state.targets.contains(&(id.to_owned(), generation)) || Instant::now() >= state.expires
-        {
+        if !state.targets.contains(&(id.to_owned(), generation)) || state.expired() {
             bail!("端末の共有許可がありません。対象端末を選び直してください");
         }
         Ok(resolved)
     }
     pub fn list_sessions(&self) -> Vec<Value> {
         let state = self.state.lock().unwrap();
-        if Instant::now() >= state.expires {
+        if state.expired() {
             return vec![];
         }
         self.registry
@@ -520,7 +531,8 @@ impl Broker {
             Mode::Confirm => "confirm",
             Mode::Auto => "auto",
         };
-        json!({"mode": mode, "seconds": state.expires.saturating_duration_since(Instant::now()).as_secs()})
+        // secondsがnullなら期限なし。
+        json!({"mode": mode, "seconds": state.expires.map(|at| at.saturating_duration_since(Instant::now()).as_secs())})
     }
     pub fn read_output(&self, id: &str, generation: u64, limit: usize) -> Result<Value> {
         let state = self.state.lock().unwrap();
@@ -815,6 +827,32 @@ mod tests {
             timeout: Duration::from_secs(5),
             cancel: None,
         }
+    }
+
+    #[test]
+    fn no_limit_share_has_no_deadline_and_a_limited_one_does() {
+        let (broker, id, generation, _rx) = setup(None);
+        broker
+            .configure(Mode::Consult, &[(id.clone(), generation)], NO_LIMIT)
+            .unwrap();
+        assert!(broker.permission_snapshot()["seconds"].is_null());
+        assert_eq!(broker.list_sessions().len(), 1);
+        broker.read_output(&id, generation, 100).unwrap();
+        broker
+            .configure(
+                Mode::Consult,
+                &[(id.clone(), generation)],
+                Duration::from_secs(60),
+            )
+            .unwrap();
+        assert!(broker.permission_snapshot()["seconds"].as_u64().unwrap() <= 60);
+        // 停止すると期限なしでも対象は外れる。
+        broker
+            .configure(Mode::Consult, &[(id.clone(), generation)], NO_LIMIT)
+            .unwrap();
+        broker.stop();
+        assert!(broker.list_sessions().is_empty());
+        assert!(broker.read_output(&id, generation, 100).is_err());
     }
 
     #[tokio::test]

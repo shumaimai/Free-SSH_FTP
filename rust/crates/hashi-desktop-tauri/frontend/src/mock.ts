@@ -79,11 +79,11 @@ export function mockApi(): Api {
     manualConfig: JSON.stringify({ mcpServers: { 'hashi-rust-preview': { command: 'C:\\Hashi\\HashiMCP-RustPreview.exe', args: [] } } }, null, 2),
     backup,
   });
-  let ext: { shared: number; mode: 'consult' | 'confirm' | 'auto'; expires: number } = { shared: 0, mode: 'consult', expires: 0 };
+  let ext: { shared: number; mode: 'consult' | 'confirm' | 'auto' } = { shared: 0, mode: 'consult' };
   const extStatus = () => ({
     shared: ext.shared,
     mode: ext.mode,
-    seconds: Math.max(0, Math.floor((ext.expires - Date.now()) / 1000)),
+    seconds: null,
     active: 0,
     mcpRunning: mcpOn,
     mcpStarting: false,
@@ -345,18 +345,12 @@ export function mockApi(): Api {
     },
     externalStatus: async () => extStatus(),
     externalShare: async (mode, targets) => {
-      ext = { shared: targets.length, mode, expires: Date.now() + 15 * 60_000 };
-      return extStatus();
-    },
-    externalStop: async () => {
-      ext = { shared: 0, mode: 'consult', expires: 0 };
-      return extStatus();
-    },
-    mcpStart: async () => {
+      ext = { shared: targets.length, mode };
       mcpOn = true;
       return extStatus();
     },
-    mcpStop: async () => {
+    externalStop: async () => {
+      ext = { shared: 0, mode: 'consult' };
       mcpOn = false;
       return extStatus();
     },
