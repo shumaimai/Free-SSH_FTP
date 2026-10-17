@@ -2,7 +2,7 @@
 //! 登録内容は設定の`ai_models`（配列）と`ai_active`（使用中のid）。キーは同じサービス・URLで共有し、
 //! AI専用の暗号化ストアにだけ保存する。キーは画面へ返さない（保存済みかどうかだけ伝える）。
 use crate::{
-    ai::{adopt, load_saved_key, save_connection, secrets},
+    ai::{adopt, load_saved_key, save_connection, secrets, CHATGPT},
     app::AppState,
 };
 use hashi_ai::{
@@ -32,6 +32,8 @@ pub struct ModelEntry {
     pub use_tools: bool,
     /// 通信方式が「自動」のとき、前回モデルの一覧から決めた方式。変更したら消える。
     pub resolved: String,
+    /// ChatGPTサインインの登録ID(`service`が`chatgpt`のときだけ)。
+    pub account: String,
 }
 
 impl Default for ModelEntry {
@@ -45,8 +47,24 @@ impl Default for ModelEntry {
             protocol: "auto".into(),
             use_tools: true,
             resolved: String::new(),
+            account: String::new(),
         }
     }
+}
+
+fn is_chatgpt(entry: &ModelEntry) -> bool {
+    entry.service == CHATGPT
+}
+
+/// サインイン中のChatGPT登録のID。
+fn connected_accounts() -> Result<Vec<String>, String> {
+    Ok(crate::chatgpt::accounts()?
+        .list()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|a| a.connected)
+        .map(|a| a.id)
+        .collect())
 }
 
 #[derive(Serialize)]
@@ -73,7 +91,11 @@ fn label_of(entry: &ModelEntry) -> String {
     if !entry.name.trim().is_empty() {
         return entry.name.trim().to_owned();
     }
-    let service = connect::service(&entry.service).map_or("AI", |s| s.label);
+    let service = if is_chatgpt(entry) {
+        "ChatGPT"
+    } else {
+        connect::service(&entry.service).map_or("AI", |s| s.label)
+    };
     if entry.model.is_empty() {
         format!("{service}（モデルは自動）")
     } else {
@@ -158,13 +180,30 @@ fn validate(entry: &mut ModelEntry) -> Result<(), String> {
     entry.name = entry.name.trim().to_owned();
     entry.base = entry.base.trim().to_owned();
     entry.model = entry.model.trim().to_owned();
-    let service = connect::service(&entry.service).ok_or("サービスが不正です")?;
     if entry.name.chars().count() > 100 {
         return Err("名前は100文字までです".into());
     }
     if entry.model.len() > 200 || entry.model.chars().any(char::is_control) {
         return Err("モデル名が不正です".into());
     }
+    if is_chatgpt(entry) {
+        // 接続先は公式で固定。キーの代わりにサインインした登録を使い、モデルは一覧から選ぶ。
+        entry.base.clear();
+        entry.protocol = "auto".into();
+        entry.resolved.clear();
+        if entry.account.is_empty()
+            || entry.account.len() > 512
+            || entry.account.chars().any(char::is_control)
+        {
+            return Err("ChatGPTにサインインして、アカウントを選んでください".into());
+        }
+        if entry.model.is_empty() {
+            return Err("モデルを一覧から選んでください".into());
+        }
+        return Ok(());
+    }
+    entry.account.clear();
+    let service = connect::service(&entry.service).ok_or("サービスが不正です")?;
     if entry.base.len() > 2048 {
         return Err("接続先URLが長すぎます".into());
     }
@@ -190,6 +229,9 @@ fn validate(entry: &mut ModelEntry) -> Result<(), String> {
 }
 
 fn key_for(entry: &ModelEntry) -> Result<String, String> {
+    if is_chatgpt(entry) {
+        return Ok(String::new());
+    }
     let service = connect::service(&entry.service).ok_or("サービスが不正です")?;
     if !service.needs_key {
         return Ok(String::new());
@@ -209,15 +251,24 @@ fn list_of(
     warning: Option<String>,
 ) -> Result<ModelsList, String> {
     let secrets = secrets()?;
+    let signed_in = if entries.iter().any(is_chatgpt) {
+        connected_accounts().unwrap_or_default()
+    } else {
+        vec![]
+    };
     let views = entries
         .into_iter()
         .map(|entry| {
             let needs_key = connect::service(&entry.service).is_some_and(|s| s.needs_key);
-            let has_key = !needs_key
-                || key_id_for(&entry)
-                    .ok()
-                    .and_then(|id| secrets.get(&id).ok().flatten())
-                    .is_some_and(|key| !key.is_empty());
+            let has_key = if is_chatgpt(&entry) {
+                signed_in.contains(&entry.account)
+            } else {
+                !needs_key
+                    || key_id_for(&entry)
+                        .ok()
+                        .and_then(|id| secrets.get(&id).ok().flatten())
+                        .is_some_and(|key| !key.is_empty())
+            };
             ModelView {
                 label: label_of(&entry),
                 has_key,
@@ -266,6 +317,17 @@ fn provider_for(
     key: &str,
     network: bool,
 ) -> Result<(ApiProvider, String), String> {
+    if is_chatgpt(entry) {
+        // 通信しない。トークンは最初の要求のときに取得・更新する。
+        let provider = hashi_ai::chatgpt::provider(
+            crate::chatgpt::accounts()?,
+            &entry.account,
+            &entry.model,
+            entry.use_tools,
+        )
+        .map_err(|e| e.to_string())?;
+        return Ok((provider, String::new()));
+    }
     let service = connect::service(&entry.service).ok_or("サービスが不正です")?;
     let auto = entry.protocol == "auto";
     let mut resolved = if auto {
@@ -341,6 +403,7 @@ pub async fn ai_model_save(
         .as_ref()
         .filter(|p| {
             p.service == entry.service
+                && p.account == entry.account
                 && p.base == entry.base
                 && p.model == entry.model
                 && p.protocol == entry.protocol
@@ -457,6 +520,16 @@ async fn activate(
         .ok_or("登録が見つかりません")?;
     let job = entry.clone();
     let (provider, models, resolved) = tokio::task::spawn_blocking(move || {
+        if is_chatgpt(&job) {
+            if !connected_accounts()?.contains(&job.account) {
+                return Err(
+                    "このChatGPTアカウントはサインアウトしています。AIモデルの管理でサインインしてください"
+                        .to_owned(),
+                );
+            }
+            return provider_for(&job, "", false)
+                .map(|(provider, resolved)| (provider, vec![], resolved));
+        }
         let key = key_for(&job)?;
         let needs_key = connect::service(&job.service).is_some_and(|s| s.needs_key);
         if needs_key && key.is_empty() {
@@ -536,6 +609,26 @@ pub async fn ai_model_check(
     validate(&mut entry)?;
     let typed = key.trim().to_owned();
     tokio::task::spawn_blocking(move || {
+        if is_chatgpt(&entry) {
+            // toolsを送らずに短い応答だけ確かめる。登録もトークン以外の保存内容も変えない。
+            let (mut provider, _) = provider_for(&entry, "", false)?;
+            provider.use_tools = false;
+            provider
+                .respond(
+                    &[serde_json::json!({"role": "user", "content": "OKとだけ答えてください。"})],
+                    "接続確認です。端末操作をせず短く回答してください。",
+                    &[],
+                    &tokio_util::sync::CancellationToken::new(),
+                    &mut |_| {},
+                )
+                .map_err(|e| e.to_string())?;
+            return Ok(CheckResult {
+                ok: true,
+                message: "接続できました".into(),
+                model: Some(entry.model.clone()),
+                models: vec![],
+            });
+        }
         let service = connect::service(&entry.service).ok_or("サービスが不正です")?;
         let key = if typed.is_empty() {
             key_for(&entry)?
@@ -677,6 +770,38 @@ mod tests {
             ..entry("openai")
         };
         assert!(validate(&mut bad).is_err());
+    }
+
+    #[test]
+    fn chatgpt_entries_need_an_account_and_a_model_and_keep_no_url() {
+        let mut ok = ModelEntry {
+            service: CHATGPT.into(),
+            account: "issued-1".into(),
+            base: "https://evil.example/v1".into(),
+            protocol: "chat".into(),
+            ..entry("x")
+        };
+        validate(&mut ok).unwrap();
+        assert!(ok.base.is_empty());
+        assert_eq!(ok.protocol, "auto");
+        assert_eq!(label_of(&ok), "ChatGPT / m");
+        let mut no_account = ModelEntry {
+            service: CHATGPT.into(),
+            ..entry("x")
+        };
+        assert!(validate(&mut no_account).is_err());
+        let mut no_model = ModelEntry {
+            model: String::new(),
+            ..ok.clone()
+        };
+        assert!(validate(&mut no_model).is_err());
+        // 他のサービスへ替えたらアカウントは持ち越さない。
+        let mut other = ModelEntry {
+            service: "openai".into(),
+            ..ok
+        };
+        validate(&mut other).unwrap();
+        assert!(other.account.is_empty());
     }
 
     #[test]

@@ -23,11 +23,11 @@ body:
     id: env
     attributes:
       label: 環境
-      description: OS / Python バージョン / Hashi のバージョン / 接続先サーバー(OS・sshd)の種類
+      description: OS / Hashi のバージョン / 画面の拡大率 / 接続先サーバー(OS・sshd)の種類
       placeholder: |
-        - OS: Windows 11
-        - Python: 3.12
-        - Hashi: v0.2.0(exe / ソースから)
+        - OS: Windows 11 24H2
+        - Hashi: v2.0.0(zip / ソースから)。旧Python版なら v1.x と Python の版
+        - 画面の拡大率: 150%
         - 接続先: Ubuntu 22.04 (OpenSSH)
     validations:
       required: true

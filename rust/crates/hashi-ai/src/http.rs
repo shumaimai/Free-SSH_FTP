@@ -77,7 +77,7 @@ fn hint(code: u16) -> &'static str {
 /// 要求を送り、2xxの本文を返す。エラー文にURL以外の入力（キー等）を含めない。
 fn open(
     url: &str,
-    body: Option<&[u8]>,
+    body: Option<(&[u8], &str)>,
     headers: &[(String, String)],
     accept_stream: bool,
 ) -> Result<ureq::Body> {
@@ -89,8 +89,8 @@ fn open(
     }
     let agent = agent();
     let response = match body {
-        Some(body) => {
-            let mut request = agent.post(url).header("Content-Type", "application/json");
+        Some((body, content_type)) => {
+            let mut request = agent.post(url).header("Content-Type", content_type);
             if accept_stream {
                 request = request.header("Accept", "text/event-stream");
             }
@@ -123,8 +123,30 @@ pub fn get_json(url: &str, headers: &[(String, String)]) -> Result<Value> {
     read_json(body.with_config().limit(JSON_LIMIT).reader())
 }
 pub fn post_json(url: &str, payload: &Value, headers: &[(String, String)]) -> Result<Value> {
-    let mut body = open(url, Some(&serde_json::to_vec(payload)?), headers, false)?;
+    let bytes = serde_json::to_vec(payload)?;
+    let mut body = open(url, Some((&bytes, JSON)), headers, false)?;
     read_json(body.with_config().limit(JSON_LIMIT).reader())
+}
+
+const JSON: &str = "application/json";
+const FORM: &str = "application/x-www-form-urlencoded";
+
+fn form(pairs: &[(&str, &str)]) -> Vec<u8> {
+    url::form_urlencoded::Serializer::new(String::new())
+        .extend_pairs(pairs)
+        .finish()
+        .into_bytes()
+}
+
+/// フォーム形式で送り、JSONを受け取る(OAuthのトークン交換)。
+pub fn post_form(url: &str, pairs: &[(&str, &str)]) -> Result<Value> {
+    let mut body = open(url, Some((&form(pairs), FORM)), &[], false)?;
+    read_json(body.with_config().limit(JSON_LIMIT).reader())
+}
+
+/// フォーム形式で送り、2xxかどうかだけを見る(OAuthの失効)。本文は読まない。
+pub fn post_form_status(url: &str, pairs: &[(&str, &str)]) -> Result<()> {
+    open(url, Some((&form(pairs), FORM)), &[], false).map(drop)
 }
 fn read_json(mut reader: impl Read) -> Result<Value> {
     let mut bytes = vec![];
@@ -145,7 +167,8 @@ pub fn events(
     if cancel.is_cancelled() {
         bail!("AI処理を停止しました");
     }
-    let body = open(url, Some(&serde_json::to_vec(payload)?), headers, true)?;
+    let bytes = serde_json::to_vec(payload)?;
+    let body = open(url, Some((&bytes, JSON)), headers, true)?;
     parse_events(BufReader::new(body.into_reader()), cancel, &mut on_event)
 }
 

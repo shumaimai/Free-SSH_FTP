@@ -2,6 +2,7 @@
 //! 端末出力は信頼できない観測データとして扱い、秘密パターンを除去してから外部へ渡す。
 //! 除去は完全保証ではない。端末操作は必ずCommandBroker（`hashi_core::broker`）を通す。
 pub mod api;
+pub mod chatgpt;
 pub mod connect;
 pub mod conversation;
 pub mod http;

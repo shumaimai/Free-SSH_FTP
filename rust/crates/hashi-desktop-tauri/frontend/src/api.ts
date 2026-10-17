@@ -17,6 +17,8 @@ import type {
   AiModelsList,
   AiCheckResult,
   AiServiceInfo,
+  ChatGptAccount,
+  ChatGptModel,
   AiStatus,
   ApprovalRequest,
   ShareMode,
@@ -67,6 +69,12 @@ export interface Api {
   aiModelUse(id: string): Promise<{ model: string }>;
   aiModelCheck(entry: AiModelEntry, key: string): Promise<AiCheckResult>;
   aiModelCandidates(entry: AiModelEntry, key: string): Promise<string[]>;
+  chatgptAccounts(): Promise<ChatGptAccount[]>;
+  /** ブラウザでサインインする。再認証なら登録のIDを渡す。登録のIDを返す。 */
+  chatgptSignIn(registration: string | null): Promise<string>;
+  chatgptCancel(): Promise<void>;
+  chatgptSignOut(id: string): Promise<{ revoked: boolean }>;
+  chatgptModels(id: string): Promise<ChatGptModel[]>;
   onAiModelsChanged(handler: () => void): Promise<() => void>;
   aiClear(): Promise<void>;
   aiStop(): Promise<void>;
@@ -191,6 +199,11 @@ async function tauriApi(): Promise<Api> {
     aiModelUse: (id) => invoke('ai_model_use', { id }),
     aiModelCheck: (entry, key) => invoke('ai_model_check', { entry, key }),
     aiModelCandidates: (entry, key) => invoke('ai_model_candidates', { entry, key }),
+    chatgptAccounts: () => invoke('chatgpt_accounts'),
+    chatgptSignIn: (registration) => invoke('chatgpt_sign_in', { registration }),
+    chatgptCancel: () => invoke('chatgpt_cancel'),
+    chatgptSignOut: (id) => invoke('chatgpt_sign_out', { id }),
+    chatgptModels: (id) => invoke('chatgpt_models', { id }),
     onAiModelsChanged: (handler) => listen('ai-models-changed', () => handler()),
     aiClear: () => invoke('ai_clear'),
     aiStop: () => invoke('ai_stop'),

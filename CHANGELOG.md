@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+### 追加
+- **ChatGPT サインイン**(#158 を Tauri 版へ移植)。「AI モデルの管理」で「ChatGPT(サインイン)」を選び、
+  ブラウザでサインインすると API キーなしで ChatGPT プランのモデルを使える。トークンは AI 専用の暗号化ファイルにだけ保存し、
+  期限前に自動で更新する。サインアウトでは ChatGPT 側の取り消しも試みる。
+- コード署名の準備(SignPath Foundation)。[コード署名ポリシー](docs/code-signing-policy.md)(通信とプライバシーの説明を含む)、
+  `release.yml` の署名手順(Secrets を登録するまでは飛ばす)、MCP ヘルパーへの版情報の埋め込み。
+
+### 変更
+- 設定の更新確認の説明を正式版向けに直し、問い合わせ先(GitHub)と止め方を明記。
+- README・CONTRIBUTING・SECURITY・Issue / PR テンプレートを v2(Rust + Tauri)向けに更新。
+- 公式 Claude Code の内蔵起動(#160)は Tauri 版へ移植しない方針にした(利用条件の確認が難しいため。ローカル MCP で連携できる)。
+
 ## [2.0.0] - 2026-10-17
 Hashi を Rust + Tauri(Web画面は React / Fluent UI / xterm.js)で作り直した最初の正式版(#170)。
 配布物は `Hashi.exe`(+ `WebView2Loader.dll`・MCPヘルパー)の zip。旧Python版(v1.x)とは保存先が別で、

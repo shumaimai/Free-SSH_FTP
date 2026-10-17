@@ -43,6 +43,11 @@ impl EncryptedSecrets {
         Ok(Self { root, namespace })
     }
 
+    /// 保存先のフォルダ(同じ場所に別の取引用ロックを置くため)。
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     #[cfg(test)]
     fn at(root: PathBuf, namespace: Namespace) -> Self {
         Self { root, namespace }

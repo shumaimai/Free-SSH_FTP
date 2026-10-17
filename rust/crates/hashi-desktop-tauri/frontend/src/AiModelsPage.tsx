@@ -26,7 +26,15 @@ import {
 } from '@fluentui/react-components';
 import { Add20Regular, Checkmark20Regular } from '@fluentui/react-icons';
 import type { Api } from './api';
-import { emptyAiModel, type AiModelEntry, type AiModelView, type AiModelsList, type AiServiceInfo } from './types';
+import {
+  emptyAiModel,
+  type AiModelEntry,
+  type AiModelView,
+  type AiModelsList,
+  type AiServiceInfo,
+  type ChatGptAccount,
+  type ChatGptModel,
+} from './types';
 
 const useStyles = makeStyles({
   page: { display: 'flex', flexDirection: 'column', gap: '12px', padding: '24px 32px', height: '100%', boxSizing: 'border-box', overflow: 'hidden' },
@@ -81,7 +89,8 @@ function sameEntry(a: AiModelEntry, b: AiModelEntry): boolean {
     a.base === b.base &&
     a.model === b.model &&
     a.protocol === b.protocol &&
-    a.useTools === b.useTools
+    a.useTools === b.useTools &&
+    (a.account ?? '') === (b.account ?? '')
   );
 }
 
@@ -96,7 +105,10 @@ export function AiModelsPage({ api }: Props) {
   const [candidates, setCandidates] = useState<string[]>([]);
   const [busy, setBusy] = useState('');
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
-  const [armed, setArmed] = useState<'' | 'model' | 'key'>('');
+  const [armed, setArmed] = useState<'' | 'model' | 'key' | 'signout'>('');
+  // ChatGPTサインインの登録と、選んだアカウントで使えるモデル。
+  const [chatAccounts, setChatAccounts] = useState<ChatGptAccount[]>([]);
+  const [chatModels, setChatModels] = useState<ChatGptModel[]>([]);
   // 今のサービス・URLにキーが保存済みか（同じ接続先の他のモデルと共有するため、登録とは別に調べる）。
   const [savedKey, setSavedKey] = useState(false);
 
@@ -104,12 +116,15 @@ export function AiModelsPage({ api }: Props) {
   const current: AiModelView | undefined = typeof selection === 'string' ? entries.find((e) => e.id === selection) : undefined;
   const service = services.find((s) => s.id === draft.service);
   const isUrl = draft.service === 'local' || draft.service === 'custom';
+  const isChat = service?.signIn === true;
+  const chatAccount = chatAccounts.find((a) => a.id === draft.account);
   const dirty = selection === 'new' ? true : current ? !sameEntry(current, draft) || key !== '' : false;
 
   const open = useCallback((entry: AiModelEntry | null) => {
-    setDraft(entry ? { ...entry } : emptyAiModel());
+    setDraft(entry ? { ...emptyAiModel(), ...entry } : emptyAiModel());
     setKey('');
     setCandidates([]);
+    setChatModels([]);
     setMessage(null);
     setArmed('');
   }, []);
@@ -145,6 +160,14 @@ export function AiModelsPage({ api }: Props) {
     return () => clearTimeout(timer);
   }, [api, selection, draft.service, draft.base, list]);
 
+  useEffect(() => {
+    if (!isChat) return;
+    void api
+      .chatgptAccounts()
+      .then(setChatAccounts)
+      .catch((e) => setMessage({ text: String(e), error: true }));
+  }, [api, isChat, list]);
+
   const select = (id: Selection) => {
     setSelection(id);
     open(id === 'new' || id === null ? null : (entries.find((e) => e.id === id) ?? null));
@@ -169,9 +192,10 @@ export function AiModelsPage({ api }: Props) {
 
   const pickService = (id: string) => {
     // サービスを替えたら、別の接続先のキーやURL・モデル名を持ち越さない。
-    setDraft((old) => ({ ...old, service: id, base: '', model: '', resolved: undefined }));
+    setDraft((old) => ({ ...old, service: id, base: '', model: '', resolved: undefined, account: '' }));
     setKey('');
     setCandidates([]);
+    setChatModels([]);
     setMessage(null);
   };
 
@@ -235,17 +259,64 @@ export function AiModelsPage({ api }: Props) {
       setMessage({ text: '保存したキーを削除しました', error: false });
     });
 
+  const loadChatModels = async (account: string) => {
+    const found = await api.chatgptModels(account);
+    setChatModels(found);
+    setDraft((old) => ({ ...old, model: old.model || found[0]?.slug || '' }));
+    return found;
+  };
+
+  const signIn = (registration: string | null) =>
+    run('signin', async () => {
+      const id = await api.chatgptSignIn(registration);
+      setChatAccounts(await api.chatgptAccounts());
+      setDraft((old) => ({ ...old, account: id }));
+      setArmed('');
+      const found = await loadChatModels(id);
+      await reload();
+      setMessage({
+        text: found.length ? 'サインインしました。モデルを選んで保存してください' : 'サインインしましたが、使えるモデルがありませんでした',
+        error: found.length === 0,
+      });
+    });
+
+  const fetchChatModels = () =>
+    run('models', async () => {
+      const found = await loadChatModels(draft.account);
+      setMessage({ text: found.length ? `${found.length}件のモデルが見つかりました` : '使えるモデルがありませんでした', error: found.length === 0 });
+    });
+
+  const signOut = (id: string) =>
+    run('signout', async () => {
+      const result = await api.chatgptSignOut(id);
+      setChatAccounts(await api.chatgptAccounts());
+      setChatModels([]);
+      setArmed('');
+      await reload();
+      setMessage(
+        result.revoked
+          ? { text: 'サインアウトしました', error: false }
+          : {
+              text: 'このPCのサインイン情報は消しました。ChatGPT側での取り消しは確認できませんでした（ChatGPTの設定から接続を解除できます）',
+              error: true,
+            },
+      );
+    });
+
   const needsKeyNow = service?.needsKey === true && key.trim() === '' && !savedKey;
   const urlMissing = draft.service === 'custom' && !draft.base.trim();
   // 保存は通信しないので、キーが無くても進められる（あとで入れる）。確認・一覧取得はキーが要る。
-  const canSave = service !== undefined && !urlMissing;
-  const canCall = canSave && !needsKeyNow;
+  const canSave = service !== undefined && !urlMissing && (!isChat || (draft.account !== '' && draft.model !== ''));
+  const canCall = canSave && !needsKeyNow && (!isChat || chatAccount?.connected === true);
+  const chatOptions = chatModels.some((m) => m.slug === draft.model) || !draft.model
+    ? chatModels
+    : [{ slug: draft.model, displayName: draft.model }, ...chatModels];
 
   return (
     <div className={styles.page}>
       <div className={styles.head}>
         <Title2>AIモデルの管理</Title2>
-        <Caption1 className={styles.note}>APIキーはこのPCの専用の暗号化ファイルにだけ保存します。</Caption1>
+        <Caption1 className={styles.note}>APIキーとChatGPTのサインイン情報は、このPCの専用の暗号化ファイルにだけ保存します。</Caption1>
       </div>
       <div className={styles.body}>
         <div className={styles.list}>
@@ -268,7 +339,7 @@ export function AiModelsPage({ api }: Props) {
                 )}
                 {!e.hasKey && (
                   <Badge appearance="tint" color="warning">
-                    キー未登録
+                    {e.service === 'chatgpt' ? 'サインアウト中' : 'キー未登録'}
                   </Badge>
                 )}
               </div>
@@ -322,29 +393,98 @@ export function AiModelsPage({ api }: Props) {
                   </div>
                 </Field>
               )}
-              <Field label="モデル名" hint="空のままなら、使うときに自動で選びます。">
-                <div className={styles.row}>
-                  <Input
-                    className={styles.grow}
-                    value={draft.model}
-                    placeholder="例: claude-sonnet-5-5 / gpt-5"
-                    onChange={(_, d) => set('model', d.value)}
-                  />
-                  {candidates.length > 0 && (
-                    <Select value="" onChange={(_, d) => d.value && set('model', d.value)} style={{ maxWidth: 190 }}>
-                      <option value="">一覧から選ぶ</option>
-                      {candidates.map((m) => (
-                        <option key={m} value={m}>
-                          {m}
-                        </option>
-                      ))}
-                    </Select>
-                  )}
-                  <Button size="small" disabled={busy !== '' || !canCall} onClick={() => void fetchModels()}>
-                    {busy === 'models' ? '取得中…' : '一覧を取得'}
-                  </Button>
-                </div>
-              </Field>
+              {isChat && (
+                <>
+                  <Field
+                    label="ChatGPTアカウント"
+                    hint={
+                      busy === 'signin'
+                        ? 'ブラウザでChatGPTにサインインし、Hashiを許可してください（3分以内）。'
+                        : 'ブラウザでサインインします。パスワードはHashiに入力しません。'
+                    }
+                  >
+                    <div className={styles.row}>
+                      <Select
+                        className={styles.grow}
+                        value={draft.account}
+                        disabled={busy !== ''}
+                        onChange={(_, d) => {
+                          set('account', d.value);
+                          setChatModels([]);
+                        }}
+                      >
+                        <option value="">（サインインしたアカウントを選ぶ）</option>
+                        {chatAccounts.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.label}
+                            {a.connected ? '' : ' · サインアウト済み'}
+                          </option>
+                        ))}
+                      </Select>
+                      {busy === 'signin' ? (
+                        <Button onClick={() => void api.chatgptCancel()}>中止</Button>
+                      ) : chatAccount && !chatAccount.connected ? (
+                        <Button disabled={busy !== ''} onClick={() => void signIn(chatAccount.id)}>
+                          もう一度サインイン
+                        </Button>
+                      ) : (
+                        <Button disabled={busy !== ''} onClick={() => void signIn(null)}>
+                          {chatAccounts.length ? '別のアカウントでサインイン' : 'サインイン'}
+                        </Button>
+                      )}
+                    </div>
+                  </Field>
+                  <Field label="モデル" hint="サインインしたアカウントで使えるモデルから選びます。">
+                    <div className={styles.row}>
+                      <Select
+                        className={styles.grow}
+                        value={draft.model}
+                        disabled={busy !== ''}
+                        onChange={(_, d) => set('model', d.value)}
+                      >
+                        <option value="">（一覧を取得して選ぶ）</option>
+                        {chatOptions.map((m) => (
+                          <option key={m.slug} value={m.slug}>
+                            {m.displayName}
+                          </option>
+                        ))}
+                      </Select>
+                      <Button
+                        size="small"
+                        disabled={busy !== '' || chatAccount?.connected !== true}
+                        onClick={() => void fetchChatModels()}
+                      >
+                        {busy === 'models' ? '取得中…' : '一覧を取得'}
+                      </Button>
+                    </div>
+                  </Field>
+                </>
+              )}
+              {!isChat && (
+                <Field label="モデル名" hint="空のままなら、使うときに自動で選びます。">
+                  <div className={styles.row}>
+                    <Input
+                      className={styles.grow}
+                      value={draft.model}
+                      placeholder="例: claude-sonnet-5-5 / gpt-5"
+                      onChange={(_, d) => set('model', d.value)}
+                    />
+                    {candidates.length > 0 && (
+                      <Select value="" onChange={(_, d) => d.value && set('model', d.value)} style={{ maxWidth: 190 }}>
+                        <option value="">一覧から選ぶ</option>
+                        {candidates.map((m) => (
+                          <option key={m} value={m}>
+                            {m}
+                          </option>
+                        ))}
+                      </Select>
+                    )}
+                    <Button size="small" disabled={busy !== '' || !canCall} onClick={() => void fetchModels()}>
+                      {busy === 'models' ? '取得中…' : '一覧を取得'}
+                    </Button>
+                  </div>
+                </Field>
+              )}
               <Accordion collapsible>
                 <AccordionItem value="adv">
                   <AccordionHeader size="small">詳細</AccordionHeader>
@@ -408,8 +548,20 @@ export function AiModelsPage({ api }: Props) {
                         >
                           {armed === 'model' ? 'もう一度押すと削除' : 'この登録を削除'}
                         </Button>
-                        <Caption1 className={styles.note}>キーは残ります。</Caption1>
+                        <Caption1 className={styles.note}>{isChat ? 'サインインは残ります。' : 'キーは残ります。'}</Caption1>
                       </div>
+                      {isChat && chatAccount?.connected && (
+                        <div className={styles.actions} style={{ marginTop: 8 }}>
+                          <Button
+                            appearance="outline"
+                            disabled={busy !== ''}
+                            onClick={() => (armed === 'signout' ? void signOut(chatAccount.id) : setArmed('signout'))}
+                          >
+                            {armed === 'signout' ? 'もう一度押すとサインアウト' : 'このアカウントからサインアウト'}
+                          </Button>
+                          <Caption1 className={styles.note}>このアカウントを使う全登録で使えなくなります。</Caption1>
+                        </div>
+                      )}
                       {service?.needsKey && savedKey && (
                         <div className={styles.actions} style={{ marginTop: 8 }}>
                           <Button

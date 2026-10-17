@@ -200,7 +200,12 @@ pub struct ServiceInfo {
     has_key_page: bool,
     blurb: &'static str,
     default_base: &'static str,
+    /// キーではなくアカウントでサインインして使う(ChatGPT)。
+    sign_in: bool,
 }
+
+/// ChatGPTのサインイン。キーの代わりにアカウントで使う(`ai_models`が扱う)。
+pub(crate) const CHATGPT: &str = "chatgpt";
 
 #[tauri::command]
 pub fn ai_services() -> Vec<ServiceInfo> {
@@ -213,7 +218,17 @@ pub fn ai_services() -> Vec<ServiceInfo> {
             has_key_page: !s.key_page.is_empty(),
             blurb: s.blurb,
             default_base: s.base,
+            sign_in: false,
         })
+        .chain(std::iter::once(ServiceInfo {
+            id: CHATGPT,
+            label: "ChatGPT（サインイン）",
+            needs_key: false,
+            has_key_page: false,
+            blurb: "ChatGPTのアカウントでサインインして使います（APIキーは不要）。ChatGPTプランの利用枠は、ChatGPTの他のアプリと共有されます。",
+            default_base: "",
+            sign_in: true,
+        }))
         .collect()
 }
 
@@ -263,6 +278,9 @@ pub fn ai_status(state: State<'_, AppState>) -> AiStatus {
 /// 保存済みのキーがあるか。キーそのものは返さない。
 #[tauri::command]
 pub async fn ai_has_key(service: String, base: String) -> Result<bool, String> {
+    if service == CHATGPT {
+        return Ok(false);
+    }
     let service = connect::service(&service).ok_or("サービスが不正です")?;
     if !service.needs_key {
         return Ok(false);

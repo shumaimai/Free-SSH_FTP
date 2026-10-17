@@ -107,9 +107,12 @@ export function SettingsDialog({ api, open, value, dark, onChange, onClose }: Pr
               <Checkbox
                 checked={general.updateCheck}
                 onChange={(_, d) => saveGeneral({ ...general, updateCheck: d.checked === true })}
-                label="起動時に新しいプレビュー版を確認する"
+                label="起動時に新しい版を確認する"
               />
-              <Caption1>旧Python版のリリースとは別に、rust-preview-v のタグだけを確認します（次の起動から）。</Caption1>
+              <Caption1>
+                GitHub の Releases（api.github.com）へ問い合わせます。送るのは通常の通信情報（IPアドレス・User-Agent）だけです。
+                オフにすると、利用者が指定した接続先（SSHサーバー・AIサービス）以外へは通信しません（次の起動から）。
+              </Caption1>
               <Checkbox
                 checked={general.sessionLog}
                 onChange={(_, d) => saveGeneral({ ...general, sessionLog: d.checked === true })}

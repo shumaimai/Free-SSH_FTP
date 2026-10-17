@@ -1,151 +1,145 @@
 # Hashi — SSH / SFTP クライアント
 
-![CI](https://github.com/shumaimai/SSH.FTP-/actions/workflows/ci.yml/badge.svg)
-![Release](https://img.shields.io/github/v/release/shumaimai/SSH.FTP-?sort=semver)
-![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![Rust](https://github.com/shumaimai/Free-SSH_FTP/actions/workflows/rust.yml/badge.svg)
+![Release](https://img.shields.io/github/v/release/shumaimai/Free-SSH_FTP?sort=semver)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-橋 (bridge)。ローカルとリモートをつなぐ、Windows でまともに使える SSH ターミナル + SFTP ファイルブラウザ.
-PuTTY + WinSCP を別々に開かなくていいのがコンセプト。起動すると接続先を選ぶランチャーが開き、
-接続すると **ブラウザ風のタブ**(1 接続 = 1 タブ)でターミナルとファイル操作が横に並ぶ。
+橋 (bridge)。ローカルとリモートをつなぐ、Windows でまともに使える SSH ターミナル + SFTP ファイルブラウザ。
+PuTTY + WinSCP を別々に開かなくていいのがコンセプト。ホームで接続先を選ぶと、
+**ブラウザ風のタブ**(1 接続 = 1 タブ)でターミナルとファイル操作が並ぶ。
 
-## 起動
+v2.0.0 から Rust + Tauri(画面は React / Fluent UI / xterm.js)で作り直した版を配布しています。
+旧 Python 版(v1.x)の使い方は [下のほう](#旧python版v1x) にまとめています。
 
-Rustへの移行計画と実装状況は[移行ガイド](docs/rust-migration.md)を参照してください。
+## ダウンロード
 
-ローカルCMD、AI相談、MCPの開発機能は[使い方](docs/terminal-ai.md)を参照してください。
+[Releases](https://github.com/shumaimai/Free-SSH_FTP/releases) から `Hashi-vX.Y.Z-windows-x64.zip` を取得し、
+展開して `Hashi.exe` を起動します。インストーラーはありません。
 
-```
-pip install -r requirements.txt
-python main.py
-```
+- Windows 10 / 11(64bit)。WebView2 ランタイムが必要です(通常は標準で入っています)。
+- `Hashi.exe` と同じフォルダの `WebView2Loader.dll`・`HashiMCP-RustPreview.exe` は離さないでください。
+- 現在の配布物にはコード署名が無いため、初回は SmartScreen の確認が出ることがあります。
+  署名は [SignPath Foundation](https://signpath.org/) へ申し込む準備をしています。
+- 旧 Python 版(v1.x)とは保存先が別です。ホームの「旧版から取り込む」で接続先・保存済みパスワード・
+  ホスト鍵を読み込めます(旧版の設定は書き換えません)。
 
-Python 3.10+ 推奨。exe 化は `pyinstaller --noconsole --name Hashi main.py`。
+**[Code signing policy / コード署名ポリシー](docs/code-signing-policy.md)**(通信とプライバシーの説明も含む)
 
 ## 主な機能
 
 ### ターミナル
-- xterm-256color 対話シェル。256色/truecolor、太字/下線/反転、スクロールバック 5000 行
-- 日本語 IME 入力、全角文字の正しい描画、PTY リサイズ追従
-- **選択したら自動コピー / 右クリックで貼り付け**(PuTTY 流)。Shift+右クリックでメニュー
-- **sudo ワンタップ送信**: `[sudo] password for ...` などのプロンプトを検知すると **「sudo パスワードを送信」ボタン**が現れ、ワンタップで保存済みパスワードを送信(設定で ON/OFF)。リモート側はプロンプトを偽装できるため**確認なしの自動送信はしない**。送信直後に同じプロンプトが再表示された場合(=パスワード違い)はボタンを出さず手動へ切替
+- xterm.js による SSH 端末とローカル CMD。256 色 / truecolor、日本語 IME、全角文字、マウス対応の TUI
+- スクロールバック検索、選択コピー、右クリック貼り付け(複数行・制御文字を含む貼り付けは確認する)
+- スニペット(よく使うコマンド)、セッションログの自動保存
 
-### 認証と保存
-- 公開鍵 (Ed25519 / ECDSA / RSA、パスフレーズ対応)、SSH エージェント、パスワード認証
-- **パスワード / パスフレーズ / sudo パスワードを保存**できる。保存先は OS の資格情報ストア(Windows 資格情報マネージャ = DPAPI 保護)を優先。使えない環境では設定フォルダに Fernet 暗号化して保存
-- ホスト鍵は SHA256 フィンガープリントで TOFU 検証。鍵変更時は警告し `trust` 入力を要求
-- **SSH 鍵の生成**(「セッション」/ ランチャーのメニュー): Ed25519 / ECDSA / RSA を生成し、接続中サーバーの `authorized_keys` へ公開鍵を自動登録できる
+### ファイル(SFTP)
+- 右ドックのファイル一覧。再帰アップロード / ダウンロード、転送キュー、検索、削除(2 段階確認)
+- **2 ペイン(ローカル ⇔ リモート)**とペイン間のドラッグ、**同期ブラウズ**(相対的な移動だけを写す)
+- 上書き転送は**原本を残したまま**一時ファイルへ書き、確認してから差し替える(途中で失敗しても原本は壊れない)
+- テキスト / 16 進エディタ。BOM・改行・文字コードを保ったまま保存し、外部で変わっていたら上書きしない
+- **権限補助**(旧「権限無視スイッチ」): 接続ごとに有効にした場合だけ、自分が所有するファイルの権限を
+  一時的に緩めて操作し、直後に戻す。緩める前に復旧記録を残すので、強制終了しても次回戻せる
 
-### SFTP ファイルブラウザ
-- エクスプローラ風。フォルダ移動、D&D アップロード(フォルダごと再帰)、F2/Del/F5/Backspace、隠しファイル切替、列ソート
-- **削除・上書きは 2 段階確認**(一覧を見せた上で `delete` / `overwrite` と打たせる)
-- 転送用と操作用で SFTP チャネルを分離。大きい転送中もブラウズ可能
-- **ターミナル連携**: Shift+右クリックから「リモートパスをコピー」「ターミナルでこのディレクトリへ移動 (cd)」「ターミナルにパスを挿入」
-- **デュアルペイン(WinSCP 流)**: ツールバーの「2 ペイン」トグルで、左にローカル(この PC)・右にリモートを並べられる。ペイン間のドラッグ&ドロップ、または「アップロード」「ダウンロード」で転送(既定はこれまでどおりリモートのみ)
-- **同期ブラウズ**: 「同期ブラウズ」を ON にすると、片方でフォルダを移動したらもう片方も同じ移動をする。左右でパスの体系が違うので写すのは相対的な移動だけで、追随できないときは黙って飛ばずに知らせる
+### 接続
+- 公開鍵(Ed25519 / ECDSA / RSA、パスフレーズ対応)、SSH エージェント、パスワード
+- ホスト鍵の確認(初回確認・変更時は `trust` 入力)、`~/.ssh/config` の Host エイリアス、ProxyJump(多段)、agent 転送
+- ポート転送 -L / -R / -D(SOCKS5)、SSH 鍵の生成と `authorized_keys` への登録
+- 保存したパスワードは Windows 資格情報マネージャに置く
 
-###  権限無視スイッチ(このソフト独自)
-ツールバーの「 権限無視」を ON にすると、**権限で弾かれたファイルを一時的に読み書き可能にして操作し、終わったら即座に元の権限へ戻す**。
+### AI と外部連携
+- **AI 相談**: OpenAI / Anthropic / Command Code / 互換 API を「AI モデルの管理」で複数登録し、右ドックで選んで使う。
+  画像やテキストファイルを添付できる。API キーは AI 専用の暗号化ファイルに保存する
+- **ChatGPT サインイン**: API キーの代わりに ChatGPT のアカウントでサインインして、ChatGPT プランのモデルを使える
+  (ブラウザで許可する。パスワードは Hashi に入力しない)
+- AI に端末の操作を頼むときは「読むだけ / 操作ごとに確認 / 自動」を選ぶ。送る内容は送信前に確認・編集できる
+- **ローカル MCP**: Claude Desktop / Claude Code からワンクリック登録して、Hashi の端末を操作できる(操作は同じ承認を通る)
 
-- 読み取り: 拒否されたら一時的に読取ビット付与 → DL/閲覧 → 復元
-- 書き込み: 権限不足なら対象ファイル(新規なら親ディレクトリ)へ一時的に書込ビット付与 → 保存 → 復元
-- 自分が所有者でないファイルは SSH 側で **`sudo chmod`** を使って変更(合体ソフトなので同一接続で完結)。sudo パスワードは保存済みを使用
-- 付けた権限は操作直後に必ず元へ戻す(異常時もベストエフォートで復元)
-- **ジャーナルによるクラッシュ復元**: 権限を緩める **前** に「元の権限」をディスクへ fsync 記録する。もしプロセスが強制終了(kill -9 / 電源断)されて復元できなくても、次回同じサーバーへ接続したときにジャーナルを読んで元へ戻す。各記録には実行元プロセスの pid を持たせ、復元対象は「その pid がもう生きていない=過去にクラッシュしたもの」だけに限定するので、同じサーバーへ同時接続中の別セッションが今まさに緩めている最中のファイルを誤って戻す事故は起きない
-- **復元にも権限が要る点への対処**: ジャーナル自体はクライアント側のローカル JSON(自分の設定フォルダ)で、読み書きに特権は不要。ただし root 所有ファイルを元に戻す chmod には結局 sudo が要る。起動時に保存済み sudo パスワードがあればそれで自動復元し、無くて戻せないものが残った場合は「前回緩んだ権限が N 件戻せていません。sudo で戻しますか?」と促す。復元は深いパスから順に行い、親ディレクトリの実行ビットを先に外して子へ辿れなくなる事態を避ける
+### 外観
+- テーマ・アクセント色・フォントを選べる。2 ペイン・パネル幅・隠しファイル表示は保存される
 
-> 実サーバー検証済み: root 所有 mode 000 のファイルを権限無視で読取 → mode 0 に復元、
-> root 所有ディレクトリへの新規作成 / root 所有 644 ファイルの上書き → それぞれ元の権限へ復元。
-> ジャーナルは参照カウント・pid 生存判定・クラッシュ復元を単体テストで検証済み。
+## 通信とプライバシー
 
-### 内蔵エディタ
-- テキストファイルはダブルクリックで**内蔵エディタ**が開く(メモ帳ではない)
-- 行番号、現在行ハイライト、シンタックスハイライト(Python / C 系 / JS / シェル / 設定)、検索(Ctrl+F / F3)
-- **Ctrl+S でそのままサーバーへ保存**。権限が足りなくても権限無視スイッチが ON なら自動対処
-- バイナリ / 大きいファイルは従来どおり関連付けアプリで開く
-
-### 一般的な SSH クライアント機能
-- **ポートフォワード**: 「セッション」メニューから追加。ローカル (-L)、リモート (-R)、ダイナミック (-D / SOCKS5) に対応
-- **ProxyJump(踏み台経由の多段接続)**: 接続設定の「踏み台」欄または `~/.ssh/config` の ProxyJump で指定(`[user@]host[:port]`、カンマ区切りで多段)。踏み台ごとにホスト鍵確認と認証を行い、接続先の保存パスワードを踏み台に流用しない
-- **`~/.ssh/config` の Host エイリアス**: ホスト欄にエイリアス名を書くと HostName / User / Port / IdentityFile / ProxyJump を解決して接続(ProxyCommand は未対応で、検出時は黙って直接接続せずエラーで明示)
-- **1 接続 = 1 ウィンドウ + サーバー選択ランチャー**: 起動画面で接続先を選び、接続すると独立したウィンドウが開く。プロファイル / 既知ホスト / 認証情報 / 設定は全ウィンドウで共有
-- プロファイル保存、接続診断 `tools/doctor.py`
-
-### 接続情報の持ち運び・共有
-- **書き出し / 読み込み**(ファイルメニュー): プロファイル一式 + known_hosts を 1 ファイルへエクスポート/インポート。パスワード等の秘密情報は既定で含めず、含める場合はパスフレーズ暗号化(scrypt + Fernet)必須。インポート時、既存のホスト鍵記録は上書きしない
-- **P2P 共有**: サーバーを介さず Hashi 同士で接続情報を直接送受信。使い捨て ECDH + 6 桁の確認コード(SAS)照合で中間者を検知。受信時だけポートを開く
-- **アカウント同期(クラウド)**: Google Drive の appDataFolder に接続情報を置いて別端末と同期。端末側でマスターパスフレーズ由来の鍵で E2E 暗号化してからアップロードするため、クラウド側には暗号化済みデータしか渡らない。専用サーバー不要でクライアント完結(Google 連携ライブラリは任意依存 `requirements-cloud.txt`)
-
-### サーバー管理(sudo 必須)
-- **SSH サーバー設定の変更**: パスワード認証の無効化 / ポート番号の変更。締め出し防止のため、パスワード無効化は「鍵で実際にログインできる」ことを検証できたときだけ実行し、変更前バックアップ・`sshd -t` 構文検証・疎通確認・失敗時の自動ロールバックを行う
-- **サーバーの IP を固定**(netplan / Ubuntu Server 限定): 静的 IP を適用。バックアップ + 一定時間内に疎通確認できなければ自動で元へ戻す(締め出し防止)。※実 Ubuntu での通し検証は未実施(実機確認推奨)
-
-## 設定(ファイル → 設定)
-sudo 送信ボタンの表示 / 右クリック貼り付け / 権限無視の既定 / 内蔵エディタで開く / ターミナル・エディタの文字サイズ・タブ幅。
-保存先: `%APPDATA%\Hashi\`(profiles.json / known_hosts.json / settings.json / フォールバック時 creds.dat)。
+Hashi が通信するのは、利用者が設定した SSH/SFTP サーバーと、利用者が登録した AI サービスだけです。
+テレメトリーはありません。例外は起動時の更新確認(GitHub の Releases 一覧を取得)で、
+「設定 → 全般 → 起動時に新しい版を確認する」で止められます。詳しくは[コード署名ポリシー](docs/code-signing-policy.md#privacy-policy--プライバシー)。
 
 ## 既知の制限
-- ターミナルは pyte ベース。代替画面(smcup/rmcup)・マウスレポート・ブラケットペーストに対応済みで vim/htop 内のマウス操作も効くが、xterm 完全互換ではない
-- 権限無視は操作中のごく短時間だけ権限を緩める。プロセス強制終了時はその瞬間は緩んだままになるが、次回同じサーバーへ接続したときにジャーナルから自動復元する
-- ポートフォワードは GUI から追加可能。ローカル (-L) / リモート (-R) / ダイナミック (-D / SOCKS5) とも実 sshd で実機検証済み
-- `~/.ssh/config` は Host エイリアス(HostName / User / Port / IdentityFile / ProxyJump)に対応。ProxyCommand(外部コマンド経由)は未対応
-- **サーバーの IP 固定は netplan(Ubuntu Server)限定**で、実 Ubuntu での通し適用は未検証。パスワード認証の無効化 / ポート変更も含め、サーバー設定変更系は自動ロールバックを備えるが実運用前の確認を推奨
-- アカウント同期は Google Drive 実装を同梱するが、実 Google 環境での認証・往復は未検証(コア暗号・同期ロジックはテスト済み)
-- sudo 送信ボタンは保存済みパスワードが前提。独自プロンプトには反応しないことがある(右クリック→送信で対応)
 
-## 開発 / テスト
+- **Windows 実機での確認がほとんどできていません。** 動作確認は CI(Windows のビルドとテスト)と
+  Linux での実行が中心で、IME・高 DPI・実際のドラッグ&ドロップは未確認です。不具合は Issue で教えてください。
+- 公式 Claude Code の内蔵起動(#160)は Tauri 版へは移植しません(ローカル MCP で連携できます)。
+- ChatGPT サインインは、偽の認証サーバーを使った試験までで、実際の ChatGPT アカウントでの確認はまだです。
+- 旧 Python 版にあった P2P 共有・クラウド同期・sshd / netplan の設定変更・sudo を使う権限補助は未移植です。
+- 機能ごとの対応状況と未検証の項目は [互換表](docs/rust-compatibility.md) にまとめています。
 
-```bash
-pip install -r requirements-dev.txt
-QT_QPA_PLATFORM=offscreen pytest        # GUI はオフスクリーンでテスト
-python -m compileall main.py hashi tools
-```
-
-テストはネットワーク不要(フェイク SSH を使用)。権限無視・ジャーナル・クラッシュ復元・
-認証情報の暗号化往復・TOFU・パスワードプロンプト検知をカバー。
-
-コントリビュートは大歓迎です。[CONTRIBUTING.md](CONTRIBUTING.md) を読んでから、
-[Issues](https://github.com/shumaimai/SSH.FTP-/issues) の `good first issue` あたりからどうぞ。
-脆弱性の報告は [SECURITY.md](SECURITY.md) へ。
-
-## ビルド(Windows exe)
+## 開発
 
 ```bash
-pip install pyinstaller
-pyinstaller --noconfirm Hashi.spec      # dist/Hashi.exe
+# 画面(React)
+cd rust/crates/hashi-desktop-tauri/frontend
+npm ci && npm run build        # rust/crates/hashi-desktop-tauri/frontend/dist へ出力
+npm run dev                     # ブラウザだけで画面を確認(バックエンドはモック)
+
+# Rust
+cd rust
+cargo fmt --all --check
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace
+cargo run --locked --bin Hashi  # 画面を build してから起動する
 ```
+
+- Rust のツールチェーンは CI と同じ版(`.github/workflows/rust.yml`)を使ってください。Linux で動かすには
+  WebKitGTK などの開発パッケージが必要です(`rust.yml` の apt の行を参照)。
+- 配布用の zip は手でまとめず、`tools/rust_artifact.py` で作ります(中身の取り違えを検査する)。
+- 詳しい設計判断・壊してはいけない不変条件は [CLAUDE.md](CLAUDE.md)、参加の手順は [CONTRIBUTING.md](CONTRIBUTING.md)。
+  脆弱性の報告は [SECURITY.md](SECURITY.md) へ。
 
 ## リリース
 
-1. `hashi/__init__.py` の `__version__` を上げ、`CHANGELOG.md` を更新
-2. `vX.Y.Z` タグを push(タグは `__version__` と一致必須。CI が検証)
+1. `rust/Cargo.toml` の `workspace.package.version` と `rust/crates/hashi-desktop-tauri/tauri.conf.json` の `version` を上げる
+2. `CHANGELOG.md` に新しい版の節を足す
+3. main へ入れたあと、`vX.Y.Z` タグを push する(タグと Cargo の版が一致しないと CI が止める)
 
 ```bash
-git tag v1.0.1 && git push origin v1.0.1
+git fetch origin main
+git tag vX.Y.Z origin/main
+git push origin vX.Y.Z
 ```
 
-GitHub Actions が Windows で `Hashi.exe` をビルドし、Release に添付します。
-詳しい開発メモ・設計判断・引き継ぎ事項は [CLAUDE.md](CLAUDE.md) を参照。
+`.github/workflows/release.yml` が Windows でビルドし、zip を GitHub Release に添付します。
 
 ## 構成
+
 ```
-main.py                エントリポイント(ダークテーマ)
-hashi/config.py        プロファイル / 設定 / known_hosts の永続化
-hashi/credentials.py   認証情報の保存(keyring 優先 / Fernet 暗号化フォールバック)
-hashi/ssh_core.py      paramiko ラッパ(認証・TOFU・exec・sudo 実行)
-hashi/terminal.py      ターミナル(IME / 全角 / 選択コピー / 右クリック貼付 / プロンプト検知)
-hashi/privilege.py     権限無視スイッチのコア(一時 chmod → 操作 → 復元 / sudo フォールバック / 参照カウント)
-hashi/permjournal.py   権限変更のジャーナル(緩める前に fsync 記録 → クラッシュ後に次回接続で復元)
-hashi/editor.py        内蔵コードエディタ(行番号 / ハイライト / リモート保存)
-hashi/forward.py       ローカルポートフォワード (-L)
-hashi/filebrowser.py   SFTP ブラウザ + 2 ワーカー + 2 段階確認 + 権限無視統合
-hashi/dialogs.py       接続 / ホスト鍵 / 秘密入力 / 設定 / トンネル ダイアログ
-hashi/mainwindow.py    サイドバー + セッションタブ + 接続ワーカー + 自動入力配線
-tools/doctor.py        CLI 接続診断
+rust/                         Cargo workspace(v2 の本体)
+  crates/hashi-desktop-tauri  Tauri アプリ(Hashi.exe)。frontend/ が React の画面
+  crates/hashi-core           SSH / SFTP / 転送 / 権限補助 / 操作仲介(GUI 非依存)
+  crates/hashi-terminal       端末モデル
+  crates/hashi-storage        設定・ホスト鍵・秘密の保存、旧版からの取り込み
+  crates/hashi-ai             AI サービスとの通信・ツール
+  crates/hashi-mcp            ローカル MCP(HashiMCP-RustPreview.exe)
+  crates/hashi-desktop-native egui 版の候補(配布しない。移行が済むまで残す)
+hashi/, main.py               旧 Python 版(v1.x。リリースはしないがコードは残す)
+tools/                        配布物の作成・リリースノート・診断
+docs/                         移行の記録・互換表・コード署名ポリシー
 ```
+
+## 旧Python版(v1.x)
+
+最終リリースは [v1.1.2](https://github.com/shumaimai/Free-SSH_FTP/releases/tag/v1.1.2)。
+以後はリリースしませんが、コードは `hashi/` に残しています。
+
+```bash
+pip install -r requirements.txt
+python main.py
+```
+
+Python 3.10+。テストは `QT_QPA_PLATFORM=offscreen PYTHON_KEYRING_BACKEND=keyring.backends.fail.Keyring pytest`。
+保存先は `%APPDATA%\Hashi\`。ローカル CMD・AI 相談・MCP の使い方は [docs/terminal-ai.md](docs/terminal-ai.md)。
 
 ## 開発支援への謝辞
 
 - **ChatGPT (OpenAI)** — ターミナルUI・スクロールバック選択の修正、回帰テスト、リリース準備について開発支援を行いました（例: [#146](https://github.com/shumaimai/Free-SSH_FTP/pull/146), [#147](https://github.com/shumaimai/Free-SSH_FTP/pull/147), [#148](https://github.com/shumaimai/Free-SSH_FTP/pull/148), [#149](https://github.com/shumaimai/Free-SSH_FTP/pull/149)）。
+- **Claude Code (Anthropic)** — Rust + Tauri 版への移行(#170〜#183)の実装・検証について開発支援を行いました。
 
-AIによる支援の記録であり、Gitコミットの著者・責任者やOpenAIによる公式な承認を意味しません。
+AIによる支援の記録であり、Gitコミットの著者・責任者やOpenAI・Anthropicによる公式な承認を意味しません。

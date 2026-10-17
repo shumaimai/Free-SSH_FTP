@@ -3,7 +3,7 @@
 use crate::http;
 use anyhow::{bail, Result};
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 use tokio_util::sync::CancellationToken;
 
 pub const COMMANDCODE_BASE: &str = "https://api.commandcode.ai/provider/v1";
@@ -90,6 +90,9 @@ fn parse_arguments(text: &str) -> Result<Value> {
         .map_err(|_| anyhow::anyhow!("AIのツール引数がJSONではありません。実行していません"))
 }
 
+/// 要求ごとに最新のアクセストークンを返す(ChatGPTサインインは期限前に更新する)。
+pub type TokenSource = Arc<dyn Fn() -> Result<String> + Send + Sync>;
+
 #[derive(Clone)]
 pub struct ApiProvider {
     pub kind: String,
@@ -100,6 +103,10 @@ pub struct ApiProvider {
     pub protocol: String,
     /// 通信方式を「自動」で作ったか。モデルが決まった後に、そのモデルに合わせて選び直すために持つ。
     pub auto_protocol: bool,
+    /// あれば、固定のキーの代わりに要求ごとにここからトークンを得る。
+    token: Option<TokenSource>,
+    /// Responsesで関数をこの名前のnamespaceへまとめて送る(ChatGPTサインインの接続)。
+    pub tool_namespace: Option<String>,
 }
 impl ApiProvider {
     pub fn new(
@@ -143,29 +150,41 @@ impl ApiProvider {
             use_tools,
             protocol: protocol.into(),
             auto_protocol,
+            token: None,
+            tool_namespace: None,
         })
+    }
+    /// 要求ごとにトークンを得る接続(ChatGPTサインイン)。固定のキーは持たない。
+    pub fn with_token_source(mut self, token: TokenSource) -> Self {
+        self.key.clear();
+        self.token = Some(token);
+        self
     }
     pub fn key(&self) -> &str {
         &self.key
     }
-    fn headers(&self) -> Vec<(String, String)> {
-        if self.kind == "anthropic" {
+    fn headers(&self) -> Result<Vec<(String, String)>> {
+        let key = match &self.token {
+            Some(token) => token()?,
+            None => self.key.clone(),
+        };
+        Ok(if self.kind == "anthropic" {
             vec![
-                ("x-api-key".into(), self.key.clone()),
+                ("x-api-key".into(), key),
                 ("anthropic-version".into(), "2023-06-01".into()),
             ]
-        } else if self.key.is_empty() {
+        } else if key.is_empty() {
             vec![]
         } else {
-            vec![("Authorization".into(), format!("Bearer {}", self.key))]
-        }
+            vec![("Authorization".into(), format!("Bearer {key}"))]
+        })
     }
     /// モデル一覧。ネットワーク待ちがあるのでGUIスレッドから直接呼ばない。
     pub fn models(&self, cancel: &CancellationToken) -> Result<Vec<Value>> {
         if cancel.is_cancelled() {
             bail!("接続確認を停止しました");
         }
-        let data = http::get_json(&format!("{}/models", self.base), &self.headers())?;
+        let data = http::get_json(&format!("{}/models", self.base), &self.headers()?)?;
         if cancel.is_cancelled() {
             bail!("接続確認を停止しました");
         }
@@ -208,7 +227,7 @@ impl ApiProvider {
             "input": responses_input(messages)});
         // 道具が無い送信(相談のみ)ではtoolsを送らない(空の配列を断るAPIがある)。
         if self.use_tools && !tools.is_empty() {
-            payload["tools"] = tools
+            let functions: Vec<Value> = tools
                 .iter()
                 .map(|tool| {
                     let mut item = tool.clone();
@@ -217,6 +236,11 @@ impl ApiProvider {
                     item
                 })
                 .collect();
+            payload["tools"] = match &self.tool_namespace {
+                Some(name) => json!([{"type": "namespace", "name": name,
+                    "description": "Hashi端末操作", "tools": functions}]),
+                None => Value::Array(functions),
+            };
         }
         payload
     }
@@ -232,7 +256,7 @@ impl ApiProvider {
         http::events(
             &format!("{}/responses", self.base),
             &self.responses_payload(messages, instructions, tools),
-            &self.headers(),
+            &self.headers()?,
             cancel,
             |event| {
                 match event["type"].as_str().unwrap_or_default() {
@@ -256,7 +280,16 @@ impl ApiProvider {
         let output = completed["output"].as_array().cloned().unwrap_or_default();
         let mut calls = vec![];
         for item in output.iter().filter(|item| item["type"] == "function_call") {
-            calls.push(json!({"id": item["call_id"], "name": item["name"],
+            // namespaceでまとめた関数は「namespace.名前」で返ることがあるので、道具の名前へ戻す。
+            let name = item["name"].as_str().unwrap_or_default();
+            let name = match &self.tool_namespace {
+                Some(space) => name
+                    .strip_prefix(space.as_str())
+                    .and_then(|rest| rest.strip_prefix('.'))
+                    .unwrap_or(name),
+                None => name,
+            };
+            calls.push(json!({"id": item["call_id"], "name": name,
                 "arguments": parse_arguments(item["arguments"].as_str().unwrap_or_default())?}));
         }
         if text.is_empty() {
@@ -332,7 +365,7 @@ impl ApiProvider {
                 })
                 .collect();
         }
-        let mut headers = self.headers();
+        let mut headers = self.headers()?;
         if !headers.iter().any(|(name, _)| name == "anthropic-version") {
             headers.push(("anthropic-version".into(), "2023-06-01".into()));
         }
@@ -462,7 +495,7 @@ impl ApiProvider {
         http::events(
             &format!("{}/chat/completions", self.base),
             &payload,
-            &self.headers(),
+            &self.headers()?,
             cancel,
             |event| {
                 if event.get("error").is_some_and(|error| !error.is_null()) {
@@ -581,7 +614,7 @@ mod tests {
             (local.base.as_str(), local.protocol.as_str()),
             ("http://127.0.0.1:1234/v1", "chat")
         );
-        assert!(local.headers().is_empty());
+        assert!(local.headers().unwrap().is_empty());
     }
 
     #[test]
@@ -681,6 +714,35 @@ mod stream_tests {
             &mut |text| streamed.push_str(text),
         );
         (reply, streamed, server.join().unwrap())
+    }
+
+    #[test]
+    fn namespaced_function_call_names_come_back_as_tool_names() {
+        let (base, server) = serve(concat!(
+            "data: {\"type\":\"response.completed\",\"response\":{\"output\":[",
+            "{\"type\":\"function_call\",\"call_id\":\"c1\",\"name\":\"hashi.list_sessions\",\"arguments\":\"{}\"},",
+            "{\"type\":\"function_call\",\"call_id\":\"c2\",\"namespace\":\"hashi\",\"name\":\"read_output\",\"arguments\":\"{}\"}]}}\n\n"
+        ));
+        let mut provider =
+            ApiProvider::new("compatible", "m", "k", Some(&base), true, "responses").unwrap();
+        provider.tool_namespace = Some("hashi".into());
+        let reply = provider
+            .respond(
+                &[json!({"role": "user", "content": "q"})],
+                "sys",
+                &crate::tools::definitions(),
+                &CancellationToken::new(),
+                &mut |_| {},
+            )
+            .unwrap();
+        let names: Vec<&str> = reply
+            .tool_calls
+            .iter()
+            .map(|c| c["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["list_sessions", "read_output"]);
+        let request = server.join().unwrap();
+        assert!(request.contains("\"type\":\"namespace\""), "{request}");
     }
 
     #[test]

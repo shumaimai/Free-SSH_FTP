@@ -74,6 +74,19 @@ export interface AiServiceInfo {
   hasKeyPage: boolean;
   blurb: string;
   defaultBase: string;
+  /** キーではなくアカウントでサインインして使う(ChatGPT)。 */
+  signIn: boolean;
+}
+
+/** ChatGPTのサインイン登録。トークンは画面へ来ない。 */
+export interface ChatGptAccount {
+  id: string;
+  label: string;
+  connected: boolean;
+}
+export interface ChatGptModel {
+  slug: string;
+  displayName: string;
 }
 
 export interface AiStatus {
@@ -95,6 +108,8 @@ export interface AiModelEntry {
   protocol: string;
   useTools: boolean;
   resolved?: string;
+  /** ChatGPTサインインの登録ID(service が chatgpt のときだけ)。 */
+  account: string;
 }
 export interface AiModelView extends AiModelEntry {
   label: string;
@@ -113,7 +128,7 @@ export interface AiCheckResult {
   models: string[];
 }
 export function emptyAiModel(): AiModelEntry {
-  return { id: '', name: '', service: 'openai', base: '', model: '', protocol: 'auto', useTools: true };
+  return { id: '', name: '', service: 'openai', base: '', model: '', protocol: 'auto', useTools: true, account: '' };
 }
 
 export type ShareMode = 'consult' | 'confirm' | 'auto';
