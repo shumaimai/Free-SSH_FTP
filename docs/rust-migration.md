@@ -14,7 +14,10 @@
 `rust/` はCargo workspace。`hashi-storage` はGUIを参照せず、保存先と移行ガードを持つ。
 `hashi-migration-check` はガードの診断用CLIで、SSH接続・データ取り込みは行わない。
 旧Python版は通常起動とエディタ単独起動の両方で実行中マーカーを作成する。
-全Rust版のGUI、SSH/SFTP、追加機能は後続の実装対象。
+RustネイティブGUIの候補 `Hashi-RustPreview` はeframe/egui、端末モデルは
+alacritty_terminal、SSH/SFTPはrussh/russh-sftp、ローカルPTYはportable-ptyで動く。
+候補の実行にPython・Qt・WebViewは必要ない。既存Pythonアプリの全機能はまだ揃っていない。
+機能と実測の扱いは [互換表](rust-compatibility.md) に記録する。
 
 保存層にはPython版の全Profileフィールドと設定の取り込み、known_hostsの追加のみの
 マージ、公開鍵blobからの種別/指紋生成、版付きstate.jsonのatomic保存を追加する。
@@ -37,7 +40,10 @@ Windows資格情報のテストはランダムな試験専用サービスだけ�
 - `migration.guard` は同じファイルを保持し、削除・置換しない。Pythonが起動中に
   共有ロックを、移行処理が排他ロックを保持する。双方とも非ブロッキング取得。
   Linuxはflock、WindowsはLockFileExでオフセット0から最大範囲をロックする。
-  Rust fs2 0.4.3とPython側の範囲を揃える。ガード取得失敗時は旧版を起動しない。
+  Rust fs2 0.4.3とPython側の範囲を揃える。OSロック競合の場合だけ旧版を起動しない。
+  非対応FS・保存先権限・開始時刻の取得失敗は警告して安定版を起動する。
+  マーカーだけ失敗した場合も共有ロックは保持する。ロックが失敗しても可能なら
+  マーカーを残す。両方失敗した旧版の停止は、マーカー不在からは証明できない。
 - `python-<instance_id>.json` はプロセスごとにatomic保存してfsyncする。
   フィールドは `schema_version`、`implementation`、`application_version`、`pid`、
   `process_start`、`instance_id`、`executable`、`data_root`。
@@ -64,16 +70,60 @@ cargo build --locked --workspace --bins
 cd ..
 HASHI_RUST_GUARD_BINARY="$PWD/rust/target/debug/hashi-migration-check" \
 QT_QPA_PLATFORM=offscreen PYTHON_KEYRING_BACKEND=keyring.backends.fail.Keyring \
-pytest tests/test_runtime_guard.py
+HASHI_RUST_STORAGE_BINARY="$PWD/rust/target/debug/hashi-storage-contract" \
+HASHI_RUST_SSH_BINARY="$PWD/rust/target/debug/hashi-ssh-check" \
+pytest tests/test_runtime_guard.py tests/test_rust_storage_compat.py tests/test_rust_ssh_live.py
 ```
 
 Windows CIは.exeを指定して同じ双方向試験を実行する。通常のPython CIも継続する。
-GUIの変更は起動失敗時の日本語エラー表示だけで、既存の接続/エディタ処理は
+GUIの変更はロック競合時のエラーと記録できない場合の警告表示で、既存の接続/エディタ処理は
 ガードの内側に置く。新しいデータスキーマへ自動変換したり、旧資格情報を上書きしない。
-
 ## 残る検証
 
 Windows CIのプロセス間ロック試験と、Windows実機のIME/ConPTY/資格情報試験は別物。
 実機は現在接続されていない。実装とCIを先行するが、未確認の項目を移行完了とは扱わない。
 GUI/端末/SSH候補の選定結果、機能互換表、旧形式の両方向fixture、起動/メモリ/配布サイズの
 比較もPhase 0以降で記録する。
+
+## ネイティブ候補の起動
+
+```sh
+cd rust
+cargo run --locked --bin Hashi-RustPreview
+```
+
+通常のLinux画面かWindowsで起動する。CIのWindows成果物はdebugビルドの候補であり、
+安定版リリースや移行完了の証拠ではない。初回のRust設定は空で、旧版の自動取り込みは
+まだ行わない。接続先を手入力し、鍵/パスワード/agent認証を選べる。
+ホスト鍵承認は接続先・踏み台・接続世代に結び付け、終了した要求から保存しない。
+SFTPの一覧と転送は別チャネル。転送は32KiBごとに処理し、ライブラリの先読みも1本に抑える。
+キャンセルと古いイベントの破棄をコアに持つ。画面側の全操作導線は互換表で区別する。
+
+Linuxでは管理下loopback OpenSSHへの実鍵認証、exec、1MiBの転送往復と再開を確認する。
+仮想Xサーバーで日本語GUI表示とローカルシェルの入力/echoも確認した。
+WindowsはCIのConPTY・ビルド検証を進め、実機のIME・DPI・資格情報バックエンド検証は
+保留のまま記録する。russhが使うssh-key/RSA依存にはRC版が含まれるため、
+全面的な暗号互換の採用判断は互換マトリクスの検証後に行う。
+
+SSH設定は標準の`~/.ssh/config`を読み、HostName/User/Port/IdentityFile/ProxyJump/ForwardAgentを解決する。
+踏み台はそれぞれのIdentityFile、agent、専用passwordを使う。接続先の秘密は使い回さない。
+GUIの「ポート転送」から-L/-R/-Dを開始/停止できる。初期の待受は127.0.0.1で、
+公開アドレスへの変更は利用者が選ぶ。SOCKS5は認証なしのCONNECTだけに対応する。
+独立execには開始から終了まで共通の締切があり、締切/取消は専用チャネルだけを閉じる。
+遠隔プロセスが確実に終了したとは返さない。
+
+ローカルの「編集」とSFTPの「編集」で、テキストまたは固定長16進モデルを開く。
+`cargo run --locked --bin Hashi-RustPreview -- --edit FILE` はローカル編集の起動経路。
+テキストのBOM/UTF-16 endian/改行を保持し、未編集のファイルはそのままのバイト列で返す。
+ローカルはatomic rename、リモートは明示のPOSIX rename拡張を使う。
+変更前の内容が外部で変わっていれば保存を拒否し、失敗や結果不明でも編集内容を残す。
+上書き専用HEXでは長さの変更を拒否する。未保存のウィンドウ/アプリ終了には確認を置く。
+
+「ファイル・転送」からローカル/リモートの二つの一覧、再帰転送、検索、削除確認、
+進捗・中止を操作できる。既存ファイルは中止/上書き/再開/スキップを明示して追加する。
+標準は上書きしない。ファイル・フォルダのdrop送信は受信面と最前面layerを照合し、
+入力イベントを一度だけ消費する。実OSのD&Dは未検証として互換表に残す。
+
+端末はCtrl+Shift+Fで履歴検索、Shift+ドラッグでTUI mouse modeを一時的に避けて選択する。
+右クリックは利用者の操作でpasteを要求し、Ctrl+クリックは可視http(s) URLだけを開く。
+OSC52による遠隔クリップボード操作と、OSC8による隠れたURL起動は許可しない。
