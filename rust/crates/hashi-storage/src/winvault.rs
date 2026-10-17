@@ -4,7 +4,7 @@ use windows_sys::Win32::{
     Foundation::ERROR_NOT_FOUND,
     Security::Credentials::{
         CredDeleteW, CredFree, CredReadW, CredWriteW, CREDENTIALW, CRED_MAX_CREDENTIAL_BLOB_SIZE,
-        CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC,
+        CRED_PERSIST_ENTERPRISE, CRED_TYPE_GENERIC,
     },
 };
 
@@ -141,7 +141,7 @@ fn write(target: &str, username: &str, value: Option<&str>) -> io::Result<()> {
                 UserName: username.as_mut_ptr(),
                 CredentialBlobSize: bytes.len() as u32,
                 CredentialBlob: bytes.as_mut_ptr(),
-                Persist: CRED_PERSIST_LOCAL_MACHINE,
+                Persist: CRED_PERSIST_ENTERPRISE,
                 ..Default::default()
             };
             if CredWriteW(&record, 0) == 0 {
@@ -167,6 +167,18 @@ mod tests {
         let service = format!("Hashi.Rust.Test.{random:x?}");
         let first = format!("alice@{service}");
         write(&service, "alice", Some("日本語🔑")).unwrap();
+        // Python keyring 25.7.0と同じ永続化scopeを試験専用TargetNameで確認する。
+        unsafe {
+            let target = wide(&service).unwrap();
+            let mut ptr = std::ptr::null_mut();
+            assert_ne!(
+                CredReadW(target.as_ptr(), CRED_TYPE_GENERIC, 0, &mut ptr),
+                0
+            );
+            let persist = (*ptr).Persist;
+            CredFree(ptr.cast());
+            assert_eq!(persist, CRED_PERSIST_ENTERPRISE);
+        }
         assert_eq!(get(&service, "alice").unwrap().as_deref(), Some("日本語🔑"));
         write(&first, "alice", Some("退避済み秘密")).unwrap();
         write(&service, "bob", Some("別利用者")).unwrap();

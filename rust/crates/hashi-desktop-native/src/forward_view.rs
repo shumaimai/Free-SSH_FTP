@@ -6,7 +6,7 @@ pub(super) enum ActiveForward {
     Remote(RemoteForward),
 }
 impl ActiveForward {
-    async fn stop(&mut self) -> anyhow::Result<()> {
+    pub(super) async fn stop(&mut self) -> anyhow::Result<()> {
         match self {
             Self::Local(forward) => {
                 forward.stop().await;
@@ -58,6 +58,10 @@ impl App {
                     ui.label("SSH接続を選択してください");
                     return;
                 };
+                if tab.closing || tab.work.is_closed() {
+                    ui.label("接続の終了処理中、または終了済みです");
+                    return;
+                }
                 ui.label(&tab.label);
                 egui::ComboBox::from_id_salt("forward-kind")
                     .selected_text(&self.forward_editor.kind)
@@ -90,7 +94,10 @@ impl App {
                 }
                 start = ui
                     .add_enabled(
-                        tab.session.is_some() && !tab.cancel.is_cancelled(),
+                        tab.session.is_some()
+                            && !tab.closing
+                            && !tab.work.is_closed()
+                            && !tab.cancel.is_cancelled(),
                         egui::Button::new("開始"),
                     )
                     .clicked();
@@ -107,15 +114,33 @@ impl App {
         self.forward_editor.open = open;
         if let Some(index) = stop {
             if let Some(tab) = self.tabs.get_mut(self.active) {
+                if tab.closing || index >= tab.forwards.len() {
+                    return;
+                }
+                // 受付tokenを確保してから一覧から外す。closeと競合して拒否されても所有権は残す。
+                let admission = match tab.work.start() {
+                    Ok(token) => token,
+                    Err(error) => {
+                        tab.status = error.to_string();
+                        return;
+                    }
+                };
                 let mut forward = tab.forwards.remove(index);
                 let stamp = tab.stamp.clone();
                 let tx = self.tx.clone();
                 self.runtime.spawn(async move {
-                    let message = match forward.stop().await {
-                        Ok(()) => "ポート転送を停止しました".into(),
-                        Err(error) => format!("停止は未確認です: {error}"),
+                    let _admission = admission;
+                    let (message, failed) = match forward.stop().await {
+                        Ok(()) => ("ポート転送を停止しました".into(), false),
+                        Err(error) => (format!("停止は未確認です: {error}"), true),
                     };
-                    let _ = tx.send(Message::Done { stamp, message }).await;
+                    let _ = tx
+                        .send(Message::Done {
+                            stamp,
+                            message,
+                            failed,
+                        })
+                        .await;
                 });
             }
         }
@@ -129,50 +154,53 @@ impl App {
             let stamp = tab.stamp.clone();
             let tx = self.tx.clone();
             let editor = self.forward_editor.clone();
-            self.runtime.spawn(async move {
-                let bind = if editor.bind.contains(':') {
-                    format!("[{}]:{}", editor.bind, editor.port)
-                } else {
-                    format!("{}:{}", editor.bind, editor.port)
-                };
-                let result = match editor.kind.as_str() {
-                    "R" => RemoteForward::start(
-                        session,
-                        editor.bind,
-                        editor.port,
-                        editor.host,
-                        editor.target_port,
-                    )
-                    .await
-                    .map(ActiveForward::Remote),
-                    "D" => LocalForward::start(session, &bind, Destination::Socks5)
+            tab.work
+                .spawn(self.runtime.handle(), async move {
+                    let bind = if editor.bind.contains(':') {
+                        format!("[{}]:{}", editor.bind, editor.port)
+                    } else {
+                        format!("{}:{}", editor.bind, editor.port)
+                    };
+                    let result = match editor.kind.as_str() {
+                        "R" => RemoteForward::start(
+                            session,
+                            editor.bind,
+                            editor.port,
+                            editor.host,
+                            editor.target_port,
+                        )
+                        .await
+                        .map(ActiveForward::Remote),
+                        "D" => LocalForward::start(session, &bind, Destination::Socks5)
+                            .await
+                            .map(ActiveForward::Local),
+                        _ => LocalForward::start(
+                            session,
+                            &bind,
+                            Destination::Fixed {
+                                host: editor.host,
+                                port: editor.target_port,
+                            },
+                        )
                         .await
                         .map(ActiveForward::Local),
-                    _ => LocalForward::start(
-                        session,
-                        &bind,
-                        Destination::Fixed {
-                            host: editor.host,
-                            port: editor.target_port,
-                        },
-                    )
-                    .await
-                    .map(ActiveForward::Local),
-                };
-                match result {
-                    Ok(handle) => {
-                        let _ = tx.send(Message::ForwardReady { stamp, handle }).await;
+                    };
+                    match result {
+                        Ok(handle) => {
+                            let _ = tx.send(Message::ForwardReady { stamp, handle }).await;
+                        }
+                        Err(error) => {
+                            let _ = tx
+                                .send(Message::Done {
+                                    stamp,
+                                    message: error.to_string(),
+                                    failed: true,
+                                })
+                                .await;
+                        }
                     }
-                    Err(error) => {
-                        let _ = tx
-                            .send(Message::Done {
-                                stamp,
-                                message: error.to_string(),
-                            })
-                            .await;
-                    }
-                }
-            });
+                })
+                .expect("ポート転送の受付確認済み");
         }
     }
 }

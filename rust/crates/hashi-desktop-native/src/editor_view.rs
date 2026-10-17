@@ -7,6 +7,8 @@ pub(super) enum EditLocation {
     Local(PathBuf),
     Remote {
         session: Arc<SshSession>,
+        work: Work,
+        cancel: CancellationToken,
         xfer: Sftp,
         path: String,
     },
@@ -69,6 +71,12 @@ impl Editor {
     }
 }
 impl App {
+    pub(super) fn editor_busy(&self) -> bool {
+        self.editor_jobs > 0 || self.editors.iter().any(|editor| editor.saving)
+    }
+    pub(super) fn has_unsaved_edits(&self) -> bool {
+        self.editors.iter().any(|editor| editor.document.dirty())
+    }
     pub(super) fn process_editors(&mut self) {
         while let Ok(event) = self.editor_events.try_recv() {
             match event {
@@ -84,6 +92,9 @@ impl App {
                     self.editor_jobs = self.editor_jobs.saturating_sub(1);
                     let _ = id;
                     self.notice = format!("読込失敗: {error}");
+                    if self.exiting {
+                        self.close_errors.push(self.notice.clone());
+                    }
                 }
                 EditorEvent::Saved {
                     id,
@@ -91,6 +102,12 @@ impl App {
                     result,
                     location,
                 } => {
+                    if self.exiting {
+                        if let Err(error) = &result {
+                            self.close_errors
+                                .push(format!("編集ファイルの保存結果を確認してください: {error}"));
+                        }
+                    }
                     if let Some(editor) = self.editors.iter_mut().find(|e| e.id == id) {
                         editor.saving = false;
                         editor.status = match result {
@@ -111,6 +128,9 @@ impl App {
         }
     }
     pub(super) fn open_local_editor(&mut self) {
+        if self.exiting {
+            return;
+        }
         if self.editors.len() + self.editor_jobs >= 8 {
             self.notice = "エディタは8個までです".into();
             return;
@@ -121,25 +141,33 @@ impl App {
         self.load_local_editor(path);
     }
     pub(super) fn load_local_editor(&mut self, path: PathBuf) {
+        if self.exiting {
+            return;
+        }
         let tx = self.editor_tx.clone();
         let id = Stamp::default().terminal_id;
         self.editor_jobs += 1;
-        self.runtime.spawn_blocking(move || {
-            let event = match editor::read_local(&path) {
-                Ok(document) => EditorEvent::Loaded {
-                    id,
-                    location: EditLocation::Local(path),
-                    document,
-                },
-                Err(error) => EditorEvent::Failed {
-                    id,
-                    error: error.to_string(),
-                },
-            };
-            let _ = tx.blocking_send(event);
-        });
+        self.work
+            .spawn_blocking(self.runtime.handle(), move || {
+                let event = match editor::read_local(&path) {
+                    Ok(document) => EditorEvent::Loaded {
+                        id,
+                        location: EditLocation::Local(path),
+                        document,
+                    },
+                    Err(error) => EditorEvent::Failed {
+                        id,
+                        error: error.to_string(),
+                    },
+                };
+                let _ = tx.blocking_send(event);
+            })
+            .expect("読込の受付確認済み");
     }
     pub(super) fn open_remote_editor(&mut self) {
+        if self.exiting {
+            return;
+        }
         if self.editors.len() + self.editor_jobs >= 8 {
             self.notice = "エディタは8個までです".into();
             return;
@@ -147,6 +175,12 @@ impl App {
         let Some(tab) = self.tabs.get(self.active) else {
             return;
         };
+        if tab.closing || tab.work.is_closed() {
+            return;
+        }
+        let work = tab.work.clone();
+        let location_work = work.clone();
+        let cancel = tab.work_cancel.clone();
         let (Some(session), Some(xfer), Some(index)) =
             (tab.session.clone(), tab.xfer.clone(), tab.selected)
         else {
@@ -162,11 +196,11 @@ impl App {
         let tx = self.editor_tx.clone();
         let id = Stamp::default().terminal_id;
         self.editor_jobs += 1;
-        self.runtime.spawn(async move {
+        work.spawn(self.runtime.handle(), async move {
             let result = async {
                 let sftp = xfer.lock().await;
                 let path = sftp.canonicalize(&path).await?;
-                let doc = editor::read_remote(&sftp, &path, &session.cancel).await?;
+                let doc = editor::read_remote(&sftp, &path, &cancel).await?;
                 anyhow::Ok((path, doc))
             }
             .await;
@@ -174,6 +208,8 @@ impl App {
                 Ok((path, document)) => EditorEvent::Loaded {
                     id,
                     location: EditLocation::Remote {
+                        work: location_work,
+                        cancel,
                         session,
                         xfer,
                         path,
@@ -186,9 +222,13 @@ impl App {
                 },
             };
             let _ = tx.send(event).await;
-        });
+        })
+        .expect("接続の受付確認済み");
     }
     fn save_editor(&mut self, index: usize) {
+        if self.exiting {
+            return;
+        }
         let editor = &mut self.editors[index];
         if editor.saving {
             return;
@@ -202,10 +242,18 @@ impl App {
         };
         let original = editor.document.original().to_vec();
         let location = editor.location.clone();
+        let work = match &location {
+            EditLocation::Local(_) => self.work.clone(),
+            EditLocation::Remote { work, .. } => work.clone(),
+        };
+        if work.is_closed() {
+            editor.status = "接続は終了しています。名前を付けてローカルへ保存できます".into();
+            return;
+        }
         let id = editor.id.clone();
         let tx = self.editor_tx.clone();
         editor.saving = true;
-        self.runtime.spawn(async move {
+        work.spawn(self.runtime.handle(), async move {
             let result = match location {
                 EditLocation::Local(path) => {
                     let bytes = payload.clone();
@@ -220,17 +268,11 @@ impl App {
                     session,
                     xfer,
                     path,
+                    cancel,
+                    ..
                 } => {
                     let sftp = xfer.lock().await;
-                    editor::save_remote(
-                        &session,
-                        &sftp,
-                        &path,
-                        &original,
-                        &payload,
-                        &session.cancel,
-                    )
-                    .await
+                    editor::save_remote(&session, &sftp, &path, &original, &payload, &cancel).await
                 }
             };
             let _ = tx
@@ -241,9 +283,13 @@ impl App {
                     location: None,
                 })
                 .await;
-        });
+        })
+        .expect("保存の受付確認済み");
     }
     fn save_editor_as(&mut self, index: usize) {
+        if self.exiting {
+            return;
+        }
         if self.editors[index].saving {
             return;
         }
@@ -261,23 +307,25 @@ impl App {
         let id = editor.id.clone();
         let tx = self.editor_tx.clone();
         editor.saving = true;
-        self.runtime.spawn(async move {
-            let bytes = payload.clone();
-            let target = path.clone();
-            let result =
-                tokio::task::spawn_blocking(move || editor::save_as_local(&target, &bytes))
-                    .await
-                    .map_err(anyhow::Error::from)
-                    .and_then(|result| result);
-            let _ = tx
-                .send(EditorEvent::Saved {
-                    id,
-                    payload,
-                    result: result.map_err(|error| error.to_string()),
-                    location: Some(EditLocation::Local(path)),
-                })
-                .await;
-        });
+        self.work
+            .spawn(self.runtime.handle(), async move {
+                let bytes = payload.clone();
+                let target = path.clone();
+                let result =
+                    tokio::task::spawn_blocking(move || editor::save_as_local(&target, &bytes))
+                        .await
+                        .map_err(anyhow::Error::from)
+                        .and_then(|result| result);
+                let _ = tx
+                    .send(EditorEvent::Saved {
+                        id,
+                        payload,
+                        result: result.map_err(|error| error.to_string()),
+                        location: Some(EditLocation::Local(path)),
+                    })
+                    .await;
+            })
+            .expect("別名保存の受付確認済み");
     }
     pub(super) fn editor_windows(&mut self, ctx: &egui::Context) {
         let mut save = None;
@@ -512,45 +560,5 @@ impl App {
             self.save_editor_as(index);
         }
         self.editors.retain(|editor| editor.open);
-        if ctx.input(|input| input.viewport().close_requested())
-            && !self.allow_close
-            && (self.editor_jobs > 0
-                || self
-                    .editors
-                    .iter()
-                    .any(|editor| editor.document.dirty() || editor.saving))
-        {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.confirm_exit = true;
-        }
-        if self.confirm_exit
-            && self.editor_jobs == 0
-            && self
-                .editors
-                .iter()
-                .all(|editor| !editor.document.dirty() && !editor.saving)
-        {
-            self.allow_close = true;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            self.confirm_exit = false;
-        }
-        if self.confirm_exit {
-            egui::Window::new("終了の確認")
-                .collapsible(false)
-                .show(ctx, |ui| {
-                    if self.editor_jobs > 0 || self.editors.iter().any(|e| e.saving) {
-                        ui.label("ファイル処理の終了を待っています。");
-                    } else {
-                        ui.label("未保存の編集があります。");
-                        if ui.button("破棄して終了").clicked() {
-                            self.allow_close = true;
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                        }
-                    }
-                    if ui.button("戻る").clicked() {
-                        self.confirm_exit = false;
-                    }
-                });
-        }
     }
 }
