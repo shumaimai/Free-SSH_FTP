@@ -87,6 +87,8 @@ fn main() {
             app::pick_key_file,
             app::appearance_get,
             app::appearance_set,
+            app::ui_prefs_get,
+            app::ui_prefs_set,
             app::challenge_reply,
             ai::ai_services,
             ai::ai_protocols,

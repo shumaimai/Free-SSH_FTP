@@ -92,6 +92,7 @@ export function mockApi(): Api {
       : '',
   });
   let stored: import('./appearance').Appearance | null = null;
+  let storedPrefs: import('./types').UiPrefs | null = null;
   let profiles: Profile[] = [
     { ...emptyProfile(), name: '本番サーバー', host: 'prod.example.com', username: 'deploy' },
     {
@@ -221,6 +222,10 @@ export function mockApi(): Api {
       return profiles;
     },
     appearanceGet: async () => stored,
+    uiPrefsGet: async () => storedPrefs,
+    uiPrefsSet: async (prefs) => {
+      storedPrefs = prefs;
+    },
     appearanceSet: async (a) => {
       stored = a;
     },

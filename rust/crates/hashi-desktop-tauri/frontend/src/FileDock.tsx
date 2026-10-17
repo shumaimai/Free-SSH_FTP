@@ -141,6 +141,10 @@ interface Props {
   onEdit: (sessionId: string, path: string) => void;
   /** 2ペイン（左にこのPCのフォルダ）の表示。ドックの幅は呼び出し側が変える。 */
   twoPane: boolean;
+  remoteHidden: boolean;
+  onRemoteHidden(value: boolean): void;
+  localHidden: boolean;
+  onLocalHidden(value: boolean): void;
   onTwoPane: (value: boolean) => void;
   api: Api;
   sessionId: string | null;
@@ -148,7 +152,7 @@ interface Props {
   unavailableMessage: string;
 }
 
-export function FileDock({ api, sessionId, available, unavailableMessage, onEdit, twoPane, onTwoPane }: Props) {
+export function FileDock({ api, sessionId, available, unavailableMessage, onEdit, twoPane, onTwoPane, remoteHidden: hidden, onRemoteHidden: setHidden, localHidden, onLocalHidden: setLocalHidden }: Props) {
   const [permOpen, setPermOpen] = useState(false);
   const styles = useStyles();
   const [path, setPath] = useState('');
@@ -158,7 +162,6 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
   const [selected, setSelected] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [hidden, setHidden] = useState(false);
   const [policy, setPolicy] = useState<ExistingPolicy>('refuse');
   const [mode, setMode] = useState<TransferMode>('atomic');
   const [jobs, setJobs] = useState<FileJob[]>([]);
@@ -175,7 +178,6 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
   const [local, setLocal] = useState<LocalListing | null>(null);
   const [localInput, setLocalInput] = useState('');
   const [localSel, setLocalSel] = useState<Set<string>>(new Set());
-  const [localHidden, setLocalHidden] = useState(false);
   const [localLoading, setLocalLoading] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [roots, setRoots] = useState<string[]>([]);

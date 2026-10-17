@@ -326,6 +326,55 @@ pub fn appearance_set(state: State<'_, AppState>, appearance: Appearance) -> Res
     Ok(())
 }
 
+/// 画面の細かな表示設定（隠しファイル・2ペイン・ファイルパネルの開閉など）。
+/// 危険側へ寄せる値（上書き転送など）は含めない。壊れた保存値は無いものとして扱う。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct UiPrefs {
+    pub remote_hidden: bool,
+    pub local_hidden: bool,
+    pub two_pane: bool,
+    pub dock_open: bool,
+    /// "files" / "ai"
+    pub dock_tab: String,
+}
+
+impl UiPrefs {
+    pub fn validate(&self) -> Result<(), String> {
+        if matches!(self.dock_tab.as_str(), "files" | "ai") {
+            Ok(())
+        } else {
+            Err("表示設定の値が不正です".into())
+        }
+    }
+}
+
+#[tauri::command]
+pub fn ui_prefs_get(state: State<'_, AppState>) -> Result<Option<UiPrefs>, String> {
+    let snapshot = state.snapshot.lock().map_err(|_| "状態が不正です")?;
+    Ok(snapshot
+        .settings
+        .get("ui_prefs")
+        .and_then(|value| serde_json::from_value::<UiPrefs>(value.clone()).ok())
+        .filter(|prefs| prefs.validate().is_ok()))
+}
+
+#[tauri::command]
+pub fn ui_prefs_set(state: State<'_, AppState>, prefs: UiPrefs) -> Result<(), String> {
+    state.writable()?;
+    prefs.validate()?;
+    let value = serde_json::to_value(&prefs).map_err(|error| error.to_string())?;
+    let snapshot = state
+        .store
+        .transact(|snapshot| {
+            snapshot.settings.insert("ui_prefs".into(), value);
+            Ok(())
+        })
+        .map_err(|error| error.to_string())?;
+    *state.snapshot.lock().map_err(|_| "状態が不正です")? = snapshot;
+    Ok(())
+}
+
 /// 終了を要求する。`force`でなければ未保存のエディタがある間は画面に確認させる。
 /// 二重に押されても終了処理は1回だけ走らせる。
 pub fn request_exit(app: &AppHandle, force: bool) {
@@ -386,6 +435,22 @@ mod tests {
             term_size: 14,
             term_scheme: "auto".into(),
         }
+    }
+
+    #[test]
+    fn ui_prefs_accept_only_known_tabs() {
+        let mut prefs = UiPrefs {
+            remote_hidden: true,
+            local_hidden: false,
+            two_pane: true,
+            dock_open: true,
+            dock_tab: "files".into(),
+        };
+        assert!(prefs.validate().is_ok());
+        prefs.dock_tab = "ai".into();
+        assert!(prefs.validate().is_ok());
+        prefs.dock_tab = "<script>".into();
+        assert!(prefs.validate().is_err());
     }
 
     #[test]

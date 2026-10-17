@@ -141,6 +141,10 @@ export function App({ api }: { api: Api }) {
   const [externalOpen, setExternalOpen] = useState(false);
   const [twoPane, setTwoPane] = useState(false);
   const [dockTab, setDockTab] = useState<'files' | 'ai'>('files');
+  const [remoteHidden, setRemoteHidden] = useState(false);
+  const [localHidden, setLocalHidden] = useState(false);
+  // 保存済みの小さな表示設定を読み込み終えるまでは、書き戻さない。
+  const [prefsLoaded, setPrefsLoaded] = useState(false);
   const [filesState, setFilesState] = useState<Record<string, { available: boolean; message: string }>>({});
   const autoOpened = useRef(false);
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
@@ -170,6 +174,21 @@ export function App({ api }: { api: Api }) {
 
   useEffect(() => {
     void api.appearanceGet().then((a) => a && setAppearance(sanitize(a)));
+    void api
+      .uiPrefsGet()
+      .then((p) => {
+        if (p) {
+          setRemoteHidden(p.remoteHidden);
+          setLocalHidden(p.localHidden);
+          setTwoPane(p.twoPane);
+          setDockOpen(p.dockOpen);
+          setDockTab(p.dockTab === 'ai' ? 'ai' : 'files');
+          // 前回の状態を尊重する。接続のたびに勝手に開き直さない。
+          autoOpened.current = true;
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => setPrefsLoaded(true));
     void api.profilesList().then((r) => {
       setProfiles(r.profiles);
       setStartupError(r.error);
@@ -203,6 +222,11 @@ export function App({ api }: { api: Api }) {
     return () => subscriptions.forEach((s) => void s.then((off) => off()));
   }, [api]);
 
+  useEffect(() => {
+    if (!prefsLoaded) return;
+    void api.uiPrefsSet({ remoteHidden, localHidden, twoPane, dockOpen, dockTab }).catch(() => undefined);
+  }, [api, prefsLoaded, remoteHidden, localHidden, twoPane, dockOpen, dockTab]);
+
   const openTab = useCallback((tab: Omit<TabInfo, 'key'>) => {
     const key = crypto.randomUUID();
     setTabs((old) => [...old, { ...tab, key }]);
@@ -231,7 +255,10 @@ export function App({ api }: { api: Api }) {
       if (tab?.doc) void api.editorClose(tab.doc.id);
       closed.current.add(key);
       setTabs((old) => old.filter((t) => t.key !== key));
-      setActive((current) => (current === key ? 'home' : current));
+      // ブラウザと同じく、閉じたタブの1つ左へ移る(左が無ければホーム)。
+      const index = tabs.findIndex((t) => t.key === key);
+      const left = index > 0 ? tabs[index - 1].key : 'home';
+      setActive((current) => (current === key ? left : current));
       if (tab?.sessionId) void api.close(tab.sessionId).catch((e) => setNotice(String(e)));
     },
     [api, tabs],
@@ -558,6 +585,10 @@ export function App({ api }: { api: Api }) {
                 onEdit={(id, path) => openEditor(api.editorOpenRemote(id, path))}
                 twoPane={twoPane}
                 onTwoPane={setTwoPane}
+                remoteHidden={remoteHidden}
+                onRemoteHidden={setRemoteHidden}
+                localHidden={localHidden}
+                onLocalHidden={setLocalHidden}
               />
             </div>
             <div style={{ height: 'calc(100% - 40px)', minHeight: 0, display: dockTab === 'ai' ? 'block' : 'none' }}>

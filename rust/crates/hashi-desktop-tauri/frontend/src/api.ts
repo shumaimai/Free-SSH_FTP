@@ -31,6 +31,7 @@ import type {
   PermissionStatus,
   ExternalStatus,
   RegisterStatus,
+  UiPrefs,
   LocalListing,
   ImportPreview,
   ImportOptions,
@@ -45,6 +46,8 @@ export interface Api {
   pickKeyFile(): Promise<string | null>;
   appearanceGet(): Promise<Appearance | null>;
   appearanceSet(appearance: Appearance): Promise<void>;
+  uiPrefsGet(): Promise<UiPrefs | null>;
+  uiPrefsSet(prefs: UiPrefs): Promise<void>;
   challengeReply(challengeId: string, answer: ChallengeAnswer): Promise<void>;
   openLocal(cols: number, rows: number, sink: DataSink): Promise<SessionInfo>;
   connect(index: number, cols: number, rows: number, sink: DataSink): Promise<SessionInfo>;
@@ -161,6 +164,8 @@ async function tauriApi(): Promise<Api> {
     pickKeyFile: () => invoke('pick_key_file'),
     appearanceGet: () => invoke('appearance_get'),
     appearanceSet: (appearance) => invoke('appearance_set', { appearance }),
+    uiPrefsGet: () => invoke('ui_prefs_get'),
+    uiPrefsSet: (prefs) => invoke('ui_prefs_set', { prefs }),
     challengeReply: (challengeId, answer) => invoke('challenge_reply', { challengeId, answer }),
     openLocal: (cols, rows, sink) =>
       invoke('session_open_local', { cols, rows, onData: channelFor(sink) }),

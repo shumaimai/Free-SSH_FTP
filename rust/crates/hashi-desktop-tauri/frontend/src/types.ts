@@ -232,6 +232,14 @@ export interface ExternalStatus {
   mcpConfig: string;
 }
 
+export interface UiPrefs {
+  remoteHidden: boolean;
+  localHidden: boolean;
+  twoPane: boolean;
+  dockOpen: boolean;
+  dockTab: 'files' | 'ai';
+}
+
 export interface RegisterStatus {
   helperFound: boolean;
   helperPath: string;
