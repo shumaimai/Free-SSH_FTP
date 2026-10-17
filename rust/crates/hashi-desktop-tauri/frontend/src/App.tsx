@@ -439,7 +439,7 @@ export function App({ api }: { api: Api }) {
               onClick={() => void api.updateOpenPage().catch((e) => setNotice(String(e)))}
               title="リリースページを開く"
             >
-              新しいプレビュー版 {update.tag}
+              新しい版 {update.tag}
             </Button>
           )}
           <Menu>

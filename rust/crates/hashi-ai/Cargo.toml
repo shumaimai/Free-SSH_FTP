@@ -16,3 +16,9 @@ tokio = { version = "1", features = ["full"] }
 ureq = { version = "=3.4.2", default-features = false, features = ["rustls", "platform-verifier", "win-system-proxy"] }
 url = "2"
 sha2 = "0.10"
+ring = "0.17.14"
+base64 = "0.22.1"
+fs2 = "0.4.3"
+
+[dev-dependencies]
+tempfile.workspace = true

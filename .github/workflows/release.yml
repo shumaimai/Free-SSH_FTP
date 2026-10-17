@@ -3,6 +3,8 @@ name: Release
 # vX.Y.Z タグを push するとビルドして GitHub Release を作成する。
 # v2.0.0 から配布物は Rust + Tauri 版(rust/crates/hashi-desktop-tauri)。旧Python版(v1.x)はビルドしない。
 # 本体は WebView2Loader.dll と同じフォルダで動くので、zip だけを添付する。
+# コード署名は SignPath Foundation(docs/code-signing-policy.md)。Secret SIGNPATH_API_TOKEN と
+# Variables SIGNPATH_ORGANIZATION_ID / SIGNPATH_PROJECT_SLUG / SIGNPATH_POLICY_SLUG が揃うまでは署名せずに配布する。
 on:
   push:
     tags:
@@ -14,7 +16,10 @@ permissions:
 jobs:
   build-windows:
     runs-on: windows-latest
-    timeout-minutes: 60
+    # 署名は SignPath でオーナーが手動承認するまで待つ(最大60分)。
+    timeout-minutes: 120
+    env:
+      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -30,6 +35,7 @@ jobs:
           cache-dependency-path: rust/crates/hashi-desktop-tauri/frontend/package-lock.json
 
       - name: タグとCargoの版を照合
+        id: version
         shell: bash
         run: |
           python - <<'PY'
@@ -42,6 +48,8 @@ jobs:
           if tag.removeprefix("v") != version:
               raise SystemExit(f"::error::タグ {tag} と Cargo の版 {version} が一致しません")
           print("ok", tag, version)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              f.write(f"version={version}\n")
           PY
 
       - name: Web 画面
@@ -51,6 +59,45 @@ jobs:
       - name: Release ビルド
         working-directory: rust
         run: cargo build --locked --release --bin Hashi --bin HashiMCP-RustPreview
+
+      # --- コード署名(SignPath)。Secret が無いときは全部飛ばす ---
+      - name: 署名前の exe を保存(SignPath へ渡す)
+        id: upload-unsigned
+        if: env.SIGNPATH_API_TOKEN != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: hashi-unsigned-${{ github.ref_name }}
+          path: |
+            rust/target/release/Hashi.exe
+            rust/target/release/HashiMCP-RustPreview.exe
+          if-no-files-found: error
+
+      - name: コード署名(SignPath。オーナーの承認待ち)
+        if: env.SIGNPATH_API_TOKEN != ''
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: rust/target/signed
+          parameters: |
+            version: ${{ toJSON(steps.version.outputs.version) }}
+
+      - name: 署名を確認して差し替え
+        if: env.SIGNPATH_API_TOKEN != ''
+        shell: pwsh
+        run: |
+          foreach ($name in 'Hashi.exe', 'HashiMCP-RustPreview.exe') {
+            $signed = Join-Path 'rust/target/signed' $name
+            $sig = Get-AuthenticodeSignature $signed
+            if ($sig.Status -ne 'Valid') { throw "$name の署名が有効ではありません: $($sig.Status)" }
+            Write-Host "$name : $($sig.SignerCertificate.Subject)"
+            Copy-Item $signed (Join-Path 'rust/target/release' $name) -Force
+          }
 
       - name: 成果物(版の証跡・依存ライセンス)
         run: python tools/rust_artifact.py --profile release --tag "${{ github.ref_name }}" --binary rust/target/release/Hashi.exe --helper rust/target/release/HashiMCP-RustPreview.exe --output "rust/target/Hashi-${{ github.ref_name }}"
@@ -63,6 +110,7 @@ jobs:
         shell: bash
         run: |
           python tools/release_notes.py CHANGELOG.md "${GITHUB_REF_NAME#v}" > release-notes.md
+          printf '\n---\n[Code signing policy / コード署名ポリシー](https://github.com/%s/blob/main/docs/code-signing-policy.md)\n' "$GITHUB_REPOSITORY" >> release-notes.md
           cat release-notes.md
 
       - name: リリース作成 + 添付

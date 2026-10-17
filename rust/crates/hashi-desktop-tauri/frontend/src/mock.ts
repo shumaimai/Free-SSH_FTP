@@ -19,6 +19,7 @@ import type {
   ImportPreview,
   AiModelEntry,
   AiModelsList,
+  ChatGptAccount,
 } from './types';
 import { emptyProfile } from './types';
 
@@ -110,11 +111,15 @@ export function mockApi(): Api {
     },
   ];
   const services: AiServiceInfo[] = [
-    { id: 'openai', label: 'OpenAI', needsKey: true, hasKeyPage: true, blurb: 'ChatGPTのAPI。利用料はOpenAIの料金に従います。', defaultBase: 'https://api.openai.com/v1' },
-    { id: 'anthropic', label: 'Claude', needsKey: true, hasKeyPage: true, blurb: 'AnthropicのAPI。利用料はAnthropicの料金に従います。', defaultBase: 'https://api.anthropic.com/v1' },
-    { id: 'local', label: '自分のPC', needsKey: false, hasKeyPage: false, blurb: 'LM StudioやOllamaなど、このPCで動くAI。キーは要りません。', defaultBase: 'http://127.0.0.1:1234/v1' },
-    { id: 'custom', label: 'その他', needsKey: true, hasKeyPage: false, blurb: 'OpenAI互換のAPIを出している他社サービス。接続先URLを入力してください。', defaultBase: '' },
+    { id: 'openai', label: 'OpenAI', needsKey: true, hasKeyPage: true, blurb: 'ChatGPTのAPI。利用料はOpenAIの料金に従います。', defaultBase: 'https://api.openai.com/v1', signIn: false },
+    { id: 'anthropic', label: 'Claude', needsKey: true, hasKeyPage: true, blurb: 'AnthropicのAPI。利用料はAnthropicの料金に従います。', defaultBase: 'https://api.anthropic.com/v1', signIn: false },
+    { id: 'local', label: '自分のPC', needsKey: false, hasKeyPage: false, blurb: 'LM StudioやOllamaなど、このPCで動くAI。キーは要りません。', defaultBase: 'http://127.0.0.1:1234/v1', signIn: false },
+    { id: 'custom', label: 'その他', needsKey: true, hasKeyPage: false, blurb: 'OpenAI互換のAPIを出している他社サービス。接続先URLを入力してください。', defaultBase: '', signIn: false },
+    { id: 'chatgpt', label: 'ChatGPT（サインイン）', needsKey: false, hasKeyPage: false, blurb: 'ChatGPTのアカウントでサインインして使います（APIキーは不要）。ChatGPTプランの利用枠は、ChatGPTの他のアプリと共有されます。', defaultBase: '', signIn: true },
   ];
+  let accounts: ChatGptAccount[] = [];
+  let signInTimer: ReturnType<typeof setTimeout> | null = null;
+  let signInReject: ((e: Error) => void) | null = null;
   const ai: AiStatus = { connected: false, service: null, model: null, models: [], saved: null };
   let models: AiModelEntry[] = [];
   let activeModel: string | null = null;
@@ -122,16 +127,24 @@ export function mockApi(): Api {
   const modelChanged = new Set<() => void>();
   const keyOf = (e: AiModelEntry) => `${e.service}|${e.base}`;
   const labelOf = (e: AiModelEntry) =>
-    e.name || `${{ openai: 'OpenAI', anthropic: 'Claude', local: '自分のPC', custom: 'その他' }[e.service] ?? 'AI'} / ${e.model || 'モデルは自動'}`;
+    e.name || `${{ openai: 'OpenAI', anthropic: 'Claude', local: '自分のPC', custom: 'その他', chatgpt: 'ChatGPT' }[e.service] ?? 'AI'} / ${e.model || 'モデルは自動'}`;
+  const signedIn = (id: string) => accounts.some((a) => a.id === id && a.connected);
   const modelsList = (): AiModelsList => ({
-    entries: models.map((e) => ({ ...e, label: labelOf(e), hasKey: e.service === 'local' || savedKeys.has(keyOf(e)) })),
+    entries: models.map((e) => ({
+      ...e,
+      label: labelOf(e),
+      hasKey: e.service === 'chatgpt' ? signedIn(e.account) : e.service === 'local' || savedKeys.has(keyOf(e)),
+    })),
     active: activeModel,
     warning: null,
   });
   const useModel = async (id: string) => {
     const e = models.find((m) => m.id === id);
     if (!e) throw new Error('登録が見つかりません');
-    if (e.service !== 'local' && !savedKeys.has(keyOf(e))) {
+    if (e.service === 'chatgpt' && !signedIn(e.account)) {
+      throw new Error('このChatGPTアカウントはサインアウトしています。AIモデルの管理でサインインしてください');
+    }
+    if (e.service !== 'local' && e.service !== 'chatgpt' && !savedKeys.has(keyOf(e))) {
       throw new Error('このモデルのAPIキーが保存されていません。AIモデルの管理でキーを入力してください');
     }
     activeModel = id;
@@ -264,6 +277,32 @@ export function mockApi(): Api {
       return { ok: true, message: '接続できました', model: entry.model || list[0], models: list };
     },
     aiModelCandidates: async () => ['gpt-5', 'gpt-5-mini', 'gpt-4.1', 'o3'],
+    chatgptAccounts: async () => accounts.map((a) => ({ ...a })),
+    chatgptSignIn: (registration) =>
+      new Promise<string>((resolve, reject) => {
+        signInReject = reject;
+        // ブラウザでの許可を待つ代わりに少し待ってから成功させる。
+        signInTimer = setTimeout(() => {
+          signInReject = null;
+          const id = registration ?? `client-${accounts.length + 1}`;
+          accounts = accounts.filter((a) => a.id !== id).concat({ id, label: `me@example.com · ${id}`, connected: true });
+          resolve(id);
+        }, 1500);
+      }),
+    chatgptCancel: async () => {
+      if (signInTimer) clearTimeout(signInTimer);
+      signInReject?.(new Error('サインインを停止しました'));
+      signInReject = null;
+    },
+    chatgptSignOut: async (id) => {
+      accounts = accounts.map((a) => (a.id === id ? { ...a, connected: false } : a));
+      modelChanged.forEach((h) => h());
+      return { revoked: true };
+    },
+    chatgptModels: async () => [
+      { slug: 'gpt-5', displayName: 'GPT-5' },
+      { slug: 'gpt-5-thinking', displayName: 'GPT-5 Thinking' },
+    ],
     onAiModelsChanged: async (h) => {
       modelChanged.add(h);
       return () => modelChanged.delete(h);

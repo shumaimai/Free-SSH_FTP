@@ -10,6 +10,9 @@ license.workspace = true
 name = "HashiMCP-RustPreview"
 path = "src/bin/hashi-mcp.rs"
 
+[build-dependencies]
+tauri-winres = "0.3.6"
+
 [dependencies]
 hashi-core = { path = "../hashi-core" }
 hashi-ai = { path = "../hashi-ai" }

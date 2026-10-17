@@ -2440,11 +2440,15 @@ name = "hashi-ai"
 version = "2.0.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
+ "fs2",
  "hashi-core",
  "hashi-storage",
  "regex",
+ "ring",
  "serde_json",
  "sha2 0.10.9",
+ "tempfile",
  "tokio",
  "tokio-util",
  "ureq",
@@ -2535,6 +2539,7 @@ dependencies = [
  "hashi-ai",
  "hashi-core",
  "serde_json",
+ "tauri-winres",
  "tempfile",
  "tokio",
  "tokio-util",

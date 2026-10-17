@@ -6,6 +6,7 @@ mod ai;
 mod ai_models;
 mod app;
 mod attach;
+mod chatgpt;
 mod editor;
 mod external;
 mod files;
@@ -103,6 +104,12 @@ fn main() {
             ai_models::ai_model_use,
             ai_models::ai_model_check,
             ai_models::ai_model_candidates,
+            chatgpt::chatgpt_accounts,
+            chatgpt::chatgpt_sign_in,
+            chatgpt::chatgpt_cancel,
+            chatgpt::chatgpt_sign_out,
+            chatgpt::chatgpt_forget,
+            chatgpt::chatgpt_models,
             ai::ai_clear,
             ai::ai_stop,
             ai::ai_send,
