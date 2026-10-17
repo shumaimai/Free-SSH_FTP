@@ -5,6 +5,7 @@ import json
 import shutil
 import struct
 import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -82,6 +83,8 @@ def collect_npm_licenses(root, target):
 
 
 def main():
+    # Windows runner の stdout/子プロセス出力は cp1252 になり得る。日本語・依存の作者名で落ちないよう UTF-8 に固定する。
+    sys.stdout.reconfigure(encoding='utf-8')
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
     parser.add_argument('--helper', type=Path, action='append', default=[],
@@ -96,7 +99,7 @@ def main():
     check_gui_binary(args.binary.name, args.binary.read_bytes())
     metadata = json.loads(subprocess.check_output(
         [args.cargo, 'metadata', '--locked', '--format-version', '1',
-         '--manifest-path', str(root / 'rust/Cargo.toml')], text=True))
+         '--manifest-path', str(root / 'rust/Cargo.toml')], text=True, encoding='utf-8'))
     destination = args.output.resolve()
     destination.mkdir(parents=True, exist_ok=True)
     shutil.copy2(args.binary, destination / args.binary.name)
@@ -136,7 +139,7 @@ def main():
     shutil.copy2(root / 'tools/rust_preview_readme.txt', destination / 'README.txt')
     record = {'channel': 'stable' if args.tag.startswith('v') else 'rust-preview', 'release': bool(args.tag), 'tag': args.tag or None,
               'profile': args.profile,
-              'source_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip(),
+              'source_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True, encoding='utf-8').strip(),
               'binary': args.binary.name, 'binary_kind': 'tauri', 'binary_sha256': sha256(args.binary),
               'helpers': {helper.name: sha256(helper) for helper in args.helper},
               'cargo_lock_sha256': sha256(root / 'rust/Cargo.lock'),
