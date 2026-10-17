@@ -124,6 +124,7 @@ mod tests {
         .unwrap();
         work.close();
         assert!(work.spawn(&handle, async {}).is_err());
+        assert!(work.start().is_err());
         started.send(()).unwrap();
         assert!(
             tokio::time::timeout(std::time::Duration::from_millis(20), work.wait())

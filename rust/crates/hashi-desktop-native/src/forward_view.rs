@@ -114,24 +114,34 @@ impl App {
         self.forward_editor.open = open;
         if let Some(index) = stop {
             if let Some(tab) = self.tabs.get_mut(self.active) {
+                if tab.closing || index >= tab.forwards.len() {
+                    return;
+                }
+                // 受付tokenを確保してから一覧から外す。closeと競合して拒否されても所有権は残す。
+                let admission = match tab.work.start() {
+                    Ok(token) => token,
+                    Err(error) => {
+                        tab.status = error.to_string();
+                        return;
+                    }
+                };
                 let mut forward = tab.forwards.remove(index);
                 let stamp = tab.stamp.clone();
                 let tx = self.tx.clone();
-                tab.work
-                    .spawn(self.runtime.handle(), async move {
-                        let (message, failed) = match forward.stop().await {
-                            Ok(()) => ("ポート転送を停止しました".into(), false),
-                            Err(error) => (format!("停止は未確認です: {error}"), true),
-                        };
-                        let _ = tx
-                            .send(Message::Done {
-                                stamp,
-                                message,
-                                failed,
-                            })
-                            .await;
-                    })
-                    .expect("転送停止の受付確認済み");
+                self.runtime.spawn(async move {
+                    let _admission = admission;
+                    let (message, failed) = match forward.stop().await {
+                        Ok(()) => ("ポート転送を停止しました".into(), false),
+                        Err(error) => (format!("停止は未確認です: {error}"), true),
+                    };
+                    let _ = tx
+                        .send(Message::Done {
+                            stamp,
+                            message,
+                            failed,
+                        })
+                        .await;
+                });
             }
         }
         if start {

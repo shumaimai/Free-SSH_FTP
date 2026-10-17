@@ -24,6 +24,7 @@ pub struct LocalTerminal {
     child: Option<Box<dyn Child + Send + Sync>>,
     cancel: CancellationToken,
     closed: bool,
+    child_reaped: bool,
     #[cfg(windows)]
     job: Option<Job>,
 }
@@ -169,6 +170,7 @@ impl LocalTerminal {
             child: Some(child),
             cancel,
             closed: false,
+            child_reaped: false,
             #[cfg(windows)]
             job: Some(job),
         })
@@ -204,6 +206,11 @@ impl LocalTerminal {
             return Ok(());
         }
         self.cancel.cancel();
+        // try_waitで回収済みならUnixのPID/PGIDが別プロセスに再利用され得る。
+        #[cfg(unix)]
+        if self.child_reaped {
+            return Ok(());
+        }
         #[cfg(unix)]
         if let Some(group) = self
             .master
@@ -228,7 +235,7 @@ impl LocalTerminal {
                 return Err(std::io::Error::last_os_error().into());
             }
         }
-        if let Some(child) = self.child.as_mut() {
+        if let Some(child) = self.child.as_mut().filter(|_| !self.child_reaped) {
             let _ = child.kill();
         }
         Ok(())
@@ -246,6 +253,7 @@ impl LocalTerminal {
                 }
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
+            self.child_reaped = true;
         }
         // readerが排出し続けている間にConPTY/masterを閉じ、read/writeを起こしてからjoinする。
         self.master.take();
@@ -283,29 +291,33 @@ impl Drop for LocalTerminal {
             self.writer_thread.take(),
             self.reader_thread.take(),
         );
+        let child_reaped = self.child_reaped;
         #[cfg(windows)]
         let job = self.job.take();
         std::thread::spawn(move || {
             #[cfg(unix)]
             if let Some(group) = master
                 .as_ref()
+                .filter(|_| !child_reaped)
                 .and_then(|master| master.process_group_leader())
             {
                 unsafe {
                     libc::kill(-group, libc::SIGKILL);
                 }
             }
-            if let Some(child) = child.as_mut() {
+            // WindowsのJob handleは回収済みPIDと異なり有効な所有資源。
+            // shellだけ先に終了していても、残る子孫を停止してからPTYを閉じる。
+            #[cfg(windows)]
+            if let Some(job) = &job {
+                unsafe {
+                    windows_sys::Win32::System::JobObjects::TerminateJobObject(job.0 as _, 1);
+                }
+            }
+            if let Some(child) = child.as_mut().filter(|_| !child_reaped) {
                 #[cfg(unix)]
                 if let Some(pid) = child.process_id() {
                     unsafe {
                         libc::kill(-(pid as i32), libc::SIGKILL);
-                    }
-                }
-                #[cfg(windows)]
-                if let Some(job) = &job {
-                    unsafe {
-                        windows_sys::Win32::System::JobObjects::TerminateJobObject(job.0 as _, 1);
                     }
                 }
                 let _ = child.kill();
@@ -374,6 +386,11 @@ mod tests {
             "回収できないreaderを成功扱いしない"
         );
         assert!(started.elapsed() < std::time::Duration::from_secs(4));
+        assert!(
+            terminal.child_reaped,
+            "I/O待ち失敗でも子の回収済み状態を保つ"
+        );
+        assert!(terminal.stop().is_ok(), "回収済みPIDへ再送信しない");
         let started = std::time::Instant::now();
         drop(terminal);
         assert!(

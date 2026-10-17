@@ -23,6 +23,7 @@ impl Drop for RuntimeOwner {
 }
 impl App {
     pub(super) fn begin_close(&mut self, index: usize, remove: bool) {
+        self.unbind_terminal(index);
         let tab = &mut self.tabs[index];
         tab.remove_on_close |= remove;
         if tab.closing {
@@ -70,9 +71,29 @@ impl App {
             self.tx.clone(),
         );
         let forwards = std::mem::take(&mut tab.forwards);
+        let log = tab.log.take().map(|mut log| {
+            let (mut lines, dropped) = tab.terminal.take_log_lines();
+            if dropped > 0 {
+                lines.push(format!("[Hashi: {dropped}行を記録できませんでした]"));
+            }
+            lines.extend(tab.terminal.pending_log_line());
+            let written = log.write_lines(lines);
+            tab.terminal.set_line_log(false);
+            (log, written)
+        });
         self.closing_work
             .spawn(self.runtime.handle(), async move {
                 let mut errors = vec![];
+                if let Some((mut log, written)) = log {
+                    let closed = tokio::task::spawn_blocking(move || {
+                        log.close(Duration::from_secs(5))
+                    })
+                    .await
+                    .unwrap_or_else(|_| Err("ログの終了処理が中断されました".into()));
+                    if let Err(error) = written.and(closed) {
+                        errors.push(format!("セッションログ: {error}"));
+                    }
+                }
                 for mut forward in forwards {
                     if let Err(error) = forward.stop().await {
                         errors.push(format!("ポート転送の停止は未確認: {error}"));
@@ -82,7 +103,7 @@ impl App {
                     match manager.shutdown().await {
                         Ok(0) => {}
                         Ok(pending) => errors.push(format!(
-                            "{pending}件の権限復元が未完了です。復旧記録を保持しています"
+                            "以前の記録を含む{pending}件の権限復元が未完了です。復旧記録を保持しています"
                         )),
                         Err(error) => errors.push(format!(
                             "権限復元の確認が未完了です。復旧記録を保持: {error}"
@@ -154,6 +175,7 @@ impl App {
         self.confirm_exit = false;
         self.exiting = true;
         self.exit_started = self.confirm_started.take().or_else(|| Some(Instant::now()));
+        self.stop_external();
         self.cancel_files();
         self.work.close();
         for index in (0..self.tabs.len()).rev() {

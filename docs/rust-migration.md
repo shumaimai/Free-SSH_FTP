@@ -40,7 +40,10 @@ Windows資格情報のテストはランダムな試験専用サービスだけ�
 - `migration.guard` は同じファイルを保持し、削除・置換しない。Pythonが起動中に
   共有ロックを、移行処理が排他ロックを保持する。双方とも非ブロッキング取得。
   Linuxはflock、WindowsはLockFileExでオフセット0から最大範囲をロックする。
-  Rust fs2 0.4.3とPython側の範囲を揃える。ガード取得失敗時は旧版を起動しない。
+  Rust fs2 0.4.3とPython側の範囲を揃える。OSロック競合の場合だけ旧版を起動しない。
+  非対応FS・保存先権限・開始時刻の取得失敗は警告して安定版を起動する。
+  マーカーだけ失敗した場合も共有ロックは保持する。ロックが失敗しても可能なら
+  マーカーを残す。両方失敗した旧版の停止は、マーカー不在からは証明できない。
 - `python-<instance_id>.json` はプロセスごとにatomic保存してfsyncする。
   フィールドは `schema_version`、`implementation`、`application_version`、`pid`、
   `process_start`、`instance_id`、`executable`、`data_root`。
@@ -73,8 +76,8 @@ pytest tests/test_runtime_guard.py tests/test_rust_storage_compat.py tests/test_
 ```
 
 Windows CIは.exeを指定して同じ双方向試験を実行する。通常のPython CIも継続する。
-Python側の接続/エディタ処理はガードの内側に置く。新しいデータスキーマへ自動変換したり、旧資格情報を上書きしない。
-
+GUIの変更はロック競合時のエラーと記録できない場合の警告表示で、既存の接続/エディタ処理は
+ガードの内側に置く。新しいデータスキーマへ自動変換したり、旧資格情報を上書きしない。
 ## 残る検証
 
 Windows CIのプロセス間ロック試験と、Windows実機のIME/ConPTY/資格情報試験は別物。
