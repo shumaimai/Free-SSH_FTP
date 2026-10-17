@@ -13,7 +13,7 @@ import os
 import sys
 
 from PySide6.QtGui import QColor, QPalette
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from hashi.launch import dispatch, normalize_paths, run_editor_only
 
@@ -70,6 +70,28 @@ def main(argv: list[str] | None = None) -> int:
     app = QApplication(cli_argv)
     app.setApplicationName("Hashi")
     apply_dark_theme(app)
+
+    from hashi.runtime_guard import MigrationBusyError, PythonRuntime
+    runtime = PythonRuntime()
+    try:
+        runtime.start_best_effort()
+    except MigrationBusyError:
+        logging.getLogger(__name__).warning("移行処理中のため起動を中止します")
+        QMessageBox.critical(None, "Hashiを起動できません",
+                             "移行処理が実行中です。終了してから起動してください。")
+        return 1
+    try:
+        if runtime.warnings:
+            logging.getLogger(__name__).warning("; ".join(runtime.warnings))
+            QMessageBox.warning(None, "移行時の停止確認について",
+                                "移行用の実行状態を完全に記録できませんでした。Hashiは起動します。\n"
+                                "Rust版で移行や権限変更をする前に、このHashiを必ず終了してください。")
+        return _run_application(app, mode, ns)
+    finally:
+        runtime.close()
+
+
+def _run_application(app, mode, ns) -> int:
 
     if mode == "editor":
         paths = normalize_paths(ns.files)

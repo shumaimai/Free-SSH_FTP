@@ -36,3 +36,9 @@ creds.dat
 profiles.json
 known_hosts.json
 settings.json
+
+# Rust
+/rust/target/
+
+rust/crates/hashi-desktop-tauri/frontend/node_modules/
+rust/crates/hashi-desktop-tauri/gen/

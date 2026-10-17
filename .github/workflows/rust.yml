@@ -1,0 +1,95 @@
+name: Rust migration
+on:
+  pull_request:
+    paths:
+      - 'rust/**'
+      - 'hashi/runtime_guard.py'
+      - 'main.py'
+      - 'tests/test_runtime_guard.py'
+      - 'tests/test_rust_storage_compat.py'
+      - 'tests/test_rust_ssh_live.py'
+      - 'tests/test_rust_sftp_compat.py'
+      - 'tests/test_rust_native_gui.py'
+      - '.github/workflows/rust.yml'
+      - 'tools/rust_artifact.py'
+  push:
+    branches: [main]
+    paths:
+      - 'rust/**'
+      - 'hashi/runtime_guard.py'
+      - 'main.py'
+      - 'tests/test_runtime_guard.py'
+      - 'tests/test_rust_storage_compat.py'
+      - 'tests/test_rust_ssh_live.py'
+      - 'tests/test_rust_sftp_compat.py'
+      - 'tests/test_rust_native_gui.py'
+      - '.github/workflows/rust.yml'
+      - 'tools/rust_artifact.py'
+jobs:
+  guards:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHON_KEYRING_BACKEND: keyring.backends.fail.Keyring
+      PYTHONUTF8: '1'
+      HASHI_RUST_GUARD_BINARY: ${{ github.workspace }}/rust/target/debug/hashi-migration-check${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+      HASHI_RUST_GUI_BINARY: ${{ github.workspace }}/rust/target/debug/Hashi-RustPreview${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+      HASHI_RUST_SSH_BINARY: ${{ github.workspace }}/rust/target/debug/hashi-ssh-check${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+      HASHI_RUST_STORAGE_BINARY: ${{ github.workspace }}/rust/target/debug/hashi-storage-contract${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.99.0'
+          components: rustfmt, clippy
+      - name: Linux Qt libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon-x11-0 openssh-server xvfb xauth xdotool
+      - name: Linux Tauri libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev librsvg2-dev
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: rust/crates/hashi-desktop-tauri/frontend/package-lock.json
+      - name: Web frontend (type check and build)
+        working-directory: rust/crates/hashi-desktop-tauri/frontend
+        run: npm ci && npm run build
+      - name: Linux test daemon directory
+        if: runner.os == 'Linux'
+        run: sudo mkdir -p /run/sshd
+      - run: python -m pip install -r requirements-dev.txt
+      - name: Rust format
+        working-directory: rust
+        run: cargo fmt --all --check
+      - name: Rust lint
+        working-directory: rust
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: Rust contracts
+        working-directory: rust
+        run: cargo test --locked --workspace
+      - name: Build native candidate and diagnostics
+        working-directory: rust
+        run: cargo build --locked --workspace --bins
+      - name: Python and Rust process interoperability
+        run: python -m pytest -v -x tests/test_runtime_guard.py tests/test_rust_storage_compat.py tests/test_rust_ssh_live.py tests/test_rust_sftp_compat.py tests/test_rust_native_gui.py
+      - name: Candidate build identity and licenses
+        if: runner.os == 'Windows'
+        run: python tools/rust_artifact.py --binary rust/target/debug/Hashi.exe --helper rust/target/debug/HashiMCP-RustPreview.exe --output rust/target/candidate
+      - name: Native candidate artifact
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: Hashi-RustPreview-windows-x64
+          path: rust/target/candidate/
+          if-no-files-found: error
+          retention-days: 30
