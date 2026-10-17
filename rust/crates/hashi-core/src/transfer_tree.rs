@@ -83,13 +83,29 @@ pub struct TaskContext<'a> {
     pub job: &'a str,
     pub progress: &'a mpsc::Sender<Progress>,
     pub cancel: &'a CancellationToken,
+    pub permission: Option<&'a std::sync::Arc<crate::permissions::Manager>>,
+    pub mode: transfer::Mode,
 }
 pub async fn upload_tree(
+    ssh: &SshSession,
     sftp: &SftpSession,
     local: &Path,
     remote: &str,
     policy: Existing,
     context: &TaskContext<'_>,
+) -> Result<Report> {
+    let mut access = crate::permissions::Batch::new(context.permission);
+    let result = upload_tree_inner(ssh, sftp, local, remote, policy, context, &mut access).await;
+    crate::permissions::complete(result, access.finish().await)
+}
+async fn upload_tree_inner(
+    ssh: &SshSession,
+    sftp: &SftpSession,
+    local: &Path,
+    remote: &str,
+    policy: Existing,
+    context: &TaskContext<'_>,
+    access: &mut crate::permissions::Batch,
 ) -> Result<Report> {
     let (job, progress, cancel) = (context.job, context.progress, context.cancel);
     let mut pending = VecDeque::from([(local.to_path_buf(), remote.to_owned(), 0)]);
@@ -104,12 +120,19 @@ pub async fn upload_tree(
         }
         budget.dequeue(local.as_os_str().len() + remote.len() + 128);
         budget.visit(depth, pending.len())?;
+        access.join(&remote).await;
         let meta = tokio::fs::symlink_metadata(&local).await?;
         if is_link(&meta) {
             report.skipped += 1;
             continue;
         }
-        let existing = remote_metadata(sftp, &remote).await?;
+        let parent = Path::new(&remote)
+            .parent()
+            .and_then(|p| p.to_str())
+            .context("親パスが不正です")?;
+        let existing = access
+            .run(parent, 0o100, || remote_metadata(sftp, &remote))
+            .await?;
         if existing.as_ref().is_some_and(|meta| meta.is_symlink()) {
             bail!("転送先のリンクを上書きできません");
         }
@@ -117,7 +140,17 @@ pub async fn upload_tree(
             match existing {
                 Some(meta) if meta.is_dir() => {}
                 Some(_) => bail!("転送先に同名の通常ファイルがあります"),
-                None => sftp.create_dir(&remote).await?,
+                None => {
+                    let parent = Path::new(&remote)
+                        .parent()
+                        .and_then(|p| p.to_str())
+                        .context("親パスが不正です")?;
+                    access
+                        .run(parent, 0o300, || async {
+                            Ok(sftp.create_dir(&remote).await?)
+                        })
+                        .await?;
+                }
             };
             report.directories += 1;
             let mut children = tokio::fs::read_dir(&local).await?;
@@ -143,20 +176,37 @@ pub async fn upload_tree(
                 continue;
             }
             if existing.is_some() && policy == Existing::Resume {
-                transfer::upload_resume(sftp, &local, &remote, job, progress, cancel).await?;
+                access
+                    .run(&remote, 0o600, || {
+                        transfer::upload_resume(sftp, &local, &remote, job, progress, cancel)
+                    })
+                    .await?;
                 report.files += 1;
                 continue;
             }
-            transfer::upload(
-                sftp,
-                &local,
-                &remote,
-                policy == Existing::Overwrite,
-                job,
-                progress,
-                cancel,
-            )
-            .await?;
+            let cleanup = access.cleanup();
+            let upload = || {
+                transfer::upload_scoped(
+                    ssh,
+                    sftp,
+                    &local,
+                    &remote,
+                    existing.is_some() && policy == Existing::Overwrite,
+                    context,
+                    Some(&cleanup),
+                )
+            };
+            if existing.is_some() {
+                if context.mode == transfer::Mode::InPlace {
+                    access.run(&remote, 0o200, upload).await?;
+                } else {
+                    // 既存原本の置換のために親の書込み権限を自動拡大しない。
+                    access.require_original_parent_write(parent)?;
+                    upload().await?;
+                }
+            } else {
+                access.run(parent, 0o300, upload).await?;
+            }
             report.files += 1;
         } else {
             report.skipped += 1;
@@ -172,6 +222,19 @@ pub async fn download_tree(
     policy: Existing,
     context: &TaskContext<'_>,
 ) -> Result<Report> {
+    let mut access = crate::permissions::Batch::new(context.permission);
+    let result = download_tree_inner(ssh, sftp, remote, local, policy, context, &mut access).await;
+    crate::permissions::complete(result, access.finish().await)
+}
+async fn download_tree_inner(
+    ssh: &SshSession,
+    sftp: &SftpSession,
+    remote: &str,
+    local: &Path,
+    policy: Existing,
+    context: &TaskContext<'_>,
+    access: &mut crate::permissions::Batch,
+) -> Result<Report> {
     let (job, progress, cancel) = (context.job, context.progress, context.cancel);
     let mut pending = VecDeque::from([(remote.to_owned(), local.to_path_buf(), 0)]);
     let mut budget = Budget {
@@ -185,6 +248,7 @@ pub async fn download_tree(
         }
         budget.dequeue(local.as_os_str().len() + remote.len() + 128);
         budget.visit(depth, pending.len())?;
+        access.join(&remote).await;
         let meta = sftp.symlink_metadata(&remote).await?;
         if meta.is_symlink() {
             report.skipped += 1;
@@ -201,7 +265,12 @@ pub async fn download_tree(
                 None => tokio::fs::create_dir(&local).await?,
             };
             report.directories += 1;
-            for child in transfer::list_bounded(ssh, &remote, cancel).await? {
+            for child in access
+                .run(&remote, 0o500, || {
+                    transfer::list_bounded(ssh, &remote, cancel)
+                })
+                .await?
+            {
                 transfer::safe_name(&child.name)?;
                 budget
                     .enqueue(child.path.len() + local.as_os_str().len() + child.name.len() + 129)?;
@@ -215,19 +284,23 @@ pub async fn download_tree(
                 report.skipped += 1;
                 continue;
             }
-            transfer::download(
-                sftp,
-                &remote,
-                &local,
-                DownloadPolicy {
-                    overwrite: policy == Existing::Overwrite,
-                    resume: policy == Existing::Resume,
-                },
-                job,
-                progress,
-                cancel,
-            )
-            .await?;
+            access
+                .run(&remote, 0o400, || {
+                    transfer::download(
+                        sftp,
+                        &remote,
+                        &local,
+                        DownloadPolicy {
+                            overwrite: policy == Existing::Overwrite,
+                            resume: policy == Existing::Resume,
+                            mode: context.mode,
+                        },
+                        job,
+                        progress,
+                        cancel,
+                    )
+                })
+                .await?;
             report.files += 1;
         } else {
             report.skipped += 1;

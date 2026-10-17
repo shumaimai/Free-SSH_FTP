@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import ctypes
+import errno
 import logging
 import os
 import stat
+import subprocess
 import sys
 import uuid
 from pathlib import Path
@@ -15,6 +17,26 @@ from .jsonio import save_json_atomic
 logger = logging.getLogger(__name__)
 SCHEMA_VERSION = 1
 GUARD_NAME = "migration.guard"
+
+
+class MigrationBusyError(OSError):
+    """実際のOSロック競合だけを表す。保存先/対応OSの異常と区別する。"""
+
+
+def _lock(file, *, exclusive: bool) -> None:
+    try:
+        if os.name == "nt":
+            _windows_lock(file, exclusive=exclusive)
+        else:
+            import fcntl
+            fcntl.flock(file, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+                        | fcntl.LOCK_NB)
+    except OSError as error:
+        busy = (getattr(error, "winerror", None) == 33 if os.name == "nt" else
+                error.errno in (errno.EAGAIN, errno.EWOULDBLOCK))
+        if busy:
+            raise MigrationBusyError("移行処理が実行中です") from error
+        raise
 
 
 def runtime_dir() -> Path:
@@ -46,7 +68,6 @@ def process_start() -> str:
         fields = Path(f"/proc/{os.getpid()}/stat").read_text().rsplit(")", 1)[1].split()
         return f"linux:{boot}:{fields[19]}"
     if sys.platform == "darwin":
-        import subprocess
         created = subprocess.check_output(
             ["/bin/ps", "-p", str(os.getpid()), "-o", "lstart="], text=True).strip()
         if created:
@@ -88,11 +109,19 @@ class MigrationGuard:
     """旧版は共有、移行側は排他。ロックファイル自体は削除しない。"""
 
     def __init__(self, directory: Path | None = None, *, exclusive: bool = False):
-        self.directory = directory if directory is not None else runtime_dir()
+        self._directory = directory
         self.exclusive = exclusive
         self._file = None
+        self.can_write_marker = False
+
+    @property
+    def directory(self) -> Path:
+        if self._directory is None:
+            self._directory = runtime_dir()
+        return self._directory
 
     def __enter__(self):
+        self.can_write_marker = False
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         info = self.directory.lstat()
         if (not stat.S_ISDIR(info.st_mode) or
@@ -114,12 +143,8 @@ class MigrationGuard:
                 raise OSError("移行ガードは通常ファイルである必要があります")
             if os.name != "nt" and info.st_uid != os.getuid():
                 raise PermissionError("移行ガードの所有者が異なります")
-            if os.name == "nt":
-                _windows_lock(file, exclusive=self.exclusive)
-            else:
-                import fcntl
-                fcntl.flock(file, (fcntl.LOCK_EX if self.exclusive else fcntl.LOCK_SH)
-                            | fcntl.LOCK_NB)
+            self.can_write_marker = True
+            _lock(file, exclusive=self.exclusive)
         except BaseException:
             file.close()
             raise
@@ -143,9 +168,26 @@ class PythonRuntime:
         self.guard = MigrationGuard(directory)
         self.data_root = data_root
         self.marker: Path | None = None
+        self.warnings: list[str] = []
 
     def __enter__(self):
-        self.guard.__enter__()
+        return self._start(strict=True)
+
+    def start_best_effort(self):
+        """安定版は競合時だけ停止し、それ以外は警告して起動する。"""
+        return self._start(strict=False)
+
+    def _start(self, *, strict: bool):
+        try:
+            self.guard.__enter__()
+        except MigrationBusyError:
+            raise
+        except (OSError, RuntimeError, UnicodeError, subprocess.SubprocessError) as error:
+            if strict:
+                raise
+            self.warnings.append(f"移行ガードを取得できません: {error}")
+            if not self.guard.can_write_marker:
+                return self
         try:
             from .config import config_dir
             root = self.data_root if self.data_root is not None else config_dir()
@@ -161,6 +203,13 @@ class PythonRuntime:
                 "executable": str(Path(sys.executable).resolve()),
                 "data_root": str(root.resolve()),
             }, ensure_ascii=False, fsync=True)
+            return self
+        except (OSError, RuntimeError, UnicodeError, subprocess.SubprocessError) as error:
+            if strict:
+                self.close()
+                raise
+            # マーカーだけ失敗しても、取得できた共有ロックは終了まで保つ。
+            self.warnings.append(f"実行中マーカーを作成できません: {error}")
             return self
         except BaseException:
             self.close()
