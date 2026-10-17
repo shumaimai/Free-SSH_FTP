@@ -16,6 +16,27 @@ struct Active {
     entry: Option<Entry>,
     lease: PathLease,
 }
+/// 旧Python版の起動を防ぐ排他ガード。同じプロセス内では共有する（二重に取ると自分自身と衝突するため）。
+/// 権限補助と旧データの取り込みが同時に使えるよう、取得はここだけで行う。
+pub fn shared_legacy_lease() -> Result<Arc<hashi_storage::migration::MigrationLease>> {
+    static GUARD: std::sync::OnceLock<
+        std::sync::Mutex<std::sync::Weak<hashi_storage::migration::MigrationLease>>,
+    > = std::sync::OnceLock::new();
+    let runtime = hashi_storage::paths::runtime_root()?;
+    let mut guard = GUARD
+        .get_or_init(|| std::sync::Mutex::new(std::sync::Weak::new()))
+        .lock()
+        .map_err(|_| anyhow::anyhow!("旧版停止ガードが不正です"))?;
+    Ok(match guard.upgrade() {
+        Some(lease) => lease,
+        None => {
+            let lease = Arc::new(hashi_storage::migration::acquire(&runtime)?);
+            *guard = Arc::downgrade(&lease);
+            lease
+        }
+    })
+}
+
 pub struct Manager {
     work: crate::work::Work,
     backend: Arc<dyn Backend>,
@@ -56,22 +77,7 @@ impl Manager {
         if !legacy_stopped_confirmed {
             bail!("権限操作の前に旧Python版の停止確認が必要です");
         }
-        static GUARD: std::sync::OnceLock<
-            std::sync::Mutex<std::sync::Weak<hashi_storage::migration::MigrationLease>>,
-        > = std::sync::OnceLock::new();
-        let runtime = hashi_storage::paths::runtime_root()?;
-        let mut guard = GUARD
-            .get_or_init(|| std::sync::Mutex::new(std::sync::Weak::new()))
-            .lock()
-            .map_err(|_| anyhow::anyhow!("旧版停止ガードが不正です"))?;
-        let lease = match guard.upgrade() {
-            Some(lease) => lease,
-            None => {
-                let lease = Arc::new(hashi_storage::migration::acquire(&runtime)?);
-                *guard = Arc::downgrade(&lease);
-                lease
-            }
-        };
+        let lease = shared_legacy_lease()?;
         let journal = Arc::new(Journal::at(
             hashi_storage::paths::permission_journal_root()?
         )?);

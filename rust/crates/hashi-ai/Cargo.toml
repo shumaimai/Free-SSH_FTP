@@ -1,0 +1,18 @@
+[package]
+name = "hashi-ai"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+hashi-core = { path = "../hashi-core" }
+hashi-storage = { path = "../hashi-storage" }
+serde_json.workspace = true
+anyhow = "1"
+regex = "1"
+tokio-util = { version = "0.7", features = ["rt"] }
+tokio = { version = "1", features = ["full"] }
+ureq = { version = "=3.4.2", default-features = false, features = ["rustls", "platform-verifier", "win-system-proxy"] }
+url = "2"
+sha2 = "0.10"

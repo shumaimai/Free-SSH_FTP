@@ -1,12 +1,20 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+mod ai_view;
 mod editor_view;
+mod external_view;
 mod file_view;
 mod forward_view;
+mod keygen_view;
 mod permission_view;
+mod settings_view;
 mod shutdown_view;
+mod snippet_view;
+mod sync_view;
 use file_view::{Browser, FileEvent};
+mod home_view;
 mod style;
 mod terminal_view;
+mod theme;
 use editor_view::{Editor, EditorEvent};
 use eframe::egui;
 use forward_view::{ActiveForward, ForwardEditor};
@@ -113,6 +121,10 @@ struct Tab {
     work_cancel: CancellationToken,
     closing: bool,
     remove_on_close: bool,
+    /// SSH端末の受信ログ。CMDは対象外（Python版と同じ）。
+    log: Option<hashi_core::session_log::SessionLog>,
+    /// AI/MCP向け端末台帳への登録。
+    binding: external_view::Binding,
 }
 impl Tab {
     fn new(label: String) -> Self {
@@ -152,7 +164,21 @@ impl Tab {
             pending_local_size: None,
             permissions: None,
             permissions_busy: false,
+            log: None,
+            binding: Default::default(),
         }
+    }
+    /// 確定した受信行をログへ渡す。失敗したらこのタブのログを止めて理由を返す。
+    fn drain_log(&mut self) -> Option<String> {
+        let log = self.log.as_mut()?;
+        let (mut lines, dropped) = self.terminal.take_log_lines();
+        if dropped > 0 {
+            lines.push(format!("[Hashi: {dropped}行を記録できませんでした]"));
+        }
+        let error = log.write_lines(lines).err()?;
+        self.log = None;
+        self.terminal.set_line_log(false);
+        Some(format!("セッションログ: {error}"))
     }
     fn begin_navigation(&mut self) -> (Stamp, CancellationToken) {
         self.navigation_cancel.cancel();
@@ -266,6 +292,22 @@ struct App {
     file_tx: mpsc::Sender<FileEvent>,
     permission_open: bool,
     legacy_stopped: bool,
+    snippets: snippet_view::SnippetWindow,
+    settings: settings_view::SettingsWindow,
+    update_check: Option<tokio::sync::oneshot::Receiver<hashi_core::update::Update>>,
+    available_update: Option<hashi_core::update::Update>,
+    keygen: keygen_view::KeygenWindow,
+    external: external_view::External,
+    ai: ai_view::AiWindow,
+    show_home: bool,
+    home: home_view::HomeState,
+    dock: Dock,
+    dock_open: bool,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Dock {
+    Files,
+    Ai,
 }
 impl App {
     fn new(
@@ -287,7 +329,7 @@ impl App {
                 .push("NotoSansJP".into());
         }
         cc.egui_ctx.set_fonts(fonts);
-        cc.egui_ctx.set_visuals(egui::Visuals::dark());
+        theme::apply(&cc.egui_ctx);
         let store = Arc::new(Store::new(Channel::Preview)?);
         let (snapshot, notice, startup_error) = match store.load() {
             Ok(snapshot) => (snapshot, String::new(), false),
@@ -338,13 +380,33 @@ impl App {
             confirm_exit: false,
             permission_open: false,
             legacy_stopped: false,
+            snippets: Default::default(),
+            settings: Default::default(),
+            update_check: None,
+            available_update: None,
+            keygen: Default::default(),
+            external: Default::default(),
+            ai: Default::default(),
+            show_home: true,
+            home: Default::default(),
+            dock: Dock::Ai,
+            dock_open: false,
             allow_close: false,
             browser: Browser::default(),
             file_events,
             file_tx,
         };
+        app.browser.sync.enabled = app
+            .snapshot
+            .settings
+            .get("sync_browse")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        app.ai_restore();
         if let Some(path) = edit {
             app.load_local_editor(path);
+        } else {
+            app.start_update_check();
         }
         Ok(app)
     }
@@ -402,6 +464,9 @@ impl App {
             let _=tx.send(Message::Error {stamp,message}).await;
         }).expect("新しい接続の受付");
         self.active = self.tabs.len();
+        self.show_home = false;
+        self.dock = Dock::Files;
+        self.dock_open = true;
         self.tabs.push(tab);
     }
     fn local(&mut self) {
@@ -421,7 +486,9 @@ impl App {
                 tab.local = Some(Arc::new(Mutex::new(local)));
                 tab.status = "ローカル端末".into();
                 self.active = self.tabs.len();
+                self.show_home = false;
                 self.tabs.push(tab);
+                self.bind_terminal(self.active, hashi_core::broker::Kind::Local);
             }
             Err(error) => self.notice = error.to_string(),
         }
@@ -510,6 +577,27 @@ impl App {
                     tab.input = Some(input);
                     tab.resize = Some(resize);
                     tab.status = "接続済み".into();
+                    if !self.tabs[index].closing {
+                        self.bind_terminal(index, hashi_core::broker::Kind::Ssh);
+                    }
+                    if self.session_log_enabled() && !self.tabs[index].closing {
+                        let (custom, default) = self.session_log_directory();
+                        let tab = &mut self.tabs[index];
+                        match hashi_core::session_log::SessionLog::open(
+                            custom.as_deref(),
+                            &default,
+                            &tab.label,
+                        ) {
+                            Ok(log) => {
+                                tab.terminal.set_line_log(true);
+                                tab.status = format!("接続済み・ログ: {}", log.path().display());
+                                tab.log = Some(log);
+                            }
+                            Err(error) => {
+                                self.notice = format!("セッションログを開始できません: {error:#}")
+                            }
+                        }
+                    }
                     let initial = self.tabs[index].path.clone();
                     if !self.tabs[index].closing {
                         self.browse(index, initial);
@@ -517,9 +605,13 @@ impl App {
                 }
                 Message::Data { bytes, .. } => {
                     let tab = &mut self.tabs[index];
+                    tab.binding.capture(&bytes);
                     tab.terminal.feed(&bytes);
                     for reply in tab.terminal.replies() {
                         tab.send(reply);
+                    }
+                    if let Some(error) = tab.drain_log() {
+                        self.notice = error;
                     }
                 }
                 Message::Error { message, .. } => {
@@ -533,7 +625,9 @@ impl App {
                     message,
                     ..
                 } => {
-                    if self.tabs[index].navigation == navigation {
+                    if let Some(sync) = self.browser.sync.remote_failed(&navigation, &message) {
+                        self.notice = sync;
+                    } else if self.tabs[index].navigation == navigation {
                         self.notice = message;
                     }
                 }
@@ -544,7 +638,13 @@ impl App {
                     ..
                 } => {
                     let tab = &mut self.tabs[index];
-                    tab.apply_listing(navigation, path, entries);
+                    let stamp = tab.stamp.clone();
+                    if tab.apply_listing(navigation.clone(), path.clone(), entries) {
+                        let follow = self.browser.sync.on_remote(&stamp, &navigation, &path);
+                        if index == self.active {
+                            self.apply_follow(follow);
+                        }
+                    }
                 }
                 Message::Done {
                     message, failed, ..
@@ -563,6 +663,7 @@ impl App {
             match event {
                 TerminalEvent::Data { stamp, bytes } => {
                     if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.stamp == stamp) {
+                        tab.binding.capture(&bytes);
                         tab.terminal.feed(&bytes);
                         for reply in tab.terminal.replies() {
                             tab.send(reply);
@@ -570,12 +671,14 @@ impl App {
                     }
                 }
                 TerminalEvent::Closed { stamp } => {
-                    if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.stamp == stamp) {
-                        tab.status = "終了".into();
+                    if let Some(index) = self.tabs.iter().position(|tab| tab.stamp == stamp) {
+                        self.tabs[index].status = "終了".into();
+                        self.unbind_terminal(index);
                     }
                 }
             }
         }
+        self.flush_bindings();
         while let Ok(progress) = self.progress.try_recv() {
             self.file_progress(&progress);
             self.notice = format!(
@@ -584,21 +687,16 @@ impl App {
             );
         }
     }
-    fn browse(&mut self, index: usize, path: String) {
-        let Some(tab) = self.tabs.get_mut(index) else {
-            return;
-        };
+    fn browse(&mut self, index: usize, path: String) -> Option<Stamp> {
+        let tab = self.tabs.get_mut(index)?;
         if self.exiting || tab.closing || tab.work.is_closed() {
-            return;
+            return None;
         }
         let work = tab.work.clone();
-        let Some(nav) = tab.nav.clone() else {
-            return;
-        };
-        let Some(session) = tab.session.clone() else {
-            return;
-        };
+        let nav = tab.nav.clone()?;
+        let session = tab.session.clone()?;
         let (navigation, cancel) = tab.begin_navigation();
+        let navigation_stamp = navigation.clone();
         let permissions = tab.permissions.clone();
         let stamp = tab.stamp.clone();
         let tx = self.tx.clone();
@@ -631,10 +729,12 @@ impl App {
             };
             tokio::select! { biased; _=cancel.cancelled()=>{},_=tx.send(event)=>{} }
         });
+        Some(navigation_stamp)
     }
-    fn save_profile(&mut self) {
+    /// 保存できたかを返す。新規は保存後に編集中の接続先として扱い、続けて保存しても増やさない。
+    fn save_profile(&mut self) -> bool {
         if self.exiting {
-            return;
+            return false;
         }
         let profile = self.profile.clone();
         let index = self.edit_index;
@@ -653,9 +753,16 @@ impl App {
         }) {
             Ok(snapshot) => {
                 self.snapshot = snapshot;
+                if index.is_none() {
+                    self.edit_index = self.snapshot.profiles.len().checked_sub(1);
+                }
                 self.notice = "保存しました".into();
+                true
             }
-            Err(error) => self.notice = error.to_string(),
+            Err(error) => {
+                self.notice = error.to_string();
+                false
+            }
         }
     }
     fn auth_dialog(&mut self, ctx: &egui::Context) {
@@ -663,11 +770,13 @@ impl App {
             return;
         };
         let mut answer = None;
-        egui::Window::new("接続先の確認・認証")
+        egui::Window::new("接続先の確認")
             .collapsible(false)
             .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .default_width(440.0)
             .show(ctx, |ui| {
-                ui.label(format!(
+                ui.label(theme::title(format!(
                     "{}@{}:{}{}",
                     request.scope.username,
                     request.scope.host,
@@ -677,38 +786,68 @@ impl App {
                         .hop
                         .map(|n| format!("（踏み台{}）", n + 1))
                         .unwrap_or_default()
-                ));
+                )));
                 match &request.challenge {
                     Challenge::HostKey { key, old } => {
-                        ui.label(&key.key_type);
-                        ui.monospace(&key.fingerprint);
                         if let Some(old) = old {
-                            ui.colored_label(
-                                egui::Color32::YELLOW,
-                                "鍵が違います。確認後に trust と入力してください。",
+                            ui.label(
+                                egui::RichText::new("このサーバーの鍵が、前に信頼した鍵と違います")
+                                    .color(theme::DANGER)
+                                    .strong(),
                             );
+                            ui.label(theme::muted(
+                                "サーバーの入れ替えか、通信の乗っ取りの可能性があります。心当たりがなければ中止してください。",
+                            ));
+                            ui.label(theme::muted("前に信頼した指紋"));
                             ui.monospace(&old.fingerprint);
+                            ui.label(theme::muted("今回の指紋"));
+                        } else {
+                            ui.label("初めて接続するサーバーです。");
+                            ui.label(theme::muted(
+                                "管理者から聞いた指紋と同じか確認してから信頼してください。",
+                            ));
+                        }
+                        ui.label(theme::muted(&key.key_type));
+                        ui.monospace(&key.fingerprint);
+                        if old.is_some() {
+                            ui.label(theme::muted("信頼するには trust と入力"));
                             ui.text_edit_singleline(&mut self.confirmation);
                         }
-                        if ui.button("信頼して接続").clicked()
-                            && (old.is_none() || self.confirmation == "trust")
-                        {
-                            answer = Some(Reply::HostTrust {
-                                accept: true,
-                                confirmation: self.confirmation.clone(),
-                            });
-                        }
+                        ui.horizontal(|ui| {
+                            let allowed = old.is_none() || self.confirmation == "trust";
+                            if ui
+                                .add_enabled(allowed, theme::primary("信頼して接続"))
+                                .clicked()
+                            {
+                                answer = Some(Reply::HostTrust {
+                                    accept: true,
+                                    confirmation: self.confirmation.clone(),
+                                });
+                            }
+                            if ui.button("中止").clicked() {
+                                answer = Some(Reply::Cancel);
+                            }
+                        });
                     }
                     Challenge::Secret { prompt } => {
                         ui.label(prompt);
-                        ui.add(egui::TextEdit::singleline(&mut self.secret).password(true));
-                        if ui.button("送信").clicked() {
-                            answer = Some(Reply::Secret(std::mem::take(&mut self.secret)));
-                        }
+                        let field = ui.add(
+                            egui::TextEdit::singleline(&mut self.secret)
+                                .password(true)
+                                .desired_width(f32::INFINITY),
+                        );
+                        field.request_focus();
+                        let submit = field.lost_focus()
+                            && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                        ui.horizontal(|ui| {
+                            if ui.add(theme::primary("送信")).clicked() || submit {
+                                answer = Some(Reply::Secret(std::mem::take(&mut self.secret)));
+                            }
+                            if ui.button("中止").clicked() {
+                                answer = Some(Reply::Cancel);
+                            }
+                        });
                     }
-                }
-                if ui.button("中止").clicked() {
-                    answer = Some(Reply::Cancel);
                 }
             });
         if let Some(answer) = answer {
@@ -745,6 +884,9 @@ impl eframe::App for App {
         self.process();
         self.process_editors();
         self.process_files();
+        self.poll_update();
+        self.sync_track_active();
+        self.poll_external();
         ctx.request_repaint_after(Duration::from_millis(16));
     }
     fn ui(&mut self, ui: &mut egui::Ui, _: &mut eframe::Frame) {
@@ -753,132 +895,49 @@ impl eframe::App for App {
         if self.exiting {
             ui.disable();
         }
-        egui::Panel::top("header").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("Hashi Rust プレビュー");
-                if ui.button("ローカルCMD").clicked() {
-                    self.local();
-                }
-                if ui.button("ローカル編集").clicked() {
-                    self.open_local_editor();
-                }
-                if ui.button("ファイル・転送").clicked() {
-                    self.browser.open = true;
-                    self.refresh_local(std::env::current_dir().unwrap_or_default());
-                }
-                if ui.button("ポート転送").clicked() {
-                    self.forward_editor.open = true;
-                }
-                if ui.button("権限補助").clicked() {
-                    self.permission_open = true;
-                }
-            });
-        });
-        egui::Panel::left("profiles")
-            .min_size(260.0)
+        self.top_bar(ui);
+        egui::Panel::bottom("status")
+            .frame(
+                egui::Frame::new()
+                    .fill(theme::SURFACE)
+                    .inner_margin(egui::Margin::symmetric(12, 5)),
+            )
             .show(ui, |ui| {
-                ui.heading("接続先");
-                for (index, p) in self.snapshot.profiles.clone().iter().enumerate() {
-                    if ui
-                        .selectable_label(
-                            self.edit_index == Some(index),
-                            if p.name.is_empty() { &p.host } else { &p.name },
-                        )
-                        .clicked()
-                    {
-                        self.profile = p.clone();
-                        self.edit_index = Some(index);
-                    }
-                }
-                if ui.button("新規接続").clicked() {
-                    self.profile = Profile::default();
-                    self.edit_index = None;
-                }
-                ui.separator();
-                ui.label("名前");
-                ui.text_edit_singleline(&mut self.profile.name);
-                ui.label("ホスト");
-                ui.text_edit_singleline(&mut self.profile.host);
-                ui.label("ポート");
-                ui.add(egui::DragValue::new(&mut self.profile.port).range(1..=65535));
-                ui.label("利用者名");
-                ui.text_edit_singleline(&mut self.profile.username);
-                egui::ComboBox::from_id_salt("auth")
-                    .selected_text(&self.profile.auth_method)
-                    .show_ui(ui, |ui| {
-                        for method in ["key", "password", "agent"] {
-                            ui.selectable_value(
-                                &mut self.profile.auth_method,
-                                method.into(),
-                                method,
-                            );
+                ui.horizontal(|ui| {
+                    ui.label(theme::muted(&self.notice));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let shared = self.external.broker.list_sessions().len();
+                        if shared > 0 {
+                            theme::chip(ui, &format!("AIへ公開中 {shared}端末"), theme::WARN);
                         }
                     });
-                if self.profile.auth_method == "key" {
-                    ui.label("秘密鍵");
-                    ui.text_edit_singleline(&mut self.profile.key_path);
-                    if ui.button("秘密鍵を選択").clicked() {
-                        if let Some(path) = rfd::FileDialog::new().pick_file() {
-                            self.profile.key_path = path.to_string_lossy().into_owned();
-                        }
-                    }
-                }
-                ui.checkbox(
-                    &mut self.profile.agent_forwarding,
-                    "エージェント転送（接続先に署名を許可）",
-                );
-                ui.label("踏み台（ProxyJump）");
-                ui.text_edit_singleline(&mut self.profile.proxy_jump);
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(!self.startup_error, egui::Button::new("保存"))
-                        .clicked()
-                    {
-                        self.save_profile();
-                    }
-                    if ui
-                        .add_enabled(!self.startup_error, egui::Button::new("接続"))
-                        .clicked()
-                    {
-                        self.connect();
-                    }
                 });
             });
-        egui::Panel::bottom("status").show(ui, |ui| {
-            ui.label(&self.notice);
-        });
-        egui::CentralPanel::default().show(ui, |ui| {
-            let mut closed = None;
-            ui.horizontal_wrapped(|ui| {
-                for (index, tab) in self.tabs.iter().enumerate() {
-                    if ui
-                        .selectable_label(self.active == index, &tab.label)
-                        .clicked()
-                    {
-                        self.active = index;
-                    }
-                    if ui.small_button("×").clicked() {
-                        closed = Some(index);
-                    }
+        let in_session = !self.show_home && self.tabs.get(self.active).is_some();
+        if self.dock_open {
+            self.dock_panel(ui, in_session);
+        }
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::new()
+                    .fill(theme::BG)
+                    .inner_margin(egui::Margin::same(16)),
+            )
+            .show(ui, |ui| {
+                if !in_session {
+                    self.home_page(ui);
+                    return;
                 }
-            });
-            if let Some(index) = closed {
-                self.begin_close(index, true);
-            }
-            let Some(tab) = self.tabs.get(self.active) else {
-                ui.label("接続先を選択するか、ローカルCMDを開いてください。");
-                return;
-            };
-            let status = tab.status.clone();
-
-            let has_sftp = tab.nav.is_some() && !tab.closing && !tab.work.is_closed();
-            ui.label(status);
-            if has_sftp {
-                egui::Panel::right("files")
-                    .default_size(330.0)
-                    .show(ui, |ui| self.remote_file_panel(ui));
-            }
-            egui::CentralPanel::default().show(ui, |ui| {
+                let Some(tab) = self.tabs.get(self.active) else {
+                    return;
+                };
+                let (label, status) = (tab.label.clone(), tab.status.clone());
+                ui.horizontal(|ui| {
+                    theme::dot(ui, self.tab_color(self.active));
+                    ui.label(egui::RichText::new(label).strong());
+                    ui.label(theme::muted(status));
+                });
+                ui.add_space(4.0);
                 if let Some(tab) = self.tabs.get_mut(self.active) {
                     if tab.closing {
                         ui.label("処理の終了を待っています");
@@ -887,16 +946,187 @@ impl eframe::App for App {
                     }
                 }
             });
-        });
         if !self.exiting {
+            self.ai_tick(&ctx);
             self.auth_dialog(&ctx);
+            self.profile_editor(&ctx);
             self.forward_dialog(&ctx);
             self.permission_dialog(&ctx);
+            self.snippet_dialog(&ctx);
+            self.settings_dialog(&ctx);
+            self.keygen_dialog(&ctx);
+            self.external_dialog(&ctx);
             self.editor_windows(&ctx);
             self.file_windows(&ctx);
             self.dropped_files(&ctx);
         }
         self.shutdown_ui(&ctx);
+    }
+}
+impl App {
+    /// 接続の状態を示す色。緑は使える、黄は接続中か終了待ち。
+    fn tab_color(&self, index: usize) -> egui::Color32 {
+        match self.tabs.get(index) {
+            Some(tab) if tab.closing => theme::WARN,
+            Some(tab) if tab.session.is_some() || tab.local.is_some() => theme::OK,
+            Some(_) => theme::WARN,
+            None => theme::MUTED,
+        }
+    }
+    fn top_bar(&mut self, ui: &mut egui::Ui) {
+        let mut closed = None;
+        let mut select = None;
+        let in_session = !self.show_home && self.tabs.get(self.active).is_some();
+        let has_files = in_session
+            && self
+                .tabs
+                .get(self.active)
+                .is_some_and(|tab| tab.nav.is_some() && !tab.closing && !tab.work.is_closed());
+        egui::Panel::top("bar")
+            .frame(
+                egui::Frame::new()
+                    .fill(theme::SURFACE)
+                    .inner_margin(egui::Margin::symmetric(12, 8)),
+            )
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("Hashi")
+                            .size(19.0)
+                            .strong()
+                            .color(theme::ACCENT),
+                    );
+                    ui.add_space(8.0);
+                    let tabs_width = (ui.available_width() - 360.0).max(160.0);
+                    egui::ScrollArea::horizontal()
+                        .max_width(tabs_width)
+                        .id_salt("tabs")
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                if ui.selectable_label(!in_session, "ホーム").clicked() {
+                                    select = Some(None);
+                                }
+                                for (index, tab) in self.tabs.iter().enumerate() {
+                                    ui.add_space(2.0);
+                                    theme::dot(ui, self.tab_color(index));
+                                    if ui
+                                        .selectable_label(
+                                            in_session && self.active == index,
+                                            &tab.label,
+                                        )
+                                        .clicked()
+                                    {
+                                        select = Some(Some(index));
+                                    }
+                                    if ui.small_button("×").clicked() {
+                                        closed = Some(index);
+                                    }
+                                }
+                            });
+                        });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("設定").clicked() {
+                            self.settings.open = true;
+                        }
+                        ui.menu_button("ツール", |ui| {
+                            for (label, action) in [
+                                ("ファイル転送（2ペイン）", 0),
+                                ("ポート転送", 1),
+                                ("スニペット", 2),
+                                ("権限補助", 3),
+                                ("SSH鍵を作る", 4),
+                                ("外部連携（MCP）", 5),
+                                ("ファイルを編集", 6),
+                            ] {
+                                if ui.button(label).clicked() {
+                                    match action {
+                                        0 => {
+                                            self.browser.open = true;
+                                            self.refresh_local(
+                                                std::env::current_dir().unwrap_or_default(),
+                                            );
+                                        }
+                                        1 => self.forward_editor.open = true,
+                                        2 => self.snippets.open = true,
+                                        3 => self.permission_open = true,
+                                        4 => self.keygen.open = true,
+                                        5 => self.external.open = true,
+                                        _ => self.open_local_editor(),
+                                    }
+                                    ui.close();
+                                }
+                            }
+                        });
+                        let mut ai = self.dock_open && self.dock == Dock::Ai;
+                        if ui.toggle_value(&mut ai, "AI").changed() {
+                            self.dock_open = ai;
+                            self.dock = Dock::Ai;
+                        }
+                        let mut files = self.dock_open && self.dock == Dock::Files;
+                        if ui
+                            .add_enabled(has_files, egui::Button::selectable(files, "ファイル"))
+                            .clicked()
+                        {
+                            files = !files;
+                            self.dock_open = files;
+                            self.dock = Dock::Files;
+                        }
+                        self.update_banner(ui);
+                    });
+                });
+            });
+        match select {
+            Some(None) => self.show_home = true,
+            Some(Some(index)) => {
+                self.show_home = false;
+                self.active = index;
+            }
+            None => {}
+        }
+        if let Some(index) = closed {
+            self.begin_close(index, true);
+        }
+    }
+    fn dock_panel(&mut self, ui: &mut egui::Ui, in_session: bool) {
+        let has_files = in_session
+            && self
+                .tabs
+                .get(self.active)
+                .is_some_and(|tab| tab.nav.is_some() && !tab.closing && !tab.work.is_closed());
+        let mut close = false;
+        egui::Panel::right("dock")
+            .default_size(400.0)
+            .size_range(320.0..=760.0)
+            .frame(
+                egui::Frame::new()
+                    .fill(theme::SURFACE)
+                    .inner_margin(egui::Margin::same(14)),
+            )
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    theme::segmented(
+                        ui,
+                        &mut self.dock,
+                        &[(Dock::Files, "ファイル"), (Dock::Ai, "AI")],
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        close = ui.small_button("閉じる").clicked();
+                    });
+                });
+                ui.add_space(6.0);
+                match self.dock {
+                    Dock::Files if has_files => self.remote_file_panel(ui),
+                    Dock::Files => {
+                        ui.label(theme::muted(
+                            "接続中のサーバーを開くと、ここにファイルが並びます。",
+                        ));
+                    }
+                    Dock::Ai => self.ai_dock(ui),
+                }
+            });
+        if close {
+            self.dock_open = false;
+        }
     }
 }
 impl Drop for App {

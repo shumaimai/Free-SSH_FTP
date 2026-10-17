@@ -53,6 +53,7 @@ async fn main() -> Result<()> {
             interaction,
             cancel.clone(),
             req.ssh_config.as_deref(),
+            None,
         )
         .await?,
     );
@@ -99,8 +100,91 @@ async fn main() -> Result<()> {
         status == 0 && stdout == b"STILL_ALIVE",
         "execの締切で接続全体が閉じられました"
     );
+    {
+        // 操作仲介の独立実行: 終了コード/標準エラー/締切後の接続維持/取消。
+        let token = tokio_util::sync::CancellationToken::new();
+        let run = session
+            .run_command(
+                "printf 'OUT'; printf 'ERR' >&2; exit 4",
+                std::time::Duration::from_secs(10),
+                &token,
+                64,
+            )
+            .await?;
+        anyhow::ensure!(
+            run.status == "completed"
+                && run.exit_code == Some(4)
+                && run.output == b"OUT"
+                && run.error == b"ERR",
+            "独立実行の結果が違います: {run:?}"
+        );
+        let run = session
+            .run_command(
+                "printf begin; sleep 5",
+                std::time::Duration::from_millis(500),
+                &token,
+                64,
+            )
+            .await?;
+        anyhow::ensure!(
+            run.status == "timeout" && run.exit_code.is_none(),
+            "締切が効きません: {run:?}"
+        );
+        token.cancel();
+        let run = session
+            .run_command("sleep 5", std::time::Duration::from_secs(10), &token, 64)
+            .await?;
+        anyhow::ensure!(run.status == "cancelled", "取消が効きません: {run:?}");
+        let (status, stdout, _) = session.execute("printf AFTER").await?;
+        anyhow::ensure!(
+            status == 0 && stdout == b"AFTER",
+            "独立実行の後に接続が使えません"
+        );
+    }
     let nav = session.sftp().await?;
     let xfer = session.sftp().await?;
+    {
+        // 実ホームのauthorized_keysを変えず、一時の.sshへ登録して追記と重複防止を確認する。
+        let ssh_dir = req.directory.join("register-ssh");
+        let existing = ssh_dir.join("authorized_keys");
+        tokio::fs::create_dir(&ssh_dir).await?;
+        tokio::fs::write(&existing, b"ssh-ed25519 AAAAexisting old-without-newline").await?;
+        let key = hashi_core::keygen::generate(hashi_core::keygen::KeyKind::Ed25519, "登録試験")?;
+        let line = hashi_core::keygen::public_line(&key)?;
+        let dir = ssh_dir.to_string_lossy();
+        anyhow::ensure!(
+            hashi_core::keygen::register_in(&nav, &dir, &line).await?,
+            "公開鍵を追加できません"
+        );
+        anyhow::ensure!(
+            !hashi_core::keygen::register_in(&nav, &dir, &line).await?,
+            "同じ公開鍵を重複登録しました"
+        );
+        let written = tokio::fs::read_to_string(&existing).await?;
+        anyhow::ensure!(
+            written == format!("ssh-ed25519 AAAAexisting old-without-newline\n{line}\n"),
+            "authorized_keysの内容が違います: {written:?}"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            anyhow::ensure!(
+                std::fs::metadata(&existing)?.permissions().mode() & 0o777 == 0o600
+                    && std::fs::metadata(&ssh_dir)?.permissions().mode() & 0o777 == 0o700,
+                "登録後の権限が違います"
+            );
+        }
+        let fresh = req.directory.join("register-new").join(".ssh");
+        tokio::fs::create_dir(fresh.parent().unwrap()).await?;
+        anyhow::ensure!(
+            hashi_core::keygen::register_in(&nav, &fresh.to_string_lossy(), &line).await?,
+            "新しい.sshへ登録できません"
+        );
+        anyhow::ensure!(
+            tokio::fs::read_to_string(fresh.join("authorized_keys")).await? == format!("{line}\n"),
+            "新規authorized_keysの内容が違います"
+        );
+    }
     let source = req.directory.join("source.bin");
     let restored = req.directory.join("restored.bin");
     let remote = req
