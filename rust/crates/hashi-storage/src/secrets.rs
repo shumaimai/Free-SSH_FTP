@@ -34,7 +34,11 @@ impl EncryptedSecrets {
         if channel == Channel::Python {
             return Err(invalid("旧認証ストアへ書き込みできません"));
         }
-        let root = crate::paths::config_root(channel)?;
+        Self::with_root(crate::paths::config_root(channel)?, namespace)
+    }
+
+    /// 保存先を指定して開く。旧版の保存先は`Store::at`が拒否する。
+    pub fn with_root(root: PathBuf, namespace: Namespace) -> io::Result<Self> {
         crate::config::Store::at(root.clone())?;
         Ok(Self { root, namespace })
     }

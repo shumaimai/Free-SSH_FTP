@@ -16,13 +16,36 @@ struct Active {
     entry: Option<Entry>,
     lease: PathLease,
 }
+/// 旧Python版の起動を防ぐ排他ガード。同じプロセス内では共有する（二重に取ると自分自身と衝突するため）。
+/// 権限補助と旧データの取り込みが同時に使えるよう、取得はここだけで行う。
+pub fn shared_legacy_lease() -> Result<Arc<hashi_storage::migration::MigrationLease>> {
+    static GUARD: std::sync::OnceLock<
+        std::sync::Mutex<std::sync::Weak<hashi_storage::migration::MigrationLease>>,
+    > = std::sync::OnceLock::new();
+    let runtime = hashi_storage::paths::runtime_root()?;
+    let mut guard = GUARD
+        .get_or_init(|| std::sync::Mutex::new(std::sync::Weak::new()))
+        .lock()
+        .map_err(|_| anyhow::anyhow!("旧版停止ガードが不正です"))?;
+    Ok(match guard.upgrade() {
+        Some(lease) => lease,
+        None => {
+            let lease = Arc::new(hashi_storage::migration::acquire(&runtime)?);
+            *guard = Arc::downgrade(&lease);
+            lease
+        }
+    })
+}
+
 pub struct Manager {
+    work: crate::work::Work,
     backend: Arc<dyn Backend>,
     journal: Arc<Journal>,
     connection: String,
     owner: String,
     active: Mutex<BTreeMap<String, Active>>,
     legacy_guard: Option<Arc<hashi_storage::migration::MigrationLease>>,
+    legacy_inspection: Option<hashi_storage::legacy_permissions::Inspection>,
 }
 fn operation_gate() -> Arc<Mutex<()>> {
     static GATE: std::sync::OnceLock<Arc<Mutex<()>>> = std::sync::OnceLock::new();
@@ -36,12 +59,14 @@ pub struct Grant {
 impl Manager {
     pub fn new(backend: Arc<dyn Backend>, journal: Arc<Journal>, connection: String) -> Arc<Self> {
         Arc::new(Self {
+            work: crate::work::Work::default(),
             backend,
             journal,
             connection,
             owner: uuid::Uuid::new_v4().to_string(),
             active: Mutex::new(BTreeMap::new()),
             legacy_guard: None,
+            legacy_inspection: None,
         })
     }
     pub fn scoped(
@@ -52,33 +77,42 @@ impl Manager {
         if !legacy_stopped_confirmed {
             bail!("権限操作の前に旧Python版の停止確認が必要です");
         }
-        static GUARD: std::sync::OnceLock<
-            std::sync::Mutex<std::sync::Weak<hashi_storage::migration::MigrationLease>>,
-        > = std::sync::OnceLock::new();
-        let runtime = hashi_storage::paths::runtime_root()?;
-        let mut guard = GUARD
-            .get_or_init(|| std::sync::Mutex::new(std::sync::Weak::new()))
-            .lock()
-            .map_err(|_| anyhow::anyhow!("旧版停止ガードが不正です"))?;
-        let lease = match guard.upgrade() {
-            Some(lease) => lease,
-            None => {
-                let lease = Arc::new(hashi_storage::migration::acquire(&runtime)?);
-                *guard = Arc::downgrade(&lease);
-                lease
-            }
-        };
+        let lease = shared_legacy_lease()?;
         let journal = Arc::new(Journal::at(
             hashi_storage::paths::permission_journal_root()?
         )?);
+        let legacy_inspection = hashi_storage::legacy_permissions::inspect(
+            &hashi_storage::paths::config_root(hashi_storage::paths::Channel::Python)?,
+            &lease.stale_markers,
+        )?;
+        legacy_inspection.require_clear()?;
         Ok(Arc::new(Self {
+            work: crate::work::Work::default(),
             backend,
             journal,
             connection,
             owner: uuid::Uuid::new_v4().to_string(),
             active: Mutex::new(BTreeMap::new()),
             legacy_guard: Some(lease),
+            legacy_inspection: Some(legacy_inspection),
         }))
+    }
+    pub fn migration_note(&self) -> Option<String> {
+        let guard = self.legacy_guard.as_ref()?;
+        let status = self.legacy_inspection.as_ref()?;
+        Some(format!(
+            "旧版の残存マーカー{}件、復旧記録の確認先{}件（未復元0件）。旧記録は変更していません。",
+            guard.stale_markers.len(),
+            status.paths.len()
+        ))
+    }
+    pub async fn shutdown(&self) -> Result<usize> {
+        self.work.close();
+        self.work.wait().await;
+        if !self.active.lock().await.is_empty() {
+            bail!("使用中の権限参照が残っています。復旧記録を保持しています");
+        }
+        Ok(self.journal.pending(&self.connection)?.len())
     }
     pub fn coordinated(&self) -> bool {
         self.legacy_guard.is_some()
@@ -109,9 +143,15 @@ impl Manager {
         // 呼出し元が取消されてもchmodのACK処理とGrantのDrop復元を完結させる。
         let manager = self.clone();
         let path = path.to_owned();
-        tokio::spawn(async move { manager.acquire_inner(&path, bits).await })
-            .await
-            .context("権限付与タスクが終了しました")?
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        self.work
+            .spawn(&tokio::runtime::Handle::current(), async move {
+                let result = manager.acquire_inner(&path, bits).await;
+                if let Err(Ok(grant)) = sender.send(result) {
+                    let _ = grant.release().await;
+                }
+            })?;
+        receiver.await.context("権限付与タスクが終了しました")?
     }
     async fn acquire_inner(self: &Arc<Self>, path: &str, bits: u32) -> Result<Grant> {
         if bits == 0 || bits & !0o777 != 0 {
@@ -212,6 +252,7 @@ impl Manager {
         Ok(())
     }
     pub async fn recover(&self) -> Result<(usize, usize)> {
+        let _work = self.work.start()?;
         let _operation = operation_gate().lock_owned().await;
         let _active = self.active.lock().await;
         let mut restored = 0;
@@ -275,7 +316,11 @@ impl Grant {
         self.released = true;
         let manager = self.manager.clone();
         let path = self.path.clone();
-        tokio::spawn(async move { manager.release(&path).await })
+        self.manager
+            .work
+            .cleanup(&tokio::runtime::Handle::current(), async move {
+                manager.release(&path).await
+            })
             .await
             .context("権限復元の処理が終了しました")?
     }
@@ -286,7 +331,7 @@ impl Drop for Grant {
             let manager = self.manager.clone();
             let path = self.path.clone();
             if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-                runtime.spawn(async move {
+                self.manager.work.cleanup(&runtime, async move {
                     let _ = manager.release(&path).await;
                 });
             }
@@ -297,6 +342,18 @@ impl Drop for Grant {
 pub fn is_permission_error(error: &anyhow::Error) -> bool {
     error.chain().any(|error| error.downcast_ref::<std::io::Error>().is_some_and(|error|error.kind()==std::io::ErrorKind::PermissionDenied)
         || error.downcast_ref::<russh_sftp::client::error::Error>().is_some_and(|error|matches!(error,russh_sftp::client::error::Error::Status(status) if status.status_code==russh_sftp::protocol::StatusCode::PermissionDenied)))
+}
+/// 確定結果の通知を権限復元エラーで消さず、処理完了後の自動再試行も防ぐ。
+pub fn complete<T>(operation: Result<T>, restoration: Result<()>) -> Result<T> {
+    match (operation, restoration) {
+        (result, Ok(())) => result,
+        (Ok(_), Err(error)) => {
+            bail!("ファイル処理は完了しましたが、権限復元が未完了です。記録を保持: {error}")
+        }
+        (Err(operation), Err(restoration)) => {
+            bail!("ファイル処理: {operation} / 権限復元も未完了です。記録を保持: {restoration}")
+        }
+    }
 }
 pub async fn with_access<T, F, U>(
     manager: Option<&Arc<Manager>>,
@@ -310,8 +367,7 @@ where
 {
     let mut batch = Batch::new(manager);
     let result = batch.run(path, bits, operation).await;
-    batch.finish().await?;
-    result
+    complete(result, batch.finish().await)
 }
 
 /// 再帰処理中は親の権限を保ち、取消/失敗でも一つの所有タスクで深い順に復元する。
@@ -319,13 +375,35 @@ pub struct Batch {
     manager: Option<Arc<Manager>>,
     grants: Vec<Grant>,
     operation_guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+    work: crate::work::Work,
+    cleanup: crate::work::Work,
 }
 impl Batch {
+    pub(crate) fn cleanup(&self) -> crate::work::Work {
+        self.cleanup.clone()
+    }
+    pub fn require_original_parent_write(&self, parent: &str) -> Result<()> {
+        if let Some(manager) = &self.manager {
+            if manager
+                .journal
+                .pending_all()?
+                .iter()
+                .any(|entry| entry.path == parent && entry.original_mode & 0o200 == 0)
+            {
+                bail!("原本保持の既存置換では、新規作成用に一時追加した親の書込み権限を使いません。権限を復元して直接書込みを選択してください");
+            }
+        }
+        Ok(())
+    }
     pub fn new(manager: Option<&Arc<Manager>>) -> Self {
         Self {
             manager: manager.cloned(),
             grants: vec![],
+            cleanup: crate::work::Work::default(),
             operation_guard: None,
+            work: manager
+                .map(|manager| manager.work.clone())
+                .unwrap_or_default(),
         }
     }
     pub async fn join(&mut self, path: &str) {
@@ -358,12 +436,22 @@ impl Batch {
     pub async fn finish(mut self) -> Result<()> {
         let grants = std::mem::take(&mut self.grants);
         let operation = self.operation_guard.take();
-        tokio::spawn(async move {
-            let _operation = operation;
-            restore_batch(grants).await
-        })
-        .await
-        .context("権限復元タスクが終了しました")?
+        let cleanup = self.cleanup.clone();
+        cleanup.close();
+        self.work
+            .cleanup(&tokio::runtime::Handle::current(), async move {
+                let _operation = operation;
+                cleanup.wait().await;
+                let errors = cleanup.take_errors();
+                let restored = restore_batch(grants).await;
+                if errors.is_empty() {
+                    restored
+                } else {
+                    complete::<()>(Err(anyhow::anyhow!(errors.join("; "))), restored)
+                }
+            })
+            .await
+            .context("権限復元タスクが終了しました")?
     }
 }
 async fn restore_batch(mut grants: Vec<Grant>) -> Result<()> {
@@ -383,10 +471,13 @@ impl Drop for Batch {
     fn drop(&mut self) {
         let grants = std::mem::take(&mut self.grants);
         let operation = self.operation_guard.take();
-        if !grants.is_empty() {
+        let cleanup = self.cleanup.clone();
+        cleanup.close();
+        if !grants.is_empty() || !cleanup.is_finished() {
             if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-                runtime.spawn(async move {
+                self.work.cleanup(&runtime, async move {
                     let _operation = operation;
+                    cleanup.wait().await;
                     restore_batch(grants).await
                 });
             }
@@ -543,6 +634,33 @@ mod tests {
         assert_eq!(backend.changes.lock().await[0].0, "/parent/child");
     }
     #[tokio::test]
+    async fn scope_drop_waits_for_temp_cleanup_before_restoring_parent() {
+        let root = tempfile::tempdir().unwrap();
+        let journal = Arc::new(Journal::at(root.path().join("journal")).unwrap());
+        let backend = Arc::new(Fake::default());
+        let manager = Manager::new(backend.clone(), journal.clone(), "conn".into());
+        let mut batch = Batch::new(Some(&manager));
+        batch
+            .grants
+            .push(manager.acquire("/parent", 0o300).await.unwrap());
+        let cleanup = batch.cleanup();
+        let token = cleanup.start().unwrap();
+        drop(batch);
+        let shutdown = manager.shutdown();
+        tokio::pin!(shutdown);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), &mut shutdown)
+                .await
+                .is_err()
+        );
+        assert_eq!(backend.mode("/parent").await.unwrap(), 0o300);
+        assert_eq!(journal.pending("conn").unwrap().len(), 1);
+        drop(token);
+        assert_eq!(shutdown.await.unwrap(), 0);
+        assert_eq!(backend.mode("/parent").await.unwrap(), 0);
+    }
+
+    #[tokio::test]
     async fn cancelled_recursive_scope_restores_children_before_parent() {
         let root = tempfile::tempdir().unwrap();
         let journal = Arc::new(Journal::at(root.path().join("journal")).unwrap());
@@ -577,6 +695,7 @@ mod tests {
         .unwrap();
         assert_eq!(backend.changes.lock().await[0], ("/parent/child".into(), 0));
         assert_eq!(backend.changes.lock().await[1], ("/parent".into(), 0));
+        assert_eq!(manager.shutdown().await.unwrap(), 0);
     }
     #[tokio::test]
     async fn connection_alias_cannot_overlap_an_existing_or_unrestored_path() {
@@ -691,5 +810,39 @@ mod tests {
         task.await.unwrap().unwrap();
         assert_eq!(backend.mode("/parent").await.unwrap(), 0);
         assert!(journal.pending("conn").unwrap().is_empty());
+    }
+    #[tokio::test]
+    async fn shutdown_waits_for_cancelled_acquire_ack_and_restoration() {
+        let root = tempfile::tempdir().unwrap();
+        let journal = Arc::new(Journal::at(root.path().join("journal")).unwrap());
+        let backend = Arc::new(Fake::default());
+        let manager = Manager::new(backend.clone(), journal.clone(), "conn".into());
+        backend
+            .pause_grant
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let copy = manager.clone();
+        let acquire = tokio::spawn(async move { copy.acquire("/file", 0o444).await });
+        backend.entered.notified().await;
+        acquire.abort();
+        let _ = acquire.await;
+        let shutdown = manager.shutdown();
+        tokio::pin!(shutdown);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), &mut shutdown)
+                .await
+                .is_err()
+        );
+        backend.proceed.notify_one();
+        assert_eq!(
+            tokio::time::timeout(std::time::Duration::from_secs(2), shutdown)
+                .await
+                .unwrap()
+                .unwrap(),
+            0
+        );
+        assert_eq!(backend.mode("/file").await.unwrap(), 0);
+        assert!(journal.pending("conn").unwrap().is_empty());
+        assert!(manager.acquire("/file", 0o222).await.is_err());
+        assert!(manager.recover().await.is_err());
     }
 }

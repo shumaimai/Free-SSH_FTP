@@ -291,7 +291,7 @@ impl Drop for RemoteForward {
         let session = self.session.clone();
         let bind = self.bind.clone();
         let port = self.port;
-        self.runtime.spawn(async move {
+        self.session.background.cleanup(&self.runtime, async move {
             let _ = tokio::time::timeout(
                 Duration::from_secs(5),
                 session.connection.cancel_tcpip_forward(bind, port),

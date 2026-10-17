@@ -135,6 +135,7 @@ impl client::Handler for Handler {
 }
 
 pub struct SshSession {
+    pub background: crate::work::Work,
     pub stamp: Stamp,
     pub scope: Scope,
     pub connection: client::Handle<Handler>,
@@ -144,6 +145,7 @@ pub struct SshSession {
     agent_forwarding: bool,
     pub(crate) remote_routes: crate::forward::Routes,
     pub(crate) forward_limits: Arc<tokio::sync::Semaphore>,
+    pub(crate) transfer_commits: Arc<tokio::sync::Semaphore>,
 }
 
 struct ConnectingHops {
@@ -170,6 +172,11 @@ impl Drop for ConnectingHops {
             });
         }
     }
+}
+
+/// 保存済みの秘密を引く窓口。踏み台には使わない（接続先の秘密を流用しない）。
+pub trait SavedSecrets: Send + Sync {
+    fn get(&self, host: &str, port: u16, username: &str, kind: &str) -> Option<String>;
 }
 
 #[derive(Clone)]
@@ -225,6 +232,15 @@ fn parse_hop(text: &str, username: &str) -> Result<Target> {
 
 fn config(scope: &Scope, known: &KnownHosts) -> client::Config {
     let mut preferred = russh::Preferred::default();
+    // Python/Paramiko 5のCBC互換を保つ。現代的な暗号を先に交渉し、SHA-1署名/MACは追加しない。
+    let mut ciphers = preferred.cipher.to_vec();
+    ciphers.extend([
+        russh::cipher::AES_128_CBC,
+        russh::cipher::AES_192_CBC,
+        russh::cipher::AES_256_CBC,
+        russh::cipher::TRIPLE_DES_CBC,
+    ]);
+    preferred.cipher = Cow::Owned(ciphers);
     // Paramiko 5と同様にSHA-1署名へ自動で格下げしない。
     let mut keys = preferred.key.to_vec();
     keys.retain(|algorithm| {
@@ -287,12 +303,27 @@ async fn authenticate_once(
     scope: &Scope,
     interaction: &Interaction,
     cancel: &CancellationToken,
+    saved: Option<&Arc<dyn SavedSecrets>>,
 ) -> Result<()> {
+    // 保存済みの秘密は最終の接続先だけ。拒否されたら1回で諦めて入力画面へ進む。
+    let saved = saved.filter(|_| scope.hop.is_none());
+    let lookup = |kind: &str| {
+        saved.and_then(|saved| saved.get(&target.host, target.port, &target.username, kind))
+    };
     let accepted = match target.auth_method.as_str() {
         "password" => {
             let mut accepted = false;
-            for _ in 0..3 {
-                let password = secret(target, scope, "password", interaction, cancel).await?;
+            let mut saved_password = lookup("password");
+            let mut prompts = 0;
+            loop {
+                let password = match saved_password.take() {
+                    Some(password) => password,
+                    None if prompts < 3 => {
+                        prompts += 1;
+                        secret(target, scope, "password", interaction, cancel).await?
+                    }
+                    None => break,
+                };
                 if connection
                     .authenticate_password(&target.username, password)
                     .await?
@@ -320,10 +351,17 @@ async fn authenticate_once(
             let key = match russh::keys::load_secret_key(&path, None) {
                 Ok(key) => key,
                 Err(_) => {
-                    let passphrase =
-                        secret(target, scope, "passphrase", interaction, cancel).await?;
-                    russh::keys::load_secret_key(&path, Some(&passphrase))
-                        .context("秘密鍵を復号できません")?
+                    let from_saved = lookup("passphrase")
+                        .and_then(|saved| russh::keys::load_secret_key(&path, Some(&saved)).ok());
+                    match from_saved {
+                        Some(key) => key,
+                        None => {
+                            let passphrase =
+                                secret(target, scope, "passphrase", interaction, cancel).await?;
+                            russh::keys::load_secret_key(&path, Some(&passphrase))
+                                .context("秘密鍵を復号できません")?
+                        }
+                    }
                 }
             };
             let hash = connection
@@ -378,15 +416,16 @@ async fn authenticate(
     scope: &Scope,
     interaction: &Interaction,
     cancel: &CancellationToken,
+    saved: Option<&Arc<dyn SavedSecrets>>,
 ) -> Result<()> {
     if scope.hop.is_none() {
-        return authenticate_once(connection, target, scope, interaction, cancel).await;
+        return authenticate_once(connection, target, scope, interaction, cancel, saved).await;
     }
     // 踏み台の設定鍵→agent→専用のpassword。接続先の秘密を使い回さない。
     if !target.key_path.is_empty() {
         let mut key = target.clone();
         key.auth_method = "key".into();
-        if authenticate_once(connection, &key, scope, interaction, cancel)
+        if authenticate_once(connection, &key, scope, interaction, cancel, saved)
             .await
             .is_ok()
         {
@@ -398,7 +437,7 @@ async fn authenticate(
     }
     let mut agent = target.clone();
     agent.auth_method = "agent".into();
-    if authenticate_once(connection, &agent, scope, interaction, cancel)
+    if authenticate_once(connection, &agent, scope, interaction, cancel, saved)
         .await
         .is_ok()
     {
@@ -409,7 +448,7 @@ async fn authenticate(
     }
     let mut password = target.clone();
     password.auth_method = "password".into();
-    authenticate_once(connection, &password, scope, interaction, cancel).await
+    authenticate_once(connection, &password, scope, interaction, cancel, saved).await
 }
 
 pub async fn connect_agent(
@@ -443,8 +482,28 @@ impl SshSession {
         interaction: Interaction,
         cancel: CancellationToken,
     ) -> Result<Self> {
+        Self::connect_saved(profile, stamp, known, interaction, cancel, None).await
+    }
+    /// 保存済みの秘密を先に試す接続。拒否・不一致なら通常どおり入力を求める。
+    pub async fn connect_saved(
+        profile: &Profile,
+        stamp: Stamp,
+        known: KnownHosts,
+        interaction: Interaction,
+        cancel: CancellationToken,
+        saved: Option<Arc<dyn SavedSecrets>>,
+    ) -> Result<Self> {
         let path = ssh_config::default_path();
-        Self::connect_with_config(profile, stamp, known, interaction, cancel, path.as_deref()).await
+        Self::connect_with_config(
+            profile,
+            stamp,
+            known,
+            interaction,
+            cancel,
+            path.as_deref(),
+            saved,
+        )
+        .await
     }
     pub async fn connect_with_config(
         profile: &Profile,
@@ -453,6 +512,7 @@ impl SshSession {
         interaction: Interaction,
         cancel: CancellationToken,
         path: Option<&std::path::Path>,
+        saved: Option<Arc<dyn SavedSecrets>>,
     ) -> Result<Self> {
         let profile = match path {
             Some(path) => ssh_config::resolve_at(profile, path)?,
@@ -546,8 +606,15 @@ impl SshSession {
                 } else {
                     client::connect(config, (&*target.host, target.port), handler).await?
                 };
-                if let Err(error) =
-                    authenticate(&mut connection, target, &scope, &interaction, &cancel).await
+                if let Err(error) = authenticate(
+                    &mut connection,
+                    target,
+                    &scope,
+                    &interaction,
+                    &cancel,
+                    saved.as_ref(),
+                )
+                .await
                 {
                     let _ = tokio::time::timeout(
                         Duration::from_secs(1),
@@ -562,6 +629,7 @@ impl SshSession {
             if index == last {
                 hops.finished = true;
                 return Ok(Self {
+                    background: crate::work::Work::default(),
                     stamp,
                     scope,
                     connection,
@@ -571,6 +639,7 @@ impl SshSession {
                     agent_forwarding: profile.agent_forwarding,
                     remote_routes,
                     forward_limits: Arc::new(tokio::sync::Semaphore::new(32)),
+                    transfer_commits: Arc::new(tokio::sync::Semaphore::new(2)),
                 });
             }
             hops.connections.push(connection);
@@ -654,6 +723,67 @@ impl SshSession {
         let _ = tokio::time::timeout(Duration::from_secs(1), channel.close()).await;
         result
     }
+    /// 操作仲介の独立実行。専用execチャネルだけを使い、出力は末尾`tail`バイトまで保持する。
+    /// 取消/締切では途中までの出力を返し、遠隔プロセスの終了は保証しない。
+    pub async fn run_command(
+        &self,
+        command: &str,
+        timeout: Duration,
+        cancel: &tokio_util::sync::CancellationToken,
+        tail: usize,
+    ) -> Result<CommandRun> {
+        if command.len() > 256 * 1024 || command.contains('\0') || timeout.is_zero() {
+            bail!("コマンドの長さ/形式/締切が不正です");
+        }
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut run = CommandRun::default();
+        let stopped = |run: &mut CommandRun, cancelled: bool| {
+            run.status = if cancelled { "cancelled" } else { "timeout" };
+        };
+        let mut channel = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => { stopped(&mut run, true); return Ok(run); }
+            _ = self.cancel.cancelled() => bail!("接続が終了しました"),
+            channel = tokio::time::timeout_at(deadline, self.connection.channel_open_session()) => match channel {
+                Ok(channel) => channel?,
+                Err(_) => { stopped(&mut run, false); return Ok(run); }
+            },
+        };
+        let result: Result<()> = async {
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled() => { stopped(&mut run, true); return Ok(()); }
+                result = tokio::time::timeout_at(deadline, channel.exec(true, command)) => match result {
+                    Ok(result) => result?,
+                    Err(_) => { stopped(&mut run, false); return Ok(()); }
+                },
+            }
+            loop {
+                let message = tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => { stopped(&mut run, true); return Ok(()); }
+                    _ = self.cancel.cancelled() => bail!("接続が終了しました"),
+                    message = tokio::time::timeout_at(deadline, channel.wait()) => match message {
+                        Ok(message) => message,
+                        Err(_) => { stopped(&mut run, false); return Ok(()); }
+                    },
+                };
+                match message {
+                    Some(ChannelMsg::Data { data }) => keep_tail(&mut run.output, &data, tail),
+                    Some(ChannelMsg::ExtendedData { data, .. }) => keep_tail(&mut run.error, &data, tail),
+                    Some(ChannelMsg::ExitStatus { exit_status }) => run.exit_code = Some(exit_status),
+                    Some(ChannelMsg::Close) | None => break,
+                    _ => {}
+                }
+            }
+            run.status = if run.exit_code.is_some() { "completed" } else { "closed" };
+            Ok(())
+        }
+        .await;
+        // 独立execの専用チャネルだけを閉じ、対話PTY/SFTP/Transportは維持する。
+        let _ = tokio::time::timeout(Duration::from_secs(1), channel.close()).await;
+        result.map(|()| run)
+    }
     pub async fn close(&self) -> Result<()> {
         self.cancel.cancel();
         let result = self
@@ -669,9 +799,33 @@ impl SshSession {
     }
 }
 
+/// 独立実行の結果。`status`はcompleted/closed/cancelled/timeout。
+#[derive(Debug, Default)]
+pub struct CommandRun {
+    pub status: &'static str,
+    pub exit_code: Option<u32>,
+    pub output: Vec<u8>,
+    pub error: Vec<u8>,
+}
+/// 末尾`limit`バイトだけを残す。
+pub fn keep_tail(buffer: &mut Vec<u8>, data: &[u8], limit: usize) {
+    buffer.extend_from_slice(data);
+    if buffer.len() > limit {
+        buffer.drain(..buffer.len() - limit);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn tail_keeps_latest_bytes() {
+        let mut buffer = vec![];
+        keep_tail(&mut buffer, b"abcdef", 4);
+        assert_eq!(buffer, b"cdef");
+        keep_tail(&mut buffer, b"gh", 4);
+        assert_eq!(buffer, b"efgh");
+    }
     #[test]
     fn hops_include_ipv6_and_do_not_reuse_target_secrets() {
         let hop = parse_hop("user@[::1]:2222", "target").unwrap();

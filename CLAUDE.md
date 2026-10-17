@@ -7,7 +7,11 @@
 
 ## 0. 現在の状況(引き継ぎ・最初に読む)
 
-- **最新リリース: v1.0.1**(2026-08-01)。バージョンの単一ソースは
+- **v2.0.0 から配布物は Rust + Tauri 版**(`rust/crates/hashi-desktop-tauri`)。版の単一ソースは
+  `rust/Cargo.toml` の `workspace.package.version`。`release.yml` は `vX.Y.Z` タグで Tauri 版をビルドし、
+  Cargo の版と照合する。旧Python版(v1.x、`hashi/__init__.py`)はリリースしない(コードは残す)。
+  Tauri版の更新通知は正式版`vX.Y.Z`(prereleaseでない)だけを見る。保存先・MCPヘルパー名は互換のため据え置き。
+- 旧: **Python版の最終リリースは v1.1.2**。バージョンの単一ソースは
   `hashi/__init__.py`。**タグ `vX.Y.Z` はオーナーが手元で push する**(エージェントは
   タグ push が 403。手順は §8 参照)。
 - 端末/AI開発ブランチのローカルLinuxテストは **550 passed, 8 skipped**(2026-10-02)。
@@ -542,7 +546,7 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - RustのSFTP一覧はraw READDIR中に件数/bytes上限を見て、要求IDごとに結果を照合する。
   旧一覧/検索を取消し、取消済みtokenを次の要求へ流用しない。転送は別の子tokenを持つ。
 - 再帰コピーはリンクを追わず、転送先リンクへの上書きを拒否する。既存policyはキュー追加時に固定。
-  取消は転送済み/部分ファイルを保持する。Windowsのdevice/ADS/予約名は保存前に拒否する。
+  取消は確定済みファイルとresumeの部分ファイルを保持する。Windowsのdevice/ADS/予約名は保存前に拒否する。
 - GUIは一覧の全Stringを毎frame複製せず、見える行を描画する。dropは領域/layerを照合して一度だけ消費する。
 
 - Rust端末は結合文字をセルごと32個に制限し、元の文字/全角flag/表示属性を保つ。
@@ -555,5 +559,71 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - chmod前に記録/fsyncを完了し、ACK途中の取消でも所有タスクで復元する。mode読戻し一致まで記録を消さない。
 - nav/xferは対象/祖先の既存Grantへ参加する。復元は深い順で、子の未復元記録があれば親も延期する。
 - 別表記/親リンクはrealpath照合で拒否する。破損した確定記録を上書きせず、準備tempは復元対象と分ける。
-- 権限候補はSFTP所有ファイルのみ。sudo・旧Python journal引継ぎ・終了時完了待ちは互換表の未完了条件を維持する。
+- 権限候補はSFTP所有ファイルのみ。sudo・旧Python journal引継ぎは互換表の未完了条件を維持する。
 - 有効なRust権限補助の一覧/転送/復旧取引はタブをまたいで直列化し、復元までoperation guardを保持する。低レベルacquireを画面側から直接使わない。
+
+- Rust原本保持転送は原本へ直接truncateせずprivate tempへ書き、サイズ/metadataと同期を確認して確定する。
+- remote uploadのfsync/POSIX rename対応は変更前に確認する。EXCL open成功を確認したtempだけcleanupする。
+- 確定済み/確定結果不明/ローカル失敗をリモートchmod再試行へ流さない。復元エラーで確定状態を消さない。
+- GUIの取消はtokenで伝え、確定ACKと権限復元を待つ。確定後の取消は元へ戻ったと断定しない。
+- uid/gid/modeを保持できないUnix転送は確定前に拒否。Windows readonlyは確定handleで読戻す。
+
+- Rust終了は新規受付停止→取消token→操作/確定ACK/temp削除/権限復元待ち→接続/PTY終了の順を守る。
+- Workの受付close後も既存タスクが生むcleanupを追跡する。成功/失敗messageを送ってからprimaryを完了させる。
+- temp削除は親mode復元前にawaitし、削除失敗を画面へ返す。復旧journalを終了時に無条件で消さない。
+- 未保存bufferと処理中の編集を確認する。30秒後の明示終了は結果未確認を伝え、完了済みと扱わない。
+- PTY DropでGUI上のjoinを待たない。Unix離脱子・ConPTY停止不能・OS強制終了の限界を互換表に残す。
+
+- Pythonの移行ガードはOSロック競合だけ起動を停止する。FS/開始時刻/マーカーの異常は警告して起動し、取得できた共有ロックは終了まで保つ。
+- マーカーが無いことから旧版停止を認定しない。Rustの移行/権限補助では旧版停止確認を別途要求する。
+
+- Rustの転送方式は原本保持（既定）/直接書込みをジョブごとに明示する。失敗時に自動fallbackしない。直接書込み/resumeの変更後エラーをchmod再試行へ流さない。
+- 新規ファイルは0666と実環境umaskを適用する。原本保持のpayload tempは0600、mode probeは空だけ。既存置換のために親writeを増やさず、同一batchの別ファイル用grantも流用しない。
+- 権限補助の追加bitはowner最小限だけ。旧Pythonの既定/残存markerのdata_rootを読取検査し、未復元・破損・不明なら拒否、旧記録を変更しない。
+  §6-2のPython版a+wと意図的に違う。Rust版はsudo非対応で、SFTPで自分が所有するファイルだけchmodするためownerで足りる。
+  sudo/他人所有ファイルへ対応するときは、このbit幅を見直して互換表と試験を更新する。
+- 直接書込みで既存ファイルを開くときmode属性を送らない(open時に属性を適用するサーバーで権限が変わる)。新規作成時だけ0666を送る。
+  書込み/切り詰め前の失敗は「転送先は変更していません」と表示し、変更後の失敗だけ部分更新の可能性を示す。
+- `tests/test_rust_ssh_live.py`はrootでskipする(rootは権限検査を素通りする)。一般ユーザーで実行する。
+- RemoteTempのfallback/commit所有タスクはBatchのcleanup tokenを保持し、親mode復元は削除完了後にする。失敗を隠さない。
+- ポート転送停止は受付tokenを確保してから所有handleを外す。GUIのPTY resizeでblocking lockを取らず、保留サイズを次frameで再試行する。回収済みPID/PGIDへkillを再送しない。
+
+- Rustセッションログは端末モデルのLF確定行だけを有界キュー経由で専用スレッドへ書く。GUIでファイルI/Oを待たない。満杯/失敗はログを止めて表示する。SSH専用でCMDは記録しない。
+- Rustスニペットの保存値はPython形式の配列のまま扱う。解析できない記録を上書き/空扱いしない。改行はCRへ変換して送る。
+- Rust更新確認は`/releases/latest`を使わない。Release一覧から接頭辞・SemVer・prerelease区分・公式URLが揃ったものだけ。Python版の更新通知はPythonタグ形式だけ。
+- `rust-preview-v*`のworkflowはprerelease・make_latest:falseを維持し、Python版のlatestを変えない。
+- Rust鍵生成は既存秘密鍵を明示確認なしに上書きしない。authorized_keysは既存内容を書き換えず末尾追記し、公開鍵をシェルへ埋め込まない。
+- Rust同期ブラウズは相対移動だけを写し、絶対パスを写さない。跳ね返りは追随要求のStampで判定し、待ちフラグを残さない。追随失敗はダイアログにしない。
+- Rust操作仲介（`hashi_core::broker`）はAI/MCP共通の唯一の窓口。許可はメモリ内だけで期限なし(利用者の判断。停止・対象変更・アプリ終了で消える)。MCPは共有開始と一緒に始まり、停止で閉じる。Tauri版ではAIドックと外部連携(MCP)が別々のBrokerを持ち、互いの許可を上書き・停止しない(承認窓の経路だけ共有)。停止/対象変更で承認待ち・実行中も取消。端末ID+接続世代を毎回照合。監査記録へ本文・出力を入れない。perform中のFuture破棄でも実行中記録を残さない。
+- `send_keys`はCtrl+X/Esc/矢印などの名前付きキー専用（Broker経由、未知名は確認前に拒否）。文字入力は`send_input`。
+- `send_input`は`enter`必須（本文の改行に頼らない）。結果の`enter_sent`/`note`でEnter未送信を明示し、承認窓にもEnterの有無を出す。本文のCR・ESCなどの制御文字(改行とタブ以外)はBrokerが確認前に拒否する(確認窓に見えずに実行されるため)。
+- MCPの接続情報は固定の本人専用フォルダ。stdioヘルパーは引数なしで要求ごとに読み直し、未起動でも落ちず、新しいHashiへは初期化を再生する。登録（`mcp_register.rs`）は`mcpServers.hashi-rust-preview`だけを書き、バックアップを残し、読めないファイルは上書きしない。
+- Rust MCP（`hashi-mcp`）は本人限定フォルダのendpoint、instance/token照合、notificationからの実行禁止、切断で取消。stdioヘルパーはstdoutへJSON-RPCだけ。
+- 独立実行は専用exec/別プロセス。対話端末のcwd・環境を継承しない。子孫のパイプ保持でEOF待ちに停止を塞がない。
+- Rust AI（`hashi-ai`）: APIキーはAI専用暗号化ストアだけ。完了イベントのない応答のツールを実行しない。相談専用ではtoolsを送らず返されたツール要求も実行しない。認証付き通信のリダイレクト禁止・POST自動再送なし。共有対象がある送信は観測データを送信前に確認/編集させる。
+- Rust版の画面（`theme.rs`/`home_view.rs`/`ai_view.rs`/`file_view.rs`）はPython版の意匠を再現しない作り直し。色・余白は`theme.rs`だけで決め、直書きしない。
+  接続先はホームのカード、編集は専用窓。AI欄は右ドックで、サービス選択→キー→「接続する」の1操作にし、API形式・種別・URL検証は内部で決める（詳細は互換表）。
+  安全確認（ホスト鍵・権限・AIへ送る内容・外部操作の承認）は画面中央の窓で出し、1クリックで確定させない設計を保つ。カード内の文字は選択不可にしてクリックを奪わせない。
+- Rustの新しい画面は`rust/crates/hashi-desktop-tauri`（Tauri 2 + React + Fluent UI + xterm.js）。egui版は移行が済むまで残す。
+  画面とはcommand/eventだけで話し、認証要求の照合・信頼情報の保存・秘密の保持は常にRust側。`freezePrototype`は入れない。
+  端末入力は順番を保つ（`inputQueue.ts`）。npm依存は`package-lock.json`で固定し、`npm ci`（`ignore-scripts`）で入れる。画面の外部読込は禁止（CSP）。
+- Web画面のエディタ（`editor.rs`）は`hashi_core::editor::Document`を使い、保存先パス・元バイト列はRust側が持つ。画面が渡すのはテキストかHEXの[位置,値]だけ。
+  未保存数はRust側の台帳が数え、確認前に終了処理を始めない（`request_exit`）。権限補助は接続ごとに利用者が有効にし、既定では何も緩めない。
+  終了時の復元未完了・転送停止の未確認は警告として画面へ返す（記録は残す）。外部連携（MCP）はAIと同じBrokerで、画面は許可の設定と承認の表示だけ。
+- 2ペイン（`local.rs`）: ローカルで開くフォルダはRust側が持ち、転送の依頼は「そのフォルダ内の名前」だけ（画面からローカルの絶対パスを受け取って読み書きしない）。
+  ペイン間ドラッグはHTML5 DnDではなくポインタ操作（Windowsのファイルドロップ受信と両立させるため）。運ぶのはペインの印だけで、対象は受け側が選択状態から決める。
+  同期ブラウズの状態機械は`hashi_core::sync_browse::SyncState`（egui版と共有）。追随の失敗はエラーにせず通知にする。
+- 旧版からの取り込み（`import.rs`・`hashi_storage::legacy_import`）は読み取り専用。旧版の保存先・資格情報（Windows資格情報マネージャ/`creds.dat`）へ書かない。
+  旧版停止の確認＋`shared_legacy_lease`（権限補助と共有）を保つ。秘密の値はRust側だけが持ち、画面へは名前・件数・有無だけ返す。
+  ホスト鍵は無いものだけ追加し、食い違いは上書きしない。保存済みの秘密（`hashi_storage::vault`）は接続時の最初の1回だけ使い、拒否されたら入力へ戻す。踏み台には使わない。
+- 配布zip・動作確認用exeは必ず`tools/rust_artifact.py`で作る（手で`cp`しない）。本体は`Hashi.exe`（Tauri版。v2.0.0で`Hashi-Preview.exe`から改名）。
+  `Hashi-RustPreview.exe`はegui版で、配布の本体にしない（名前を付け替えて同梱した事故がある）。
+  スクリプトは名前・中身（`hashi-desktop-tauri`の有無）・アイコン資源(.rsrc)を検査し、違えば止まる。ローカルのGNU cross-buildでも`--zip`まで同じ経路を使う。
+- セキュリティ監査の対応(2026-10): 同期ブラウズは区切り・`:`・`..`を含む名前を写さず、ローカル一覧は`..`を含むパスを開かない。
+  承認窓は要求ごとに作り直し、1秒たつまで「許可」を押せない。Brokerは全操作で見えない文字(制御文字・向きを変える文字・幅ゼロ文字)を確認前に拒否する。
+  AIの「読むだけ」では道具を渡さず、確認・編集した観測データだけを送る。端末への貼り付けは制御文字を除き、複数行は確認する。
+  ホスト鍵の保存は接続側と同じ条件(変わった鍵は「trust」入力)。ファイルのドロップはリモート一覧の上に落としたときだけ送信する。
+- AIへの添付（`attach.rs`）は画面が読んだ中身(base64)だけを受け取り、パスは受け取らない。画像は先頭バイトで判定（PNG/JPEG/GIF/WebP、5MB）、文字はUTF-8（200KB）を本文へ埋め込む。4件まで、会話全体で画像12枚まで。
+- AIモデルは「AIモデルの管理」ページ（`ai_models.rs`・`AiModelsPage.tsx`）で複数登録し、AIドックは選ぶだけにする。設定ダイアログと混ぜない。
+  キーは同じサービス・URLで共有しAI専用ストアだけに置き、画面へ返さない。削除は登録とキーを別操作にし、主要な操作ボタンの横に並べない。
+  使用中の変更・削除は接続を読み直す/外す。確認（通信）と保存は別操作で、確認はキーも設定も書き換えない。

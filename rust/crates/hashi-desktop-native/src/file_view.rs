@@ -1,4 +1,5 @@
 use super::*;
+use crate::theme;
 use hashi_core::transfer_tree::{self, Existing, Report, TaskContext};
 use std::path::PathBuf;
 
@@ -23,6 +24,7 @@ struct Job {
     label: String,
     operation: Operation,
     policy: Existing,
+    mode: transfer::Mode,
     cancel: CancellationToken,
     phase: Phase,
     done: u64,
@@ -38,11 +40,18 @@ pub(super) struct Browser {
     local_revision: Stamp,
     hidden: bool,
     policy: Existing,
+    mode: transfer::Mode,
     search: String,
     delete_confirmation: String,
     delete_target: Option<(Stamp, String)>,
     jobs: VecDeque<Job>,
     drop_area: Option<(egui::Rect, egui::LayerId)>,
+    pub(super) sync: hashi_core::sync_browse::SyncState,
+}
+impl Browser {
+    pub(super) fn local_path(&self) -> &std::path::Path {
+        &self.local_path
+    }
 }
 impl Default for Browser {
     fn default() -> Self {
@@ -54,11 +63,13 @@ impl Default for Browser {
             local_revision: Stamp::default(),
             hidden: false,
             policy: Existing::Refuse,
+            mode: transfer::Mode::Atomic,
             search: String::new(),
             delete_confirmation: String::new(),
             delete_target: None,
             jobs: VecDeque::new(),
             drop_area: None,
+            sync: Default::default(),
         }
     }
 }
@@ -83,22 +94,54 @@ pub(super) enum Outcome {
 }
 
 impl App {
-    pub(super) fn refresh_local(&mut self, path: PathBuf) {
+    fn transfer_mode_ui(&mut self, ui: &mut egui::Ui) {
+        ui.label(theme::muted("書き込み方式"));
+        theme::segmented(
+            ui,
+            &mut self.browser.mode,
+            &[
+                (transfer::Mode::Atomic, "原本を守る"),
+                (transfer::Mode::InPlace, "直接書込み（Python互換）"),
+            ],
+        );
+        if self.browser.mode == transfer::Mode::InPlace {
+            ui.colored_label(
+                theme::WARN,
+                "直接書込みは取消・失敗でも転送先が変更され、部分データが残る場合があります。",
+            );
+        } else {
+            ui.label(theme::muted(
+                "原本を守る方式には、親フォルダへの書込み権限とサーバーの対応が必要です。",
+            ));
+        }
+        if self.browser.policy == Existing::Resume {
+            ui.label(theme::muted(
+                "続きからは内容を照合して、途中のファイルへ直接追記します。",
+            ));
+        }
+    }
+    pub(super) fn refresh_local(&mut self, path: PathBuf) -> Option<Stamp> {
+        if self.exiting {
+            return None;
+        }
         self.browser.local_revision = Stamp::default();
         let revision = self.browser.local_revision.clone();
         let tx = self.file_tx.clone();
-        self.runtime.spawn(async move {
-            let result = transfer_tree::list_local(&path)
-                .await
-                .map_err(|e| e.to_string());
-            let _ = tx
-                .send(FileEvent::Local {
-                    revision,
-                    path,
-                    result,
-                })
-                .await;
-        });
+        self.work
+            .spawn(self.runtime.handle(), async move {
+                let result = transfer_tree::list_local(&path)
+                    .await
+                    .map_err(|e| e.to_string());
+                let _ = tx
+                    .send(FileEvent::Local {
+                        revision,
+                        path,
+                        result,
+                    })
+                    .await;
+            })
+            .expect("一覧の受付確認済み");
+        Some(self.browser.local_revision.clone())
     }
     pub(super) fn process_files(&mut self) {
         let mut refresh = vec![];
@@ -110,11 +153,15 @@ impl App {
                     result,
                 } if revision == self.browser.local_revision => match result {
                     Ok(entries) => {
+                        let follow = self.browser.sync.on_local(&revision, &path);
                         self.browser.local_path = path;
                         self.browser.local_entries = entries;
                         self.browser.local_selected = None;
+                        self.apply_follow(follow);
                     }
-                    Err(error) => self.notice = error,
+                    Err(error) => {
+                        self.notice = self.browser.sync.local_failed(&revision).unwrap_or(error)
+                    }
                 },
                 FileEvent::Local { .. } => {}
                 FileEvent::Finished { id, result } => {
@@ -147,6 +194,9 @@ impl App {
                                 }
                             }
                             Err(error) => {
+                                if self.exiting {
+                                    self.close_errors.push(format!("{}: {error}", job.label));
+                                }
                                 job.phase = if job.cancel.is_cancelled() {
                                     Phase::Cancelled
                                 } else {
@@ -196,6 +246,11 @@ impl App {
                 self.browser.jobs[index].phase = Phase::Cancelled;
                 continue;
             };
+            if tab.closing || tab.work.is_closed() {
+                self.browser.jobs[index].phase = Phase::Cancelled;
+                continue;
+            }
+            let work = tab.work.clone();
             let (Some(session), Some(xfer), Some(nav)) =
                 (tab.session.clone(), tab.xfer.clone(), tab.nav.clone())
             else {
@@ -205,28 +260,67 @@ impl App {
             job.phase = Phase::Running;
             let operation = job.operation.clone();
             let policy = job.policy;
+            let mode = job.mode;
             let id = job.id.clone();
             let cancel = job.cancel.clone();
             let navigation = job.navigation.clone();
             let permissions = tab.permissions.clone();
             let progress = self.progress_tx.clone();
             let tx = self.file_tx.clone();
-            self.runtime.spawn(async move {
-                let context=TaskContext {job:&id,progress:&progress,cancel:&cancel,permission:permissions.as_ref()};
-                let future=async {
+            work.spawn(self.runtime.handle(), async move {
+                let context = TaskContext {
+                    job: &id,
+                    progress: &progress,
+                    cancel: &cancel,
+                    permission: permissions.as_ref(),
+                    mode,
+                };
+                let future = async {
                     match operation {
-                        Operation::Upload {local,remote}=>{let sftp=xfer.lock().await;transfer_tree::upload_tree(&sftp,&local,&remote,policy,&context).await.map(Outcome::Transfer)},
-                        Operation::Download {remote,local}=>{let sftp=xfer.lock().await;transfer_tree::download_tree(&session,&sftp,&remote,&local,policy,&context).await.map(Outcome::Transfer)},
-                        Operation::Delete {remote}=>{let sftp=nav.lock().await;transfer::delete_tree(&sftp,&remote,"delete",&cancel).await.map(|_|Outcome::Deleted)},
-                        Operation::Search {root,query}=>{let sftp=nav.lock().await;transfer_tree::search(&session,&sftp,&root,&query,&cancel).await.map(|entries|Outcome::Search {navigation,entries})},
+                        Operation::Upload { local, remote } => {
+                            let sftp = xfer.lock().await;
+                            transfer_tree::upload_tree(
+                                &session, &sftp, &local, &remote, policy, &context,
+                            )
+                            .await
+                            .map(Outcome::Transfer)
+                        }
+                        Operation::Download { remote, local } => {
+                            let sftp = xfer.lock().await;
+                            transfer_tree::download_tree(
+                                &session, &sftp, &remote, &local, policy, &context,
+                            )
+                            .await
+                            .map(Outcome::Transfer)
+                        }
+                        Operation::Delete { remote } => {
+                            let sftp = nav.lock().await;
+                            transfer::delete_tree(&sftp, &remote, "delete", &cancel)
+                                .await
+                                .map(|_| Outcome::Deleted)
+                        }
+                        Operation::Search { root, query } => {
+                            let sftp = nav.lock().await;
+                            transfer_tree::search(&session, &sftp, &root, &query, &cancel)
+                                .await
+                                .map(|entries| Outcome::Search {
+                                    navigation,
+                                    entries,
+                                })
+                        }
                     }
                 };
-                let result=tokio::select! {biased;_=cancel.cancelled()=>Err(anyhow::anyhow!("中止要求済み。上書き先を含む部分ファイルを保持。権限復元が未完了の場合は「権限補助」で復旧してください")),result=future=>result}.map_err(|e|e.to_string());
-                let _=tx.send(FileEvent::Finished {id,result}).await;
-            });
+                // tokenを各操作へ渡す。確定ACK/権限復元中のFutureを取消で捨てない。
+                let result = future.await.map_err(|e| e.to_string());
+                let _ = tx.send(FileEvent::Finished { id, result }).await;
+            })
+            .expect("転送の受付確認済み");
         }
     }
     fn queue_file(&mut self, operation: Operation, label: String) {
+        if self.exiting {
+            return;
+        }
         if self.browser.jobs.len() >= 128 {
             self.browser
                 .jobs
@@ -239,13 +333,14 @@ impl App {
         let Some(tab) = self.tabs.get(self.active) else {
             return;
         };
-        if tab.session.is_none() || tab.cancel.is_cancelled() {
+        if tab.closing || tab.work.is_closed() || tab.session.is_none() || tab.cancel.is_cancelled()
+        {
             return;
         }
         let cancel = if matches!(operation, Operation::Search { .. }) {
             tab.navigation_cancel.child_token()
         } else {
-            tab.cancel.child_token()
+            tab.work_cancel.child_token()
         };
         let job = Job {
             id: Stamp::default().terminal_id,
@@ -253,6 +348,7 @@ impl App {
             label,
             operation,
             policy: self.browser.policy,
+            mode: self.browser.mode,
             cancel,
             phase: Phase::Queued,
             done: 0,
@@ -337,26 +433,64 @@ impl App {
             .map(|(i, _)| i)
             .collect();
         let mut enter = None;
-        egui::ScrollArea::vertical().show_rows(ui, 22.0, indices.len(), |ui, rows| {
-            for row in rows {
-                let index = indices[row];
-                let entry = &tab.entries[index];
-                let response = ui.selectable_label(
-                    tab.selected == Some(index),
-                    format!(
-                        "{} {}",
-                        if entry.directory { "[dir]" } else { "[file]" },
-                        entry.name
-                    ),
-                );
-                if response.clicked() {
-                    tab.selected = Some(index);
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show_rows(ui, 28.0, indices.len(), |ui, rows| {
+                for row in rows {
+                    let index = indices[row];
+                    let entry = &tab.entries[index];
+                    let selected = tab.selected == Some(index);
+                    let (rect, response) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), 26.0),
+                        egui::Sense::click(),
+                    );
+                    if selected || response.hovered() {
+                        ui.painter().rect_filled(
+                            rect,
+                            egui::CornerRadius::same(6),
+                            if selected {
+                                theme::ACCENT.gamma_multiply(0.22)
+                            } else {
+                                theme::CARD
+                            },
+                        );
+                    }
+                    let name_color = if entry.directory {
+                        theme::ACCENT
+                    } else {
+                        theme::TEXT
+                    };
+                    let mut name = entry.name.clone();
+                    if entry.directory {
+                        name.push('/');
+                    } else if entry.symlink {
+                        name.push_str("  (リンク)");
+                    }
+                    let font = egui::TextStyle::Body.resolve(ui.style());
+                    ui.painter().text(
+                        rect.left_center() + egui::vec2(10.0, 0.0),
+                        egui::Align2::LEFT_CENTER,
+                        name,
+                        font.clone(),
+                        name_color,
+                    );
+                    if !entry.directory {
+                        ui.painter().text(
+                            rect.right_center() - egui::vec2(10.0, 0.0),
+                            egui::Align2::RIGHT_CENTER,
+                            human_size(entry.size),
+                            egui::TextStyle::Small.resolve(ui.style()),
+                            theme::MUTED,
+                        );
+                    }
+                    if response.clicked() {
+                        tab.selected = Some(index);
+                    }
+                    if response.double_clicked() && entry.directory {
+                        enter = Some(entry.path.clone());
+                    }
                 }
-                if response.double_clicked() && entry.directory {
-                    enter = Some(entry.path.clone());
-                }
-            }
-        });
+            });
         if let Some(path) = enter {
             self.browse(self.active, path);
         }
@@ -367,12 +501,22 @@ impl App {
             return;
         };
         let path = tab.path.clone();
-        ui.horizontal_wrapped(|ui| {
+        ui.horizontal(|ui| {
             if ui.button("親へ").clicked() {
                 self.browse(self.active, format!("{path}/.."));
             }
             if ui.button("更新").clicked() {
                 self.browse(self.active, path.clone());
+            }
+            ui.add(
+                egui::Label::new(egui::RichText::new(&path).strong())
+                    .truncate()
+                    .selectable(false),
+            );
+        });
+        ui.horizontal_wrapped(|ui| {
+            if ui.add(theme::primary("受信")).clicked() {
+                self.transfer(false);
             }
             if ui.button("送信").clicked() {
                 self.transfer(true);
@@ -383,10 +527,7 @@ impl App {
             if ui.button("編集").clicked() {
                 self.open_remote_editor();
             }
-            if ui.button("受信").clicked() {
-                self.transfer(false);
-            }
-            if ui.button("削除").clicked() {
+            if ui.add(theme::danger("削除")).clicked() {
                 if let Some(tab) = self.tabs.get(self.active) {
                     if let Some(entry) = tab.selected.and_then(|i| tab.entries.get(i)) {
                         self.browser.delete_target = Some((tab.stamp.clone(), entry.path.clone()));
@@ -395,23 +536,28 @@ impl App {
                 }
             }
         });
-        ui.horizontal_wrapped(|ui| {
-            ui.label("既存ファイル:");
-            for (policy, label) in [
-                (Existing::Refuse, "中止"),
-                (Existing::Overwrite, "上書き"),
-                (Existing::Resume, "再開"),
-                (Existing::Skip, "スキップ"),
-            ] {
-                ui.radio_value(&mut self.browser.policy, policy, label);
+        egui::CollapsingHeader::new("転送の設定").show(ui, |ui| {
+            ui.label(theme::muted("すでに同名のファイルがあるとき"));
+            theme::segmented(
+                ui,
+                &mut self.browser.policy,
+                &[
+                    (Existing::Refuse, "中止"),
+                    (Existing::Overwrite, "上書き"),
+                    (Existing::Resume, "続きから"),
+                    (Existing::Skip, "飛ばす"),
+                ],
+            );
+            self.transfer_mode_ui(ui);
+            if self.browser.policy == Existing::Overwrite
+                && self.browser.mode == transfer::Mode::Atomic
+            {
+                ui.colored_label(
+                    theme::WARN,
+                    "確定前の取消・失敗では元ファイルを保持します。確定開始後の通信失敗は結果不明になる場合があります。",
+                );
             }
         });
-        if self.browser.policy == Existing::Overwrite {
-            ui.colored_label(
-                egui::Color32::YELLOW,
-                "上書きは直接書き換えます。取消・失敗で既存内容が部分データに置き換わります。",
-            );
-        }
         let profile = self
             .tabs
             .get(self.active)
@@ -470,19 +616,29 @@ impl App {
                 }
             });
         }
-        ui.label("ファイル・フォルダをここへドロップして送信");
-        ui.label(&path);
-        ui.checkbox(&mut self.browser.hidden, "隠しファイル");
         ui.horizontal(|ui| {
-            ui.label("再帰検索");
-            ui.text_edit_singleline(&mut self.browser.search);
+            ui.add(
+                egui::TextEdit::singleline(&mut self.browser.search)
+                    .hint_text("このフォルダ以下を検索")
+                    .desired_width(ui.available_width() - 70.0),
+            );
             if ui.button("検索").clicked() {
                 if let Some(tab) = self.tabs.get_mut(self.active) {
                     tab.begin_navigation();
                 }
                 let query = self.browser.search.clone();
-                self.queue_file(Operation::Search { root: path, query }, "検索".into());
+                self.queue_file(
+                    Operation::Search {
+                        root: path.clone(),
+                        query,
+                    },
+                    "検索".into(),
+                );
             }
+        });
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut self.browser.hidden, "隠しファイルを表示");
+            ui.label(theme::muted("ファイルをここへドロップして送信"));
         });
         self.remote_rows(ui);
     }
@@ -532,6 +688,17 @@ impl App {
                 .open(&mut open)
                 .default_size([1000.0, 650.0])
                 .show(ctx, |ui| {
+                    self.transfer_mode_ui(ui);
+                    let mut sync = self.browser.sync.enabled;
+                    if ui
+                        .checkbox(
+                            &mut sync,
+                            "同期ブラウズ（片側のフォルダ移動を相手側へ相対的に写す）",
+                        )
+                        .changed()
+                    {
+                        self.set_sync_browse(sync);
+                    }
                     ui.horizontal(|ui| {
                         ui.label("既存ファイル");
                         for (policy, label) in [
@@ -614,7 +781,7 @@ impl App {
                     });
                     ui.separator();
                     ui.label("転送待ち行列");
-                    for job in &self.browser.jobs {
+                    for job in &mut self.browser.jobs {
                         ui.horizontal(|ui| {
                             let phase = match job.phase {
                                 Phase::Queued => "待機",
@@ -627,10 +794,24 @@ impl App {
                                 "{phase}: {} {} / {} {}",
                                 job.label, job.done, job.total, job.message
                             ));
+                            if matches!(
+                                job.operation,
+                                Operation::Upload { .. } | Operation::Download { .. }
+                            ) {
+                                ui.label(if job.policy == Existing::Resume {
+                                    "方式: 直接追記（再開）"
+                                } else if job.mode == transfer::Mode::Atomic {
+                                    "方式: 原本保持"
+                                } else {
+                                    "方式: 直接書込み"
+                                });
+                            }
                             if matches!(job.phase, Phase::Queued | Phase::Running)
                                 && ui.button("中止").clicked()
                             {
                                 job.cancel.cancel();
+                                job.message =
+                                    "中止を要求しました。確定応答と権限復元を待っています".into();
                             }
                         });
                     }
@@ -750,5 +931,34 @@ impl App {
         for job in &self.browser.jobs {
             job.cancel.cancel();
         }
+    }
+}
+
+/// 一覧に出すファイルサイズ。1024単位で、小数は1桁。
+fn human_size(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
+#[cfg(test)]
+mod size_tests {
+    use super::human_size;
+    #[test]
+    fn sizes_are_shown_in_1024_units() {
+        assert_eq!(human_size(0), "0 B");
+        assert_eq!(human_size(1023), "1023 B");
+        assert_eq!(human_size(1536), "1.5 KB");
+        assert_eq!(human_size(5 * 1024 * 1024), "5.0 MB");
+        assert_eq!(human_size(u64::MAX), "16777216.0 TB");
     }
 }

@@ -84,8 +84,10 @@ pub struct TaskContext<'a> {
     pub progress: &'a mpsc::Sender<Progress>,
     pub cancel: &'a CancellationToken,
     pub permission: Option<&'a std::sync::Arc<crate::permissions::Manager>>,
+    pub mode: transfer::Mode,
 }
 pub async fn upload_tree(
+    ssh: &SshSession,
     sftp: &SftpSession,
     local: &Path,
     remote: &str,
@@ -93,11 +95,11 @@ pub async fn upload_tree(
     context: &TaskContext<'_>,
 ) -> Result<Report> {
     let mut access = crate::permissions::Batch::new(context.permission);
-    let result = upload_tree_inner(sftp, local, remote, policy, context, &mut access).await;
-    access.finish().await?;
-    result
+    let result = upload_tree_inner(ssh, sftp, local, remote, policy, context, &mut access).await;
+    crate::permissions::complete(result, access.finish().await)
 }
 async fn upload_tree_inner(
+    ssh: &SshSession,
     sftp: &SftpSession,
     local: &Path,
     remote: &str,
@@ -129,7 +131,7 @@ async fn upload_tree_inner(
             .and_then(|p| p.to_str())
             .context("親パスが不正です")?;
         let existing = access
-            .run(parent, 0o555, || remote_metadata(sftp, &remote))
+            .run(parent, 0o100, || remote_metadata(sftp, &remote))
             .await?;
         if existing.as_ref().is_some_and(|meta| meta.is_symlink()) {
             bail!("転送先のリンクを上書きできません");
@@ -144,7 +146,7 @@ async fn upload_tree_inner(
                         .and_then(|p| p.to_str())
                         .context("親パスが不正です")?;
                     access
-                        .run(parent, 0o333, || async {
+                        .run(parent, 0o300, || async {
                             Ok(sftp.create_dir(&remote).await?)
                         })
                         .await?;
@@ -175,38 +177,36 @@ async fn upload_tree_inner(
             }
             if existing.is_some() && policy == Existing::Resume {
                 access
-                    .run(&remote, 0o666, || {
+                    .run(&remote, 0o600, || {
                         transfer::upload_resume(sftp, &local, &remote, job, progress, cancel)
                     })
                     .await?;
                 report.files += 1;
                 continue;
             }
-            let target = if existing.is_some() {
-                remote.as_str()
-            } else {
-                Path::new(&remote)
-                    .parent()
-                    .and_then(|p| p.to_str())
-                    .context("親パスが不正です")?
-            };
-            access
-                .run(
-                    target,
-                    if existing.is_some() { 0o222 } else { 0o333 },
-                    || {
-                        transfer::upload(
-                            sftp,
-                            &local,
-                            &remote,
-                            policy == Existing::Overwrite,
-                            job,
-                            progress,
-                            cancel,
-                        )
-                    },
+            let cleanup = access.cleanup();
+            let upload = || {
+                transfer::upload_scoped(
+                    ssh,
+                    sftp,
+                    &local,
+                    &remote,
+                    existing.is_some() && policy == Existing::Overwrite,
+                    context,
+                    Some(&cleanup),
                 )
-                .await?;
+            };
+            if existing.is_some() {
+                if context.mode == transfer::Mode::InPlace {
+                    access.run(&remote, 0o200, upload).await?;
+                } else {
+                    // 既存原本の置換のために親の書込み権限を自動拡大しない。
+                    access.require_original_parent_write(parent)?;
+                    upload().await?;
+                }
+            } else {
+                access.run(parent, 0o300, upload).await?;
+            }
             report.files += 1;
         } else {
             report.skipped += 1;
@@ -224,8 +224,7 @@ pub async fn download_tree(
 ) -> Result<Report> {
     let mut access = crate::permissions::Batch::new(context.permission);
     let result = download_tree_inner(ssh, sftp, remote, local, policy, context, &mut access).await;
-    access.finish().await?;
-    result
+    crate::permissions::complete(result, access.finish().await)
 }
 async fn download_tree_inner(
     ssh: &SshSession,
@@ -267,7 +266,7 @@ async fn download_tree_inner(
             };
             report.directories += 1;
             for child in access
-                .run(&remote, 0o555, || {
+                .run(&remote, 0o500, || {
                     transfer::list_bounded(ssh, &remote, cancel)
                 })
                 .await?
@@ -286,7 +285,7 @@ async fn download_tree_inner(
                 continue;
             }
             access
-                .run(&remote, 0o444, || {
+                .run(&remote, 0o400, || {
                     transfer::download(
                         sftp,
                         &remote,
@@ -294,6 +293,7 @@ async fn download_tree_inner(
                         DownloadPolicy {
                             overwrite: policy == Existing::Overwrite,
                             resume: policy == Existing::Resume,
+                            mode: context.mode,
                         },
                         job,
                         progress,
