@@ -1,8 +1,20 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
-import { makeStyles, mergeClasses } from '@fluentui/react-components';
+import {
+  Button,
+  Caption1,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
+  makeStyles,
+  mergeClasses,
+  tokens,
+} from '@fluentui/react-components';
 import type { Api } from './api';
 import type { SessionInfo } from './types';
 import { InputQueue } from './inputQueue';
@@ -16,7 +28,26 @@ const useStyles = makeStyles({
     boxSizing: 'border-box',
   },
   hidden: { visibility: 'hidden', pointerEvents: 'none' },
+  pastePreview: {
+    fontFamily: 'Consolas, "Cascadia Mono", monospace',
+    fontSize: '13px',
+    whiteSpace: 'pre-wrap',
+    overflowWrap: 'anywhere',
+    maxHeight: '240px',
+    overflowY: 'auto',
+    margin: 0,
+    padding: '8px 10px',
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorNeutralBackground3,
+  },
 });
+
+/** 貼り付ける文字から、端末の操作として働く制御文字(ESC・C1など)を除く。改行・タブは残す。
+ *  ESCが残ると「貼り付けモードの終わり」を偽装して、貼り付けた途中でコマンドを実行できてしまう。 */
+export function cleanPaste(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, '');
+}
 
 interface Props {
   api: Api;
@@ -40,6 +71,8 @@ export function TerminalView({ api, active, dark, appearance, start, onOpened, o
   const term = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const idRef = useRef<string | null>(null);
+  // 複数行の貼り付けは、確認してから端末へ送る。
+  const [pasteAsk, setPasteAsk] = useState<string | null>(null);
   // 親の再描画で関数が変わっても、マウント時の1回だけ開始する。
   const latest = useRef({ start, onOpened, onError, dark, appearance });
   latest.current = { start, onOpened, onError, dark, appearance };
@@ -75,6 +108,17 @@ export function TerminalView({ api, active, dark, appearance, start, onOpened, o
     fitRef.current = fit;
     terminal.loadAddon(fit);
     terminal.open(element);
+    // 貼り付けは端末より先に受け取り、制御文字を除いてから送る。複数行なら確認する。
+    const onPaste = (event: ClipboardEvent) => {
+      const text = event.clipboardData?.getData('text/plain') ?? '';
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const clean = cleanPaste(text);
+      if (!clean) return;
+      if (clean.replace(/\r\n?/g, '\n').replace(/\n+$/, '').includes('\n')) setPasteAsk(clean);
+      else terminal.paste(clean);
+    };
+    element.addEventListener('paste', onPaste, true);
     fit.fit();
     let id: string | null = null;
     let alive = true;
@@ -107,6 +151,7 @@ export function TerminalView({ api, active, dark, appearance, start, onOpened, o
       alive = false;
       window.clearTimeout(timer);
       observer.disconnect();
+      element.removeEventListener('paste', onPaste, true);
       input.dispose();
       terminal.dispose();
       term.current = null;
@@ -123,9 +168,39 @@ export function TerminalView({ api, active, dark, appearance, start, onOpened, o
     }
   }, [active]);
 
-  return <div
-      ref={host}
-      className={mergeClasses(styles.host, !active && styles.hidden)}
-      style={{ backgroundColor: termTheme(appearance.termScheme, dark, appearance.accent).background }}
-    />;
+  const lines = pasteAsk ? pasteAsk.replace(/\r\n?/g, '\n').replace(/\n+$/, '').split('\n').length : 0;
+  return (
+    <>
+      <div
+        ref={host}
+        className={mergeClasses(styles.host, !active && styles.hidden)}
+        style={{ backgroundColor: termTheme(appearance.termScheme, dark, appearance.accent).background }}
+      />
+      <Dialog open={pasteAsk !== null} onOpenChange={(_, d) => !d.open && setPasteAsk(null)}>
+        <DialogSurface aria-describedby={undefined} style={{ maxWidth: 560 }}>
+          <DialogBody>
+            <DialogTitle>{lines}行を貼り付けますか？</DialogTitle>
+            <DialogContent style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <Caption1>各行がコマンドとして実行されることがあります。内容を確認してください。</Caption1>
+              <pre className={styles.pastePreview}>{pasteAsk}</pre>
+            </DialogContent>
+            <DialogActions>
+              <Button onClick={() => setPasteAsk(null)}>やめる</Button>
+              <Button
+                appearance="primary"
+                onClick={() => {
+                  const text = pasteAsk;
+                  setPasteAsk(null);
+                  if (text) term.current?.paste(text);
+                  term.current?.focus();
+                }}
+              >
+                貼り付ける
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+    </>
+  );
 }

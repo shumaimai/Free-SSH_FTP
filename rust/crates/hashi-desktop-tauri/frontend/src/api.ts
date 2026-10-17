@@ -105,7 +105,8 @@ export interface Api {
   filesBookmarkAdd(id: string, path: string): Promise<string[]>;
   onFileJob(handler: (job: FileJob) => void): Promise<() => void>;
   onFilesChanged(handler: (sessionId: string) => void): Promise<() => void>;
-  onFileDrop(handler: (count: number) => void): Promise<() => void>;
+  /** 落とした位置(画面の座標)。 */
+  onFileDrop(handler: (drop: { count: number; x: number; y: number }) => void): Promise<() => void>;
   onFilesState(handler: (event: { id: string; available: boolean; message: string }) => void): Promise<() => void>;
   externalStatus(): Promise<ExternalStatus>;
   externalShare(mode: ShareMode, targets: string[]): Promise<ExternalStatus>;
@@ -227,7 +228,7 @@ async function tauriApi(): Promise<Api> {
     filesBookmarkAdd: (id, path) => invoke('files_bookmark_add', { id, path }),
     onFileJob: (handler) => listen<FileJob>('file-job', (e) => handler(e.payload)),
     onFilesChanged: (handler) => listen<string>('files-changed', (e) => handler(e.payload)),
-    onFileDrop: (handler) => listen<number>('file-drop', (e) => handler(e.payload)),
+    onFileDrop: (handler) => listen<{ count: number; x: number; y: number }>('file-drop', (e) => handler(e.payload)),
     onFilesState: (handler) =>
       listen<{ id: string; available: boolean; message: string }>('files-state', (e) => handler(e.payload)),
     externalStatus: () => invoke('external_status'),

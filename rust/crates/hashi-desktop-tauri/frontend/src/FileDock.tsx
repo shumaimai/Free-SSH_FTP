@@ -279,9 +279,16 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
         // 転送や削除が終わったら、開いているフォルダを読み直す。
         if (id === sessionRef.current && pathRef.current) void load(pathRef.current);
       }),
-      api.onFileDrop((count) => {
+      api.onFileDrop(({ count, x, y }) => {
         const id = sessionRef.current;
         if (!id || count === 0 || !pathRef.current) return;
+        // ファイル一覧(リモート)の上に落としたときだけ送る。端末などへの落とし損ねで送らない。
+        const box = remoteBox.current?.getBoundingClientRect();
+        const inside = box && box.width > 0 && x >= box.left && x <= box.right && y >= box.top && y <= box.bottom;
+        if (!inside) {
+          setNotice('送信するファイルは、リモートのファイル一覧の上にドロップしてください');
+          return;
+        }
         void api.filesUploadDropped(id, pathRef.current, policy, mode).catch((e) => setError(String(e)));
       }),
     ];
@@ -304,6 +311,7 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
   }, [api]);
 
   const dualBox = useRef<HTMLDivElement>(null);
+  const remoteBox = useRef<HTMLDivElement>(null);
   const ratioStart = useRef(0.5);
   const twoPaneRef = useRef(twoPane);
   twoPaneRef.current = twoPane;
@@ -429,7 +437,7 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
 
   const activeJobs = jobs.filter((j) => j.sessionId === sessionId);
   const remotePane = (
-    <div className={styles.root} data-pane="remote">
+    <div className={styles.root} data-pane="remote" ref={remoteBox}>
       <div className={styles.row}>
         <Button
           size="small"

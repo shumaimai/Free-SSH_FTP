@@ -116,6 +116,15 @@ async fn list(
     if !target.is_absolute() {
         return Err("ローカルのフォルダは絶対パスで指定してください".into());
     }
+    // `..`や`.`を含むパスは開かない(同期ブラウズの追随などで、見た目と違うフォルダへ移らないように)。
+    if target.components().any(|part| {
+        matches!(
+            part,
+            std::path::Component::ParentDir | std::path::Component::CurDir
+        )
+    }) {
+        return Err("「..」を含むパスは開けません。フォルダを直接指定してください".into());
+    }
     let revision = Stamp::default();
     *pane.revision.lock().map_err(|_| "状態が不正です")? = revision.clone();
     if follow {

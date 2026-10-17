@@ -6,22 +6,49 @@ const TEXT_LIMIT: usize = 32000;
 /// 短縮しないキー。端末ID・操作IDを切ると誤対象操作につながる。
 const IDENTIFIERS: [&str; 3] = ["session_id", "operation_id", "tool_call_id"];
 
-static SECRETS: LazyLock<[(regex::Regex, &'static str); 3]> = LazyLock::new(|| {
-    [
-        (
-            regex::Regex::new(r"(?s)-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----")
-                .unwrap(),
+static SECRETS: LazyLock<Vec<(regex::Regex, &'static str)>> = LazyLock::new(|| {
+    let rule = |pattern: &str, replacement| (regex::Regex::new(pattern).unwrap(), replacement);
+    vec![
+        // 秘密鍵。ENDが無い(途中で切れた)ものは末尾まで、BEGINが切れたものは本文からENDまで伏せる。
+        rule(
+            r"(?s)-----BEGIN [^-]*PRIVATE KEY-----.*?(?:-----END [^-]*PRIVATE KEY-----|\z)",
             "[秘密鍵を省略]",
         ),
-        (
-            regex::Regex::new(r"(?i)(?:authorization:\s*bearer\s+|\bsk-(?:proj-)?)[\w.\-/]{8,}").unwrap(),
+        rule(
+            r"(?:[A-Za-z0-9+/=]{16,}\r?\n)+-----END [^-]*PRIVATE KEY-----",
+            "[秘密鍵を省略]",
+        ),
+        rule(
+            r"(?s)PuTTY-User-Key-File-\d+:.*?(?:Private-MAC:[^\n]*|\z)",
+            "[秘密鍵を省略]",
+        ),
+        // よく見る形式のトークン。
+        rule(
+            r"(?i)(?:authorization:\s*(?:bearer|basic|token)\s+|\bsk-(?:proj-|ant-)?)[\w.\-/+=]{8,}",
             "[認証トークンを省略]",
         ),
-        (
-            regex::Regex::new(
-                r"(?i)((?:password|passwd|api[_-]?key|access[_-]?token|refresh[_-]?token|secret)\s*[:=]\s*)[^\s,;]+",
-            )
-            .unwrap(),
+        rule(
+            r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_\-]{30,}|glpat-[\w-]{16,})",
+            "[認証トークンを省略]",
+        ),
+        rule(
+            r"\beyJ[\w-]{8,}\.eyJ[\w-]{8,}\.[\w-]{8,}",
+            "[認証トークンを省略]",
+        ),
+        // URLに埋め込んだ利用者名:パスワード。
+        rule(
+            r"([a-zA-Z][a-zA-Z0-9+.-]*://[^/\s:@]+:)[^@\s/]+@",
+            "${1}[省略]@",
+        ),
+        // `--password x` や `--token=x`。
+        rule(
+            r"(?i)(--?(?:password|passwd|pass|token|secret|api-?key)(?:=|\s+))\S+",
+            "${1}[省略]",
+        ),
+        // 名前に秘密らしい語を含む `キー: 値` / `キー=値` / JSONの `"キー": "値"`。
+        // 先の規則で伏せ済みの`[…省略]`は値として扱わない。
+        rule(
+            r#"(?i)([\w.-]*(?:password|passwd|passphrase|secret|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key|credential)[\w.-]*["']?\s*[:=]\s*)("[^"\n]*"|'[^'\n]*'|[^\s,;\[][^\s,;]*)"#,
             "${1}[省略]",
         ),
     ]
@@ -179,6 +206,32 @@ mod tests {
             "PASSWORD = [省略], next"
         );
         assert_eq!(redact("api-key:xyz;"), "api-key:[省略];");
+        // よく漏れる形式。
+        for (input, leaked) in [
+            (r#"{"password": "hunter 2"}"#, "hunter"),
+            ("GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwx", "ghp_"),
+            ("export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI", "wJalr"),
+            ("id AKIAIOSFODNN7EXAMPLE", "AKIAIOSF"),
+            ("git clone https://me:pa55@host/x", "pa55"),
+            ("mysql --password hunter2", "hunter2"),
+            ("eyJhbGciOiJIUzI1.eyJzdWIiOiIxMjM0.abcdefghijk", "eyJzdWIi"),
+            (
+                "PuTTY-User-Key-File-3: ssh-ed25519\nPrivate-Lines: 1\nAAAAsecret\nPrivate-MAC: ab",
+                "AAAAsecret",
+            ),
+        ] {
+            assert!(
+                !redact(input).contains(leaked),
+                "{input} -> {}",
+                redact(input)
+            );
+        }
+        // 先頭(BEGIN)が切れた秘密鍵、末尾(END)が切れた秘密鍵。
+        let body = "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFB\n".repeat(3);
+        let tail = format!("{body}-----END OPENSSH PRIVATE KEY-----\n$");
+        assert_eq!(redact(&tail), "[秘密鍵を省略]\n$");
+        let head = format!("-----BEGIN OPENSSH PRIVATE KEY-----\n{body}");
+        assert_eq!(redact(&head), "[秘密鍵を省略]");
         assert_eq!(redact("x\x1b[31my\x07\tz"), "x[31my\tz");
         assert_eq!(redact(&"あ".repeat(40000)).chars().count(), 32000);
     }

@@ -70,7 +70,8 @@ impl Conversation {
             .await
     }
 
-    /// `read_only`なら端末を読む道具（一覧・出力の取得）だけをAIへ渡す（相談のみの実行モード用）。
+    /// `read_only`(相談のみ)ならAIへ道具を渡さない。AIが見るのは、利用者が送る前に確認・編集した
+    /// 観測データだけにする(端末を読む道具を渡すと、確認画面で消した内容を読み直せてしまう)。
     pub async fn ask_mode(
         &mut self,
         question: &str,
@@ -118,12 +119,11 @@ impl Conversation {
         }
         self.messages.push(message);
         let stopped = || anyhow::anyhow!("AI処理を停止しました");
-        let tools: Vec<Value> = crate::tools::definitions()
-            .into_iter()
-            .filter(|tool| {
-                !read_only || matches!(tool["name"].as_str(), Some("list_sessions" | "read_output"))
-            })
-            .collect();
+        let tools: Vec<Value> = if read_only {
+            vec![]
+        } else {
+            crate::tools::definitions()
+        };
         for _ in 0..8 {
             if cancel.is_cancelled() {
                 bail!(stopped());
@@ -379,7 +379,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn consult_mode_offers_only_reading_tools() {
+    async fn consult_mode_offers_no_tools() {
         let (registry, _, _, _received) = registered();
         let broker = Arc::new(Broker::new(registry, None));
         let provider = Arc::new(Replies(
@@ -404,7 +404,7 @@ mod tests {
             .ask_mode("y", "", &CancellationToken::new(), tx, false)
             .await
             .unwrap();
-        assert_eq!(*provider.1.lock().unwrap(), vec![2, 7]);
+        assert_eq!(*provider.1.lock().unwrap(), vec![0, 7]);
     }
 
     #[tokio::test]

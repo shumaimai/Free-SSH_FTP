@@ -13,7 +13,11 @@ import {
   MessageBarBody,
   tokens,
 } from '@fluentui/react-components';
+import { useEffect, useState } from 'react';
 import type { ApprovalRequest } from './types';
+
+/** 内容が出てから「許可」を押せるようになるまでの時間。続けて届いた要求をダブルクリックで許可しないため。 */
+const ARM_MS = 1000;
 
 const ACTION: Record<ApprovalRequest['action'], string> = {
   send_input: '対話端末へ入力',
@@ -41,7 +45,16 @@ const useStyles = makeStyles({
 /** 外部（AI/MCP）からの端末操作の許可。閉じる操作は「拒否」として扱う。 */
 export function ApprovalDialog({ request, onAnswer }: { request: ApprovalRequest | null; onAnswer(allow: boolean): void }) {
   const styles = useStyles();
+  const [armed, setArmed] = useState(false);
+  const id = request?.id;
+  useEffect(() => {
+    setArmed(false);
+    if (!id) return;
+    const timer = window.setTimeout(() => setArmed(true), ARM_MS);
+    return () => window.clearTimeout(timer);
+  }, [id]);
   if (!request) return null;
+  const lines = request.text ? request.text.replace(/\n$/, '').split('\n').length : 0;
   return (
     <Dialog open modalType="alert">
       <DialogSurface aria-describedby={undefined} style={{ maxWidth: 560 }}>
@@ -59,7 +72,9 @@ export function ApprovalDialog({ request, onAnswer }: { request: ApprovalRequest
             {request.cwd && <Body1>開始フォルダ: {request.cwd}</Body1>}
             {request.text && (
               <>
-                <Caption1>内容</Caption1>
+                <Caption1>
+                  内容({lines}行・{request.text.length}文字。枠内をスクロールして最後まで確認してください)
+                </Caption1>
                 <pre className={styles.code}>{request.text}</pre>
                 {request.action === 'send_input' && (
                   <Caption1>
@@ -72,7 +87,7 @@ export function ApprovalDialog({ request, onAnswer }: { request: ApprovalRequest
           </DialogContent>
           <DialogActions>
             <Button onClick={() => onAnswer(false)}>拒否</Button>
-            <Button appearance="primary" onClick={() => onAnswer(true)}>
+            <Button appearance="primary" disabled={!armed} onClick={() => onAnswer(true)}>
               許可して実行
             </Button>
           </DialogActions>

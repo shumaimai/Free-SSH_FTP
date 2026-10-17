@@ -133,8 +133,20 @@ pub fn mirror_move(
     if ups > other_parts.len() {
         return None;
     }
+    // 写すのは1つずつの名前だけ。相手側で区切りやドライブ・親への移動として働く文字を含む名前は
+    // 写さない(サーバーが返した`..\\foo`がWindowsで親フォルダへの移動になるのを防ぐ)。
+    let moved = &new_parts[common..];
+    if moved.iter().any(|part| {
+        part.is_empty()
+            || part == "."
+            || part == ".."
+            || part.contains(['/', '\\', ':', '\0'])
+            || part.chars().any(char::is_control)
+    }) {
+        return None;
+    }
     let mut kept = other_parts[..other_parts.len() - ups].to_vec();
-    kept.extend_from_slice(&new_parts[common..]);
+    kept.extend_from_slice(moved);
     Some(join(&other_root, &kept, other_style))
 }
 
@@ -277,6 +289,27 @@ mod tests {
             parts("", &["relative", "a"])
         );
         assert_eq!(components(r"C:\..", Windows), parts("C:\\", &[]));
+    }
+
+    #[test]
+    fn server_names_that_act_as_paths_are_not_mirrored() {
+        // サーバーが返した名前に`\\`や`..`を混ぜても、ローカル側で親へ移動させない。
+        for new in [
+            "/home/u/..\\AppData\\Roaming",
+            "/home/u/a\\b",
+            "/home/u/C:x",
+            "/home/u/x\u{1b}",
+        ] {
+            assert_eq!(
+                mirror_move("/home/u", new, r"C:\Users\me", Posix, Windows),
+                None,
+                "{new}"
+            );
+        }
+        assert_eq!(
+            mirror_move("/home/u", "/home/u/docs", r"C:\Users\me", Posix, Windows).as_deref(),
+            Some(r"C:\Users\me\docs")
+        );
     }
 
     #[test]

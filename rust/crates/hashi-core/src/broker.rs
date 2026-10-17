@@ -399,6 +399,14 @@ impl State {
     }
 }
 
+/// 確認窓に正しく見えない文字。改行・タブ以外の制御文字と、文字の向きを変える文字・幅ゼロの文字。
+fn hidden_char(c: char) -> bool {
+    (c.is_control() && c != '\n' && c != '\t')
+        || matches!(c,
+            '\u{00ad}' | '\u{061c}' | '\u{180e}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}'
+            | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{2069}' | '\u{feff}')
+}
+
 /// `configure`へ渡すと共有に期限を付けない(停止・対象変更・アプリ終了までは有効)。
 pub const NO_LIMIT: Duration = Duration::MAX;
 
@@ -544,15 +552,16 @@ impl Broker {
         if request.text.chars().count() > TEXT_LIMIT || request.text.contains('\0') {
             bail!("入力が長すぎるか不正です");
         }
-        // 対話入力の制御文字(CR・ESCなど)は確認窓に見えず、Enterや操作キーとして働くため拒否する。
+        // 制御文字(CR・ESCなど)は確認窓に見えずにEnterや操作キーとして働き、文字の向きを変える
+        // 文字・幅ゼロの文字は確認窓の見た目と実際の内容をずらせるので、確認を出す前に拒否する。
         // 改行(Enter)は'\n'だけで表し、特殊キーはsend_keysで名前を指定させる。
-        if request.action == Action::SendInput
-            && request
-                .text
-                .chars()
-                .any(|c| c.is_control() && c != '\n' && c != '\t')
+        if request.text.chars().any(hidden_char)
+            || request.cwd.as_deref().is_some_and(|cwd| {
+                cwd.chars()
+                    .any(|c| hidden_char(c) || c == '\n' || c == '\t')
+            })
         {
-            bail!("入力に制御文字は使えません。Enterはenter、特殊キーはsend_keysで送ってください");
+            bail!("見えない文字(制御文字・向きを変える文字など)は使えません。Enterはenter、特殊キーはsend_keysで送ってください");
         }
         // キー名の誤りは、利用者へ確認を出す前に拒否する。
         if request.action == Action::SendKeys {
@@ -614,8 +623,11 @@ impl Broker {
         let result = self
             .execute(&request, &operation_id, resolved, epoch, mode, &cancel)
             .await;
-        drop(guard);
+        // 実行中の印を外すのと結果を残すのは同じロックの中で行う。間が空くと、同じ要求IDの
+        // 2つ目が「実行中でも実行済みでもない」と見えて二重に実行される。
         let mut state = self.state.lock().unwrap();
+        state.active.remove(&key);
+        std::mem::forget(guard);
         if let Ok(value) = &result {
             state
                 .results
@@ -847,6 +859,8 @@ mod tests {
             .configure(Mode::Confirm, &[(id.clone(), generation)], NO_LIMIT)
             .unwrap();
         for text in [
+            "ls \u{202e}txt.exe",
+            "a\u{200b}b",
             "rm -rf ~/work\r",
             "\x1b[201~ls",
             "a\x08b",

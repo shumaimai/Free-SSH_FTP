@@ -240,7 +240,18 @@ pub fn challenge_reply(
         (Challenge::Secret { .. }, ChallengeAnswer::Secret { value }) => Reply::Secret(value),
         _ => return Err("認証応答の種類が違います".into()),
     };
-    let trusted = matches!(reply, Reply::HostTrust { accept: true, .. });
+    // 接続側(ssh.rs)と同じ条件で保存する。鍵が変わった場合は「trust」の入力が要る。
+    // 条件を満たさない応答で接続は断られるので、信頼情報も保存しない。
+    let trusted = match (&reply, &request.challenge) {
+        (
+            Reply::HostTrust {
+                accept: true,
+                confirmation,
+            },
+            Challenge::HostKey { old, .. },
+        ) => old.is_none() || confirmation == "trust",
+        _ => false,
+    };
     let mut saved = None;
     state
         .interaction

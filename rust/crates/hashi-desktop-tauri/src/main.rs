@@ -165,14 +165,20 @@ fn main() {
             session::session_close,
         ])
         .on_window_event(|window, event| {
-            if let WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
-                // ローカルのパスは画面へ渡さず、件数だけ知らせる。
+            if let WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, position }) = event {
+                // ローカルのパスは画面へ渡さず、件数と落とした位置だけ知らせる。
+                // 送信するかどうかは、画面がファイル一覧の上に落ちたかで決める。
                 let app = window.app_handle();
                 let count = app
                     .state::<app::AppState>()
                     .files
                     .set_dropped(paths.clone());
-                let _ = tauri::Emitter::emit(app, "file-drop", count);
+                let scale = window.scale_factor().unwrap_or(1.0);
+                let _ = tauri::Emitter::emit(
+                    app,
+                    "file-drop",
+                    serde_json::json!({"count": count, "x": position.x / scale, "y": position.y / scale}),
+                );
             }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 // 未保存の編集があれば画面で確認する。なければ接続・端末を順に終わらせて閉じる。

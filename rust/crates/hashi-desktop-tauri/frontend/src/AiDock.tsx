@@ -504,6 +504,7 @@ export function AiDock({ api, targets, onManage }: Props) {
         )}
       </div>
       <PreviewDialog
+        mode={mode}
         context={preview}
         onSend={(c) => void confirm(c)}
         onCancel={() => {
@@ -525,7 +526,17 @@ export function AiDock({ api, targets, onManage }: Props) {
   );
 }
 
-function PreviewDialog({ context, onSend, onCancel }: { context: string | null; onSend(c: string): void; onCancel(): void }) {
+function PreviewDialog({
+  mode,
+  context,
+  onSend,
+  onCancel,
+}: {
+  mode: ShareMode;
+  context: string | null;
+  onSend(c: string): void;
+  onCancel(): void;
+}) {
   const styles = useStyles();
   const [text, setText] = useState('');
   useEffect(() => setText(context ?? ''), [context]);
@@ -536,6 +547,13 @@ function PreviewDialog({ context, onSend, onCancel }: { context: string | null; 
           <DialogTitle>AIへ送る内容の確認</DialogTitle>
           <DialogContent>
             <Caption1>端末の画面がそのままAIに送られます。秘密情報が残っていないか確認し、必要なら直してください。</Caption1>
+            {mode === 'consult' ? (
+              <Caption1>「読むだけ」では、AIが見るのはここで送る内容だけです。</Caption1>
+            ) : (
+              <Caption1 className={styles.error}>
+                操作を任せるモードでは、AIはこのあとも共有中の端末の出力を読み取ります(秘密らしい文字列は伏せますが、完全ではありません)。
+              </Caption1>
+            )}
             <Textarea
               textarea={{ className: styles.mono }}
               style={{ width: '100%', marginTop: 8 }}

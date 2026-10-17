@@ -711,6 +711,7 @@ export function App({ api }: { api: Api }) {
       />
       <ExternalDialog api={api} open={externalOpen} targets={shareTargets} onClose={() => setExternalOpen(false)} />
       <ApprovalDialog
+        key={approvals[0]?.id ?? 'none'}
         request={approvals[0] ?? null}
         onAnswer={(allow) => {
           const current = approvals[0];

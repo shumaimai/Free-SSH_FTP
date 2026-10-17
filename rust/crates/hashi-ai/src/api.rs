@@ -191,8 +191,9 @@ impl ApiProvider {
             "messages" => self.anthropic(messages, instructions, enabled, cancel, on_text),
             _ => self.chat(messages, instructions, enabled, cancel, on_text),
         }?;
-        if !self.use_tools && !reply.tool_calls.is_empty() {
-            bail!("相談専用の接続がツールを要求しました。実行していません");
+        // 道具を渡していない送信(相談専用の接続・相談のみの会話)で返った道具の要求は実行しない。
+        if enabled.is_empty() && !reply.tool_calls.is_empty() {
+            bail!("道具を渡していないのに、AIが道具を要求しました。実行していません");
         }
         Ok(reply)
     }
@@ -205,7 +206,8 @@ impl ApiProvider {
         let mut payload = json!({"model": self.model, "store": false, "stream": true,
             "include": ["reasoning.encrypted_content"], "instructions": instructions,
             "input": responses_input(messages)});
-        if self.use_tools {
+        // 道具が無い送信(相談のみ)ではtoolsを送らない(空の配列を断るAPIがある)。
+        if self.use_tools && !tools.is_empty() {
             payload["tools"] = tools
                 .iter()
                 .map(|tool| {
@@ -320,7 +322,8 @@ impl ApiProvider {
     ) -> Result<Reply> {
         let mut payload = json!({"model": self.model, "system": instructions, "max_tokens": 4096,
             "stream": true, "messages": Self::anthropic_history(messages)});
-        if self.use_tools {
+        // 道具が無い送信(相談のみ)ではtoolsを送らない(空の配列を断るAPIがある)。
+        if self.use_tools && !tools.is_empty() {
             payload["tools"] = tools
                 .iter()
                 .map(|tool| {
@@ -443,7 +446,8 @@ impl ApiProvider {
         on_text: &mut dyn FnMut(&str),
     ) -> Result<Reply> {
         let mut payload = json!({"model": self.model, "messages": Self::chat_history(messages, instructions), "stream": true});
-        if self.use_tools {
+        // 道具が無い送信(相談のみ)ではtoolsを送らない(空の配列を断るAPIがある)。
+        if self.use_tools && !tools.is_empty() {
             payload["tools"] = tools
                 .iter()
                 .map(|tool| json!({"type": "function", "function": tool}))
