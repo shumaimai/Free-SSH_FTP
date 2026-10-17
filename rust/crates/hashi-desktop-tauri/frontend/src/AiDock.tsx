@@ -20,9 +20,33 @@ import {
   Tooltip,
   tokens,
 } from '@fluentui/react-components';
-import { Bot20Regular, ChatAdd20Regular, Send20Filled, Stop20Regular } from '@fluentui/react-icons';
+import { Attach20Regular, Bot20Regular, ChatAdd20Regular, Dismiss12Regular, Send20Filled, Stop20Regular } from '@fluentui/react-icons';
 import type { Api } from './api';
-import type { AiModelsList, AiStatus, ShareMode } from './types';
+import type { AiAttachment, AiModelsList, AiStatus, ShareMode } from './types';
+
+/** 添付の上限(Rust側でも同じ上限で検査する)。 */
+const MAX_FILES = 4;
+const MAX_BYTES = 5 * 1024 * 1024;
+
+interface Pending extends AiAttachment {
+  /** 画像なら縮小表示用のdata URL。 */
+  thumb: string | null;
+}
+
+/** ファイルを読み、中身をbase64にする。 */
+function readFile(file: File): Promise<Pending> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error(`「${file.name}」を読めませんでした`));
+    reader.onload = () => {
+      const url = String(reader.result);
+      const data = url.slice(url.indexOf(',') + 1);
+      const name = file.name || (file.type.startsWith('image/') ? '貼り付けた画像' : '貼り付けたファイル');
+      resolve({ name, data, thumb: file.type.startsWith('image/') ? url : null });
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 const useStyles = makeStyles({
   root: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, gap: '10px' },
@@ -68,6 +92,19 @@ const useStyles = makeStyles({
   error: { color: tokens.colorPaletteRedForeground1, whiteSpace: 'pre-wrap' },
   note: { color: tokens.colorNeutralForeground3 },
   inputRow: { display: 'flex', alignItems: 'flex-end', gap: '6px' },
+  chips: { display: 'flex', flexWrap: 'wrap', gap: '6px' },
+  chip: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '4px',
+    maxWidth: '100%',
+    padding: '2px 4px 2px 6px',
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorNeutralBackground3,
+    fontSize: tokens.fontSizeBase200,
+  },
+  chipName: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '160px' },
+  thumb: { width: '28px', height: '28px', objectFit: 'cover', borderRadius: tokens.borderRadiusSmall },
   mono: { fontFamily: 'Consolas, "Cascadia Mono", monospace', fontSize: '13px' },
 });
 
@@ -138,6 +175,29 @@ export function AiDock({ api, targets, onManage }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   // 確認窓で「戻る」を押したとき、入力欄へ戻す質問。
   const pendingText = useRef('');
+  const [files, setFiles] = useState<Pending[]>([]);
+  const pendingFiles = useRef<Pending[]>([]);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  const addFiles = (list: File[]) => {
+    if (list.length === 0) return;
+    const big = list.find((f) => f.size > MAX_BYTES);
+    if (big) {
+      setMessages((old) => [...old, { role: 'error', text: `「${big.name}」が大きすぎます(5MBまで)` }]);
+      return;
+    }
+    void Promise.all(list.map(readFile))
+      .then((read) =>
+        setFiles((old) => {
+          const next = [...old, ...read];
+          if (next.length > MAX_FILES) {
+            setMessages((m) => [...m, { role: 'error', text: `添付できるのは${MAX_FILES}件までです` }]);
+          }
+          return next.slice(0, MAX_FILES);
+        }),
+      )
+      .catch((error) => setMessages((old) => [...old, { role: 'error', text: String(error) }]));
+  };
   // 使用中のモデルが変わったら、前の会話の表示は引き継がない。
   const shownModel = useRef<string | null>(null);
 
@@ -211,16 +271,25 @@ export function AiDock({ api, targets, onManage }: Props) {
 
   const send = async () => {
     const text = question.trim();
-    if (!text || running) return;
+    if ((!text && files.length === 0) || running) return;
+    const attached = files;
     setQuestion('');
-    setMessages((old) => [...old, { role: 'user', text }]);
+    setFiles([]);
+    const shown = attached.length ? `${text}${text ? '\n' : ''}[添付] ${attached.map((f) => f.name).join(', ')}` : text;
+    setMessages((old) => [...old, { role: 'user', text: shown }]);
     setRunning(true);
     try {
-      const result = await api.aiSend(text, selected, mode);
+      const result = await api.aiSend(
+        text,
+        selected,
+        mode,
+        attached.map(({ name, data }) => ({ name, data })),
+      );
       if (result.preview !== null) {
         // 送る前の確認。会話はまだ始まっていない。
         setRunning(false);
-        pendingText.current = text;
+        pendingText.current = shown;
+        pendingFiles.current = attached;
         setPreview(result.preview);
       }
     } catch (error) {
@@ -366,7 +435,42 @@ export function AiDock({ api, targets, onManage }: Props) {
           </div>
         )}
       </div>
+      {files.length > 0 && (
+        <div className={styles.chips}>
+          {files.map((f, i) => (
+            <span key={i} className={styles.chip} title={f.name}>
+              {f.thumb && <img className={styles.thumb} src={f.thumb} alt="" />}
+              <span className={styles.chipName}>{f.name}</span>
+              <Button
+                size="small"
+                appearance="transparent"
+                aria-label={`${f.name}を外す`}
+                icon={<Dismiss12Regular />}
+                onClick={() => setFiles((old) => old.filter((_, j) => j !== i))}
+              />
+            </span>
+          ))}
+        </div>
+      )}
       <div className={styles.inputRow}>
+        <input
+          ref={fileInput}
+          type="file"
+          multiple
+          hidden
+          onChange={(e) => {
+            addFiles(Array.from(e.target.files ?? []));
+            e.target.value = '';
+          }}
+        />
+        <Tooltip content="ファイルを添付(画像・テキスト。Ctrl+Vで貼り付けも可)" relationship="label">
+          <Button
+            appearance="subtle"
+            icon={<Attach20Regular />}
+            disabled={running || files.length >= MAX_FILES}
+            onClick={() => fileInput.current?.click()}
+          />
+        </Tooltip>
         <Textarea
           className={styles.grow}
           resize="none"
@@ -374,6 +478,14 @@ export function AiDock({ api, targets, onManage }: Props) {
           value={question}
           placeholder="質問を入力（Ctrl+Enterで送信）"
           onChange={(_, d) => setQuestion(d.value)}
+          onPaste={(e) => {
+            // 画像などのファイルを貼り付けたら添付にする。文字の貼り付けはそのまま。
+            const pasted = Array.from(e.clipboardData.files);
+            if (pasted.length > 0) {
+              e.preventDefault();
+              addFiles(pasted);
+            }
+          }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.nativeEvent.isComposing) {
               e.preventDefault();
@@ -387,7 +499,7 @@ export function AiDock({ api, targets, onManage }: Props) {
           </Tooltip>
         ) : (
           <Tooltip content="送信" relationship="label">
-            <Button appearance="primary" icon={<Send20Filled />} disabled={!question.trim()} onClick={() => void send()} />
+            <Button appearance="primary" icon={<Send20Filled />} disabled={!question.trim() && files.length === 0} onClick={() => void send()} />
           </Tooltip>
         )}
       </div>
@@ -403,7 +515,10 @@ export function AiDock({ api, targets, onManage }: Props) {
             const last = old[old.length - 1];
             return last?.role === 'user' && last.text === text ? old.slice(0, -1) : old;
           });
-          setQuestion((current) => current || text);
+          // 表示用の「[添付] …」行は入力欄へ戻さず、添付は添付として戻す。
+          const typed = pendingFiles.current.length ? text.replace(/\n?\[添付\] [^\n]*$/, '') : text;
+          setQuestion((current) => current || typed);
+          setFiles((current) => (current.length ? current : pendingFiles.current));
         }}
       />
     </div>

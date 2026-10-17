@@ -42,6 +42,7 @@ pub struct AiState {
 
 pub(crate) struct Pending {
     question: String,
+    images: Vec<serde_json::Value>,
     mode: Mode,
     ids: Vec<(String, u64)>,
 }
@@ -383,14 +384,18 @@ pub async fn ai_send(
     question: String,
     targets: Vec<String>,
     mode: String,
+    attachments: Option<Vec<crate::attach::Attachment>>,
 ) -> Result<SendResult, String> {
     let question = question.trim().to_owned();
-    if question.is_empty() {
+    let attachments = attachments.unwrap_or_default();
+    if question.is_empty() && attachments.is_empty() {
         return Err("質問を入力してください".into());
     }
     if question.len() > 64 * 1024 {
         return Err("質問が長すぎます".into());
     }
+    let (attached, images) = crate::attach::prepare(attachments)?;
+    let question = format!("{question}{attached}").trim().to_owned();
     if state
         .ai
         .running
@@ -423,7 +428,7 @@ pub async fn ai_send(
             .broker
             .configure(mode, &ids, NO_LIMIT)
             .map_err(|error| error.to_string())?;
-        begin(&app, &state, question, String::new(), mode)?;
+        begin(&app, &state, question, images, String::new(), mode)?;
         return Ok(SendResult { preview: None });
     }
     // 送る前の確認のあいだは、読み取りだけを許す。選んだ実行モードは確認されてから与える。
@@ -435,6 +440,7 @@ pub async fn ai_send(
     let context = hashi_ai::observe::context_snapshot(&state.ai.broker);
     *state.ai.preview.lock().map_err(|_| "状態が不正です")? = Some(Pending {
         question,
+        images,
         mode,
         ids,
     });
@@ -467,7 +473,14 @@ pub async fn ai_confirm(
         .broker
         .configure(pending.mode, &pending.ids, NO_LIMIT)
         .map_err(|error| error.to_string())?;
-    begin(&app, &state, pending.question, context, pending.mode)
+    begin(
+        &app,
+        &state,
+        pending.question,
+        pending.images,
+        context,
+        pending.mode,
+    )
 }
 
 #[tauri::command]
@@ -482,6 +495,7 @@ fn begin(
     app: &AppHandle,
     state: &AppState,
     question: String,
+    images: Vec<serde_json::Value>,
     context: String,
     mode: Mode,
 ) -> Result<(), String> {
@@ -508,7 +522,14 @@ fn begin(
             // 停止で取り消した前回のtokenを使い回さない。
             conversation.tools.cancel = token.child_token();
             conversation
-                .ask_mode(&question, &context, &token, delta_tx, mode == Mode::Consult)
+                .ask_with(
+                    &question,
+                    &context,
+                    images,
+                    &token,
+                    delta_tx,
+                    mode == Mode::Consult,
+                )
                 .await
         };
         // 途中の文字列をすべて画面へ渡してから終わりを知らせる（順番が逆だと本文が二重になる）。

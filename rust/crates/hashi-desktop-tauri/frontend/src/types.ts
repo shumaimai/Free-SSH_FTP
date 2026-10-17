@@ -233,6 +233,13 @@ export interface ExternalStatus {
   mcpConfig: string;
 }
 
+/** AIへの質問に添付するファイル。中身だけを渡し、パスは渡さない。 */
+export interface AiAttachment {
+  name: string;
+  /** 中身(base64)。 */
+  data: string;
+}
+
 export interface UiPrefs {
   remoteHidden: boolean;
   localHidden: boolean;

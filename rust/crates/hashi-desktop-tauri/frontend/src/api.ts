@@ -37,6 +37,7 @@ import type {
   ImportOptions,
   ImportResult,
   SecretsStatus,
+  AiAttachment,
 } from './types';
 
 export interface Api {
@@ -69,7 +70,12 @@ export interface Api {
   onAiModelsChanged(handler: () => void): Promise<() => void>;
   aiClear(): Promise<void>;
   aiStop(): Promise<void>;
-  aiSend(question: string, targets: string[], mode: ShareMode): Promise<{ preview: string | null }>;
+  aiSend(
+    question: string,
+    targets: string[],
+    mode: ShareMode,
+    attachments: AiAttachment[],
+  ): Promise<{ preview: string | null }>;
   aiConfirm(context: string): Promise<void>;
   aiCancelPreview(): Promise<void>;
   approvalReply(id: string, allow: boolean): Promise<void>;
@@ -187,7 +193,7 @@ async function tauriApi(): Promise<Api> {
     onAiModelsChanged: (handler) => listen('ai-models-changed', () => handler()),
     aiClear: () => invoke('ai_clear'),
     aiStop: () => invoke('ai_stop'),
-    aiSend: (question, targets, mode) => invoke('ai_send', { question, targets, mode }),
+    aiSend: (question, targets, mode, attachments) => invoke('ai_send', { question, targets, mode, attachments }),
     aiConfirm: (context) => invoke('ai_confirm', { context }),
     aiCancelPreview: () => invoke('ai_cancel_preview'),
     approvalReply: (id, allow) => invoke('approval_reply', { id, allow }),

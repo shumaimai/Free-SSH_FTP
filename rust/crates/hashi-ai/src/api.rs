@@ -34,6 +34,19 @@ pub struct Reply {
     pub raw_output: Option<Value>,
 }
 
+/// 利用者の発言に添付された画像(`images: [{media_type, data(base64)}]`)。
+fn images(message: &Message) -> &[Value] {
+    message["images"].as_array().map_or(&[], Vec::as_slice)
+}
+
+fn data_url(image: &Value) -> String {
+    format!(
+        "data:{};base64,{}",
+        image["media_type"].as_str().unwrap_or_default(),
+        image["data"].as_str().unwrap_or_default()
+    )
+}
+
 /// Python版`responses_input`。
 pub fn responses_input(messages: &[Message]) -> Vec<Value> {
     let mut items = vec![];
@@ -46,7 +59,16 @@ pub fn responses_input(messages: &[Message]) -> Vec<Value> {
         } else if let Some(Value::Array(raw)) = message.get("raw_output") {
             items.extend(raw.iter().cloned());
         } else {
-            if message["content"]
+            let attached = images(message);
+            if !attached.is_empty() {
+                let mut content = vec![json!({"type": "input_text", "text": message["content"]})];
+                content.extend(
+                    attached
+                        .iter()
+                        .map(|image| json!({"type": "input_image", "image_url": data_url(image)})),
+                );
+                items.push(json!({"role": message["role"], "content": content}));
+            } else if message["content"]
                 .as_str()
                 .is_some_and(|text| !text.is_empty())
             {
@@ -266,6 +288,10 @@ impl ApiProvider {
                 if let Some(text) = message["content"].as_str().filter(|text| !text.is_empty()) {
                     blocks.push(json!({"type": "text", "text": text}));
                 }
+                for image in images(message) {
+                    blocks.push(json!({"type": "image", "source": {"type": "base64",
+                        "media_type": image["media_type"], "data": image["data"]}}));
+                }
                 for call in message["tool_calls"].as_array().into_iter().flatten() {
                     blocks.push(json!({"type": "tool_use", "id": call["id"], "name": call["name"], "input": call["arguments"]}));
                 }
@@ -381,6 +407,14 @@ impl ApiProvider {
         let mut history = vec![json!({"role": "system", "content": instructions})];
         for message in messages {
             let mut item = json!({"role": message["role"], "content": message["content"]});
+            let attached = images(message);
+            if !attached.is_empty() {
+                let mut content = vec![json!({"type": "text", "text": message["content"]})];
+                content.extend(attached.iter().map(
+                    |image| json!({"type": "image_url", "image_url": {"url": data_url(image)}}),
+                ));
+                item["content"] = Value::Array(content);
+            }
             if message["role"] == "tool" {
                 item["tool_call_id"] = message["tool_call_id"].clone();
             }
@@ -556,6 +590,21 @@ mod tests {
         ];
         let input = responses_input(&messages);
         assert_eq!(input[0], json!({"role": "user", "content": "q"}));
+        // 添付画像は形式ごとの書き方へ変換する。
+        let with_image = [json!({"role": "user", "content": "見て",
+            "images": [{"media_type": "image/png", "data": "AAA="}]})];
+        assert_eq!(
+            responses_input(&with_image)[0]["content"][1],
+            json!({"type": "input_image", "image_url": "data:image/png;base64,AAA="})
+        );
+        assert_eq!(
+            ApiProvider::anthropic_history(&with_image)[0]["content"][1]["source"],
+            json!({"type": "base64", "media_type": "image/png", "data": "AAA="})
+        );
+        assert_eq!(
+            ApiProvider::chat_history(&with_image, "s")[1]["content"][1],
+            json!({"type": "image_url", "image_url": {"url": "data:image/png;base64,AAA="}})
+        );
         assert_eq!(
             input[1],
             json!({"type": "function_call", "call_id": "c1", "name": "list_sessions", "arguments": "{}"})

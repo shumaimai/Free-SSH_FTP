@@ -270,7 +270,8 @@ export function mockApi(): Api {
     },
     aiClear: async () => {},
     aiStop: async () => {},
-    aiSend: async (question, targets) => {
+    aiSend: async (question, targets, _mode, attachments) => {
+      if (attachments.length) question = `${question}\n(添付 ${attachments.length}件)`;
       pendingQuestion = question;
       if (targets.length > 0) {
         return { preview: JSON.stringify({ terminal_observations: [{ label: 'CMD', screen: '$ df -h\nFilesystem 98% /', trust: 'untrusted_observation' }] }, null, 2) };

@@ -8,6 +8,24 @@ use tokio_util::sync::CancellationToken;
 
 /// 会話全体（JSON）の文字数の上限。
 const MAX_CONVERSATION: usize = 256_000;
+/// 会話全体で添付できる画像の枚数。
+const MAX_IMAGES: usize = 12;
+
+/// 会話の長さ(文字数)。添付画像は文字数に数えない(枚数は`MAX_IMAGES`で別に制限する)。
+fn text_length(messages: &[Value]) -> Result<usize> {
+    let mut total = 0;
+    for message in messages {
+        let text = if message.get("images").is_some() {
+            let mut copy = message.clone();
+            copy.as_object_mut().map(|m| m.remove("images"));
+            serde_json::to_string(&copy)?
+        } else {
+            serde_json::to_string(message)?
+        };
+        total += text.chars().count();
+    }
+    Ok(total)
+}
 
 /// 応答の生成を担うもの。テストでは偽の応答を返す。
 pub trait Provider: Send + Sync {
@@ -61,18 +79,44 @@ impl Conversation {
         on_text: mpsc::Sender<String>,
         read_only: bool,
     ) -> Result<String> {
+        self.ask_with(question, context, vec![], cancel, on_text, read_only)
+            .await
+    }
+
+    /// `images`は利用者が添付した画像(`{media_type, data(base64)}`)。発言と一緒に会話へ残す。
+    pub async fn ask_with(
+        &mut self,
+        question: &str,
+        context: &str,
+        images: Vec<Value>,
+        cancel: &CancellationToken,
+        on_text: mpsc::Sender<String>,
+        read_only: bool,
+    ) -> Result<String> {
         let content = if context.is_empty() {
             question.to_owned()
         } else {
             format!("{question}\n\n観測データ:\n{context}")
         };
         // 上限を超える質問は会話へ積まずに断る（積んでから断ると、以後の送信がすべて失敗する）。
-        let length = serde_json::to_string(&self.messages)?.chars().count();
+        let length = text_length(&self.messages)?;
         if length + content.chars().count() > MAX_CONVERSATION {
             bail!("会話が長くなりました。会話を消去して続けてください");
         }
-        self.messages
-            .push(json!({"role": "user", "content": content}));
+        // 画像は毎回の要求で送り直すので、会話全体の枚数にも上限を置く。
+        let attached: usize = self
+            .messages
+            .iter()
+            .map(|m| m["images"].as_array().map_or(0, Vec::len))
+            .sum();
+        if attached + images.len() > MAX_IMAGES {
+            bail!("会話に添付した画像が多すぎます。会話を消去して続けてください");
+        }
+        let mut message = json!({"role": "user", "content": content});
+        if !images.is_empty() {
+            message["images"] = Value::Array(images);
+        }
+        self.messages.push(message);
         let stopped = || anyhow::anyhow!("AI処理を停止しました");
         let tools: Vec<Value> = crate::tools::definitions()
             .into_iter()
@@ -84,7 +128,7 @@ impl Conversation {
             if cancel.is_cancelled() {
                 bail!(stopped());
             }
-            if serde_json::to_string(&self.messages)?.chars().count() > MAX_CONVERSATION {
+            if text_length(&self.messages)? > MAX_CONVERSATION {
                 bail!("会話が長くなりました。会話を消去して続けてください");
             }
             let (provider, messages, token, sender) = (

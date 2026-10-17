@@ -5,6 +5,7 @@
 mod ai;
 mod ai_models;
 mod app;
+mod attach;
 mod editor;
 mod external;
 mod files;
