@@ -92,11 +92,23 @@ pub struct MouseInput {
     pub ctrl: bool,
 }
 
+/// 受信出力のプレーンテキストログ。LFで確定した行だけを集め、GUI側が取り出して保存する。
+#[derive(Default)]
+struct LineLog {
+    lines: VecDeque<String>,
+    bytes: usize,
+    dropped: usize,
+}
+const LOG_LINES: usize = 4096;
+const LOG_BYTES: usize = 4 * 1024 * 1024;
+const LOG_WRAPPED_ROWS: usize = 64;
+
 pub struct Terminal {
     term: Term<Sink>,
     parser: Processor,
     sink: Sink,
     pub size: Size,
+    log: Option<LineLog>,
 }
 impl Terminal {
     pub fn new(columns: usize, rows: usize) -> Self {
@@ -120,10 +132,95 @@ impl Terminal {
             parser: Processor::default(),
             sink,
             size,
+            log: None,
         }
+    }
+    /// 受信出力のログ収集を切り替える。無効化すると未取出しの行も捨てる。
+    pub fn set_line_log(&mut self, enabled: bool) {
+        match (enabled, self.log.is_some()) {
+            (true, false) => self.log = Some(LineLog::default()),
+            (false, true) => self.log = None,
+            _ => {}
+        }
+    }
+    /// LFで確定した行と、上限超過で捨てた行数を返す。代替画面（vim等）の内容は含めない。
+    pub fn take_log_lines(&mut self) -> (Vec<String>, usize) {
+        match &mut self.log {
+            Some(log) => {
+                log.bytes = 0;
+                (
+                    log.lines.drain(..).collect(),
+                    std::mem::take(&mut log.dropped),
+                )
+            }
+            None => (vec![], 0),
+        }
+    }
+    /// 終了時に、まだLFで確定していないカーソル行（最後のプロンプト等）を返す。
+    pub fn pending_log_line(&self) -> Option<String> {
+        if self.log.is_none() || self.term.mode().contains(TermMode::ALT_SCREEN) {
+            return None;
+        }
+        let text = self.cursor_logical_line();
+        (!text.is_empty()).then_some(text)
+    }
+    fn row_text(&self, line: Line) -> String {
+        let row = &self.term.grid()[line];
+        let mut text = String::new();
+        for column in 0..self.size.columns {
+            let cell = &row[Column(column)];
+            if cell
+                .flags
+                .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+            {
+                continue;
+            }
+            text.push(cell.c);
+            if let Some(extra) = cell.zerowidth() {
+                text.extend(extra.iter());
+            }
+        }
+        text
+    }
+    /// カーソル行と、折返しでつながる直前の行をまとめた1行。
+    fn cursor_logical_line(&self) -> String {
+        let grid = self.term.grid();
+        let top = -(grid.history_size() as i32);
+        let last = Column(self.size.columns.saturating_sub(1));
+        let mut start = grid.cursor.point.line;
+        for _ in 0..LOG_WRAPPED_ROWS {
+            let previous = Line(start.0 - 1);
+            if previous.0 < top || !grid[previous][last].flags.contains(Flags::WRAPLINE) {
+                break;
+            }
+            start = previous;
+        }
+        let mut text = String::new();
+        let mut line = start;
+        while line <= grid.cursor.point.line {
+            text.push_str(&self.row_text(line));
+            line = Line(line.0 + 1);
+        }
+        text.trim_end().to_owned()
+    }
+    fn log_cursor_line(&mut self) {
+        if self.log.is_none() || self.term.mode().contains(TermMode::ALT_SCREEN) {
+            return;
+        }
+        let text = self.cursor_logical_line();
+        let Some(log) = &mut self.log else { return };
+        if log.lines.len() >= LOG_LINES || log.bytes + text.len() > LOG_BYTES {
+            log.dropped += 1;
+            return;
+        }
+        log.bytes += text.len();
+        log.lines.push_back(text);
     }
     pub fn feed(&mut self, bytes: &[u8]) {
         for byte in bytes {
+            if *byte == b'\n' {
+                self.log_cursor_line();
+            }
             self.parser
                 .advance(&mut self.term, std::slice::from_ref(byte));
             // 結合文字は表示セルごとに32個まで。CSIで移動する前に上限を適用する。
@@ -615,6 +712,35 @@ mod tests {
         assert_eq!(terminal.visible_text()[0], "日本語");
         terminal.resize(100, 30);
         assert_eq!(terminal.visible_text()[0], "日本語");
+    }
+    #[test]
+    fn line_log_records_committed_lines_but_not_alternate_screen() {
+        let mut terminal = Terminal::new(10, 4);
+        terminal.feed(b"before-log\r\n");
+        terminal.set_line_log(true);
+        terminal.feed("progress 1\rprogress 2\r\n日本語の長い行が折り返す\r\n".as_bytes());
+        terminal.feed(b"\x1b[?1049hvim screen\r\nmore\r\n\x1b[?1049l");
+        terminal.feed(b"$ ");
+        let (lines, dropped) = terminal.take_log_lines();
+        assert_eq!(lines, ["progress 2", "日本語の長い行が折り返す"]);
+        assert_eq!(dropped, 0);
+        assert_eq!(terminal.pending_log_line().as_deref(), Some("$"));
+        terminal.set_line_log(false);
+        terminal.feed(b"off\r\n");
+        assert!(terminal.take_log_lines().0.is_empty());
+    }
+    #[test]
+    fn line_log_is_bounded_and_counts_dropped_lines() {
+        let mut terminal = Terminal::new(20, 4);
+        terminal.set_line_log(true);
+        for _ in 0..LOG_LINES + 3 {
+            terminal.feed(b"x\r\n");
+        }
+        let (lines, dropped) = terminal.take_log_lines();
+        assert_eq!(lines.len(), LOG_LINES);
+        assert_eq!(dropped, 3);
+        terminal.feed(b"y\r\n");
+        assert_eq!(terminal.take_log_lines(), (vec!["y".to_owned()], 0));
     }
     #[test]
     fn clipboard_is_never_loaded_or_written_by_remote_sequences() {

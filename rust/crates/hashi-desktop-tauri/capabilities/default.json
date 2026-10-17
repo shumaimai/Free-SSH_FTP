@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "メイン画面。プラグインは使わず、アプリ自身のcommandだけを呼べる。",
+  "windows": ["main"],
+  "permissions": ["core:event:default", "core:window:default"]
+}

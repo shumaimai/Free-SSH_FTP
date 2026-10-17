@@ -26,6 +26,10 @@ fn indexed(index: usize) -> egui::Color32 {
     }
 }
 pub(super) fn show(ui: &mut egui::Ui, tab: &mut Tab) {
+    if tab.closing || tab.work.is_closed() {
+        ui.label("端末の終了処理中です");
+        return;
+    }
     if tab.search_open {
         ui.horizontal(|ui| {
             ui.label("端末検索");
@@ -54,10 +58,16 @@ pub(super) fn show(ui: &mut egui::Ui, tab: &mut Tab) {
                 tab.pending_size = Some(size);
             }
         }
-        if let Some(local) = &tab.local {
-            if let Ok(terminal) = local.lock() {
-                let _ = terminal.resize(columns as u16, rows as u16);
-            }
+        if tab.local.is_some() {
+            tab.pending_local_size = Some((columns as u16, rows as u16));
+        }
+    }
+    if let (Some(local), Some((columns, rows))) = (&tab.local, tab.pending_local_size) {
+        if let Ok(terminal) = local.try_lock() {
+            let _ = terminal.resize(columns, rows);
+            tab.pending_local_size = None;
+        } else {
+            ui.ctx().request_repaint();
         }
     }
     let (rect, response) = ui.allocate_exact_size(available, egui::Sense::click_and_drag());
