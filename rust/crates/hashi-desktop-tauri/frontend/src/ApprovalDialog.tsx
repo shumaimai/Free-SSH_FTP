@@ -60,6 +60,11 @@ export function ApprovalDialog({ request, onAnswer }: { request: ApprovalRequest
               <>
                 <Caption1>内容</Caption1>
                 <pre className={styles.code}>{request.text}</pre>
+                {request.action === 'send_input' && (
+                  <Caption1>
+                    {request.text.endsWith('\n') ? '入力のあと、Enterも送信します。' : 'Enterは送信しません(文字を打つだけです)。'}
+                  </Caption1>
+                )}
               </>
             )}
           </DialogContent>

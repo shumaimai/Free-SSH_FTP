@@ -34,8 +34,14 @@ pub fn definitions() -> Vec<Value> {
         ),
         (
             "send_input",
-            "対話端末へ入力。改行でEnter。コマンド完了は不明",
-            with(&[("text", json!({"type": "string"}))]),
+            "対話端末へ文字を入力する。enterをtrueにした時だけ最後にEnterを押す。\
+             コマンドを実行するにはenter=true。falseは文字を打つだけで実行されない\
+             (パスワード入力途中や、まだ確定したくない入力用)。\
+             送信できたことしか分からず、コマンドの完了や結果は不明。結果はread_outputで確認する",
+            with(&[
+                ("text", json!({"type": "string"})),
+                ("enter", json!({"type": "boolean"})),
+            ]),
         ),
         (
             "run_command",
@@ -125,6 +131,18 @@ impl TerminalTools {
             Some(Value::String(text)) => text.clone(),
             Some(_) => bail!("入力が不正です"),
         };
+        let enter = match arguments.get("enter") {
+            None => false,
+            Some(Value::Bool(enter)) => *enter,
+            Some(_) => bail!("enterが不正です"),
+        };
+        // Enterは利用者の確認画面にも見えるよう、本文の末尾の改行として表す。
+        let mut text = text;
+        if enter && !text.ends_with('\n') {
+            text.push('\n');
+        }
+        let submitted = text.ends_with('\n');
+        let partly = !submitted && text.contains('\n');
         let cwd = match arguments.get("cwd") {
             None | Some(Value::Null) => None,
             Some(Value::String(cwd)) => Some(cwd.clone()),
@@ -144,6 +162,18 @@ impl TerminalTools {
                 cancel: Some(self.cancel.clone()),
             })
             .await?;
+        if name == "send_input" {
+            result["enter_sent"] = json!(submitted);
+            result["note"] = json!(if submitted {
+                "入力とEnterを送信しました。実行結果はread_outputで確認してください(完了は不明)"
+            } else if partly {
+                "途中の改行までは送信済みですが、最後の行にはEnterを送っていないため未実行です。\
+                 実行するにはenter=trueで送ってください"
+            } else {
+                "文字だけを送信しました。Enterは送っていないため、まだ実行されていません。\
+                 実行するにはenter=trueで送ってください"
+            });
+        }
         result["session_id"] = json!(session_id);
         result["generation"] = json!(generation);
         result["operation_id"] = json!(request_id);
@@ -202,7 +232,7 @@ mod tests {
         assert!(tools
             .call(
                 "send_input",
-                &json!({"session_id": id, "generation": -1, "text": "x"}),
+                &json!({"session_id": id, "generation": -1, "text": "x", "enter": false}),
                 None
             )
             .await
@@ -210,7 +240,7 @@ mod tests {
         let sent = tools
             .call(
                 "send_input",
-                &json!({"session_id": id, "generation": generation, "text": "ls\n"}),
+                &json!({"session_id": id, "generation": generation, "text": "ls", "enter": true}),
                 Some("7".into()),
             )
             .await
@@ -220,6 +250,41 @@ mod tests {
             (Some("sent"), Some("7"))
         );
         assert_eq!(received.recv().await.unwrap(), b"ls\r");
+        // Enterなしは文字だけ。結果で「未実行」を明示する。
+        let typed = tools
+            .call(
+                "send_input",
+                &json!({"session_id": id, "generation": generation, "text": "ls", "enter": false}),
+                Some("8".into()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(typed["enter_sent"], false);
+        assert!(typed["note"]
+            .as_str()
+            .unwrap()
+            .contains("実行されていません"));
+        assert_eq!(received.recv().await.unwrap(), b"ls");
+        // 改行だけ(enter=trueと空文字)でも実行できる。本文に既にある改行は二重にしない。
+        let enter_only = tools
+            .call(
+                "send_input",
+                &json!({"session_id": id, "generation": generation, "text": "", "enter": true}),
+                Some("9".into()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(enter_only["enter_sent"], true);
+        assert_eq!(received.recv().await.unwrap(), b"\r");
+        tools
+            .call(
+                "send_input",
+                &json!({"session_id": id, "generation": generation, "text": "pwd\n", "enter": true}),
+                Some("10".into()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(received.recv().await.unwrap(), b"pwd\r");
         registry.update_output(&id, generation, "token: sk-abcdefghijk", "");
         let read = tools
             .call(

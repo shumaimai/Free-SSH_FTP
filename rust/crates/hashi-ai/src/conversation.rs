@@ -201,7 +201,7 @@ mod tests {
             Reply {
                 text: String::new(),
                 tool_calls: vec![json!({"id": "t1", "name": "send_input",
-                "arguments": {"session_id": id, "generation": generation, "text": "uptime\n"}})],
+                "arguments": {"session_id": id, "generation": generation, "text": "uptime", "enter": true}})],
                 raw_output: None,
             },
             Reply {
@@ -301,7 +301,8 @@ mod tests {
                 let _ = request.reply.send(false);
             }
         });
-        let args = json!({"session_id": id, "generation": generation, "text": "uptime\n"});
+        let args =
+            json!({"session_id": id, "generation": generation, "text": "uptime", "enter": true});
         let provider = Replies(
             Mutex::new(vec![Reply {
                 text: String::new(),

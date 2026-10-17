@@ -527,7 +527,7 @@ mod tests {
         )
         .await;
         assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 6);
-        let args = json!({"session_id": id, "generation": generation, "text": "ls\n"});
+        let args = json!({"session_id": id, "generation": generation, "text": "ls", "enter": true});
         let note = call(
             &endpoint,
             &client,
@@ -622,7 +622,7 @@ mod tests {
         let mut envelope = endpoint.clone();
         envelope["client"] = json!(client);
         envelope["message"] = json!({"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"send_input",
-            "arguments":{"session_id": id, "generation": generation, "text": "rm -rf /"}}});
+            "arguments":{"session_id": id, "generation": generation, "text": "rm -rf /", "enter": true}}});
         let mut raw = serde_json::to_vec(&envelope).unwrap();
         raw.push(b'\n');
         let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", bridge.port()))

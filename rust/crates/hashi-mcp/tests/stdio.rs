@@ -53,7 +53,7 @@ async fn helper_relays_json_rpc_and_disconnect() {
         }
         writeln!(stdin, "not json").unwrap();
         let call = json!({"jsonrpc":"2.0","id":"c1","method":"tools/call","params":{"name":"send_input",
-            "arguments":{"session_id": id, "generation": generation, "text": "echo 日本\n"}}});
+            "arguments":{"session_id": id, "generation": generation, "text": "echo 日本", "enter": true}}});
         writeln!(stdin, "{call}").unwrap();
         let mut stdout = BufReader::new(child.stdout.take().unwrap());
         let mut lines = vec![];
