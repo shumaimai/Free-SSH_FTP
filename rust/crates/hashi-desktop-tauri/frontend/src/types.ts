@@ -239,6 +239,11 @@ export interface UiPrefs {
   twoPane: boolean;
   dockOpen: boolean;
   dockTab: 'files' | 'ai';
+  /** ファイル/AIパネルの幅(px)。1ペイン用と2ペイン用。 */
+  dockWidth: number;
+  dualWidth: number;
+  /** 2ペインの左(ローカル)の割合 0.15〜0.85。 */
+  paneRatio: number;
 }
 
 export interface RegisterStatus {

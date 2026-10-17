@@ -52,10 +52,11 @@ import {
 import type { Api } from './api';
 import { PermissionDialog } from './PermissionDialog';
 import { LocalPane } from './LocalPane';
+import { Grip } from './Grip';
 import type { ExistingPolicy, FileEntry, FileJob, Follow, LocalListing, TransferMode } from './types';
 
 const useStyles = makeStyles({
-  dual: { display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: '12px', height: '100%', minHeight: 0 },
+  dual: { display: 'grid', columnGap: '3px', height: '100%', minHeight: 0 },
   ghost: {
     position: 'fixed',
     zIndex: 1000,
@@ -141,6 +142,9 @@ interface Props {
   onEdit: (sessionId: string, path: string) => void;
   /** 2ペイン（左にこのPCのフォルダ）の表示。ドックの幅は呼び出し側が変える。 */
   twoPane: boolean;
+  /** 2ペインの左(ローカル)の割合。 */
+  paneRatio: number;
+  onPaneRatio(value: number): void;
   remoteHidden: boolean;
   onRemoteHidden(value: boolean): void;
   localHidden: boolean;
@@ -152,7 +156,7 @@ interface Props {
   unavailableMessage: string;
 }
 
-export function FileDock({ api, sessionId, available, unavailableMessage, onEdit, twoPane, onTwoPane, remoteHidden: hidden, onRemoteHidden: setHidden, localHidden, onLocalHidden: setLocalHidden }: Props) {
+export function FileDock({ api, sessionId, available, unavailableMessage, onEdit, twoPane, onTwoPane, paneRatio, onPaneRatio, remoteHidden: hidden, onRemoteHidden: setHidden, localHidden, onLocalHidden: setLocalHidden }: Props) {
   const [permOpen, setPermOpen] = useState(false);
   const styles = useStyles();
   const [path, setPath] = useState('');
@@ -299,6 +303,8 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
     return () => void sub.then((off) => off());
   }, [api]);
 
+  const dualBox = useRef<HTMLDivElement>(null);
+  const ratioStart = useRef(0.5);
   const twoPaneRef = useRef(twoPane);
   twoPaneRef.current = twoPane;
 
@@ -701,7 +707,15 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
     </div>
   );
   return (
-    <div className={twoPane ? styles.dual : undefined} style={twoPane ? undefined : { height: '100%' }}>
+    <div
+      ref={dualBox}
+      className={twoPane ? styles.dual : undefined}
+      style={
+        twoPane
+          ? { gridTemplateColumns: `minmax(0,${paneRatio}fr) 6px minmax(0,${1 - paneRatio}fr)` }
+          : { height: '100%' }
+      }
+    >
       {twoPane && (
         <LocalPane
           path={local?.path ?? ''}
@@ -746,6 +760,20 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
           onHidden={setLocalHidden}
           onSync={setSync}
           onSend={sendSelected}
+        />
+      )}
+      {twoPane && (
+        <Grip
+          label="ローカルとリモートの幅"
+          onBegin={() => {
+            ratioStart.current = paneRatio;
+          }}
+          onMove={(dx) => {
+            const width = dualBox.current?.clientWidth ?? 0;
+            if (width <= 0) return;
+            onPaneRatio(Math.min(0.85, Math.max(0.15, ratioStart.current + dx / width)));
+          }}
+          onReset={() => onPaneRatio(0.5)}
         />
       )}
       {remotePane}

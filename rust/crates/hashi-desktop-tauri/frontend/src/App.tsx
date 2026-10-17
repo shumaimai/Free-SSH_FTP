@@ -45,7 +45,14 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { ForwardDialog } from './ForwardDialog';
 import { ExternalDialog } from './ExternalDialog';
 import { ApprovalDialog } from './ApprovalDialog';
+import { Grip } from './Grip';
 import { DEFAULT_APPEARANCE, UI_FONTS, fluentTheme, sanitize, type Appearance } from './appearance';
+
+/** ファイル/AIパネルの既定幅と下限、端末側に残す最低幅(px)。 */
+const DOCK_WIDTH = 420;
+const DUAL_WIDTH = 980;
+const MIN_DOCK = 280;
+const MIN_MAIN = 360;
 
 const useStyles = makeStyles({
   shell: {
@@ -79,7 +86,7 @@ const useStyles = makeStyles({
   work: { display: 'flex', minHeight: 0 },
   main: { position: 'relative', minHeight: 0, minWidth: 0, flex: 1, backgroundColor: tokens.colorNeutralBackground2 },
   dock: {
-    width: '420px',
+    minWidth: `${MIN_DOCK}px`,
     flexShrink: 0,
     padding: '12px',
     boxSizing: 'border-box',
@@ -143,11 +150,17 @@ export function App({ api }: { api: Api }) {
   const [dockTab, setDockTab] = useState<'files' | 'ai'>('files');
   const [remoteHidden, setRemoteHidden] = useState(false);
   const [localHidden, setLocalHidden] = useState(false);
+  // パネルの幅(1ペイン用/2ペイン用)と、2ペインの左右の割合。つまみのドラッグで変える。
+  const [dockWidth, setDockWidth] = useState(DOCK_WIDTH);
+  const [dualWidth, setDualWidth] = useState(DUAL_WIDTH);
+  const [paneRatio, setPaneRatio] = useState(0.5);
+  const dragStart = useRef(0);
   // 保存済みの小さな表示設定を読み込み終えるまでは、書き戻さない。
   const [prefsLoaded, setPrefsLoaded] = useState(false);
   const [filesState, setFilesState] = useState<Record<string, { available: boolean; message: string }>>({});
   const autoOpened = useRef(false);
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
+  const wide = twoPane && dockTab === 'files';
   const dark = appearance.mode === 'dark' || (appearance.mode === 'system' && systemDark);
   const theme = useMemo(() => {
     const base = fluentTheme(dark, appearance.accent);
@@ -183,6 +196,9 @@ export function App({ api }: { api: Api }) {
           setTwoPane(p.twoPane);
           setDockOpen(p.dockOpen);
           setDockTab(p.dockTab === 'ai' ? 'ai' : 'files');
+          if (Number.isFinite(p.dockWidth)) setDockWidth(p.dockWidth);
+          if (Number.isFinite(p.dualWidth)) setDualWidth(p.dualWidth);
+          if (Number.isFinite(p.paneRatio)) setPaneRatio(p.paneRatio);
           // 前回の状態を尊重する。接続のたびに勝手に開き直さない。
           autoOpened.current = true;
         }
@@ -224,8 +240,23 @@ export function App({ api }: { api: Api }) {
 
   useEffect(() => {
     if (!prefsLoaded) return;
-    void api.uiPrefsSet({ remoteHidden, localHidden, twoPane, dockOpen, dockTab }).catch(() => undefined);
-  }, [api, prefsLoaded, remoteHidden, localHidden, twoPane, dockOpen, dockTab]);
+    // つまみのドラッグ中に毎回書き込まないよう、変化が落ち着いてから保存する。
+    const timer = window.setTimeout(() => {
+      void api
+        .uiPrefsSet({
+          remoteHidden,
+          localHidden,
+          twoPane,
+          dockOpen,
+          dockTab,
+          dockWidth: Math.round(dockWidth),
+          dualWidth: Math.round(dualWidth),
+          paneRatio,
+        })
+        .catch(() => undefined);
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [api, prefsLoaded, remoteHidden, localHidden, twoPane, dockOpen, dockTab, dockWidth, dualWidth, paneRatio]);
 
   const openTab = useCallback((tab: Omit<TabInfo, 'key'>) => {
     const key = crypto.randomUUID();
@@ -563,9 +594,24 @@ export function App({ api }: { api: Api }) {
           ))}
         </div>
         {dockOpen && (
+          <Grip
+            label="パネルの幅"
+            onBegin={() => {
+              dragStart.current = wide ? dualWidth : dockWidth;
+            }}
+            onMove={(dx) => {
+              // 右へ動かすとパネルが狭くなる。端末側に最低限の幅を残す。
+              const max = Math.max(MIN_DOCK, window.innerWidth - MIN_MAIN);
+              const next = Math.min(max, Math.max(MIN_DOCK, dragStart.current - dx));
+              (wide ? setDualWidth : setDockWidth)(next);
+            }}
+            onReset={() => (wide ? setDualWidth(DUAL_WIDTH) : setDockWidth(DOCK_WIDTH))}
+          />
+        )}
+        {dockOpen && (
           <aside
             className={styles.dock}
-            style={twoPane && dockTab === 'files' ? { width: 'min(980px, 72vw)' } : undefined}
+            style={{ width: wide ? dualWidth : dockWidth, maxWidth: `calc(100vw - ${MIN_MAIN}px)` }}
           >
             <TabList
               size="small"
@@ -585,6 +631,8 @@ export function App({ api }: { api: Api }) {
                 onEdit={(id, path) => openEditor(api.editorOpenRemote(id, path))}
                 twoPane={twoPane}
                 onTwoPane={setTwoPane}
+                paneRatio={paneRatio}
+                onPaneRatio={setPaneRatio}
                 remoteHidden={remoteHidden}
                 onRemoteHidden={setRemoteHidden}
                 localHidden={localHidden}

@@ -337,11 +337,35 @@ pub struct UiPrefs {
     pub dock_open: bool,
     /// "files" / "ai"
     pub dock_tab: String,
+    /// ファイル/AIパネルの幅(px)。1ペインと2ペインで別に覚える。
+    /// 以前の保存値に無い項目は既定値で補う(保存値ごと捨てない)。
+    #[serde(default = "default_dock_width")]
+    pub dock_width: u32,
+    #[serde(default = "default_dual_width")]
+    pub dual_width: u32,
+    /// 2ペインの左(ローカル)が占める割合。
+    #[serde(default = "default_pane_ratio")]
+    pub pane_ratio: f64,
+}
+
+fn default_dock_width() -> u32 {
+    420
+}
+fn default_dual_width() -> u32 {
+    980
+}
+fn default_pane_ratio() -> f64 {
+    0.5
 }
 
 impl UiPrefs {
     pub fn validate(&self) -> Result<(), String> {
-        if matches!(self.dock_tab.as_str(), "files" | "ai") {
+        if matches!(self.dock_tab.as_str(), "files" | "ai")
+            && (240..=8192).contains(&self.dock_width)
+            && (240..=8192).contains(&self.dual_width)
+            && self.pane_ratio.is_finite()
+            && (0.15..=0.85).contains(&self.pane_ratio)
+        {
             Ok(())
         } else {
             Err("表示設定の値が不正です".into())
@@ -474,12 +498,34 @@ mod tests {
             two_pane: true,
             dock_open: true,
             dock_tab: "files".into(),
+            dock_width: 420,
+            dual_width: 980,
+            pane_ratio: 0.5,
         };
         assert!(prefs.validate().is_ok());
         prefs.dock_tab = "ai".into();
         assert!(prefs.validate().is_ok());
         prefs.dock_tab = "<script>".into();
         assert!(prefs.validate().is_err());
+        prefs.dock_tab = "files".into();
+        for ratio in [0.0, 0.9, f64::NAN] {
+            prefs.pane_ratio = ratio;
+            assert!(prefs.validate().is_err());
+        }
+        prefs.pane_ratio = 0.5;
+        prefs.dock_width = 10;
+        assert!(prefs.validate().is_err());
+        // 幅・比率が無い以前の保存値も、既定値で補って読める。
+        let old: UiPrefs = serde_json::from_value(serde_json::json!({
+            "remoteHidden": true, "localHidden": false, "twoPane": true,
+            "dockOpen": true, "dockTab": "files"
+        }))
+        .unwrap();
+        assert!(old.validate().is_ok());
+        assert_eq!(
+            (old.dock_width, old.dual_width, old.pane_ratio),
+            (420, 980, 0.5)
+        );
     }
 
     #[test]
