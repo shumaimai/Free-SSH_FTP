@@ -46,6 +46,7 @@ import { ForwardDialog } from './ForwardDialog';
 import { ExternalDialog } from './ExternalDialog';
 import { ApprovalDialog } from './ApprovalDialog';
 import { Grip } from './Grip';
+import { useLanguage } from './i18n';
 import { DEFAULT_APPEARANCE, UI_FONTS, fluentTheme, sanitize, type Appearance } from './appearance';
 
 /** ファイル/AIパネルの既定幅と下限、端末側に残す最低幅(px)。 */
@@ -136,6 +137,7 @@ function useDark(): boolean {
 
 export function App({ api }: { api: Api }) {
   const styles = useStyles();
+  useLanguage(); // 言語を切り替えたら全体を描き直す
   const systemDark = useDark();
   const [appearance, setAppearance] = useState<Appearance>(DEFAULT_APPEARANCE);
   const [settingsOpen, setSettingsOpen] = useState(false);

@@ -13,6 +13,7 @@ import {
   Title2,
 } from '@fluentui/react-components';
 import { Add24Regular, ArrowImport20Regular, DocumentEdit20Regular, Settings20Regular, Window24Regular } from '@fluentui/react-icons';
+import { N_, t } from './i18n';
 import type { Profile } from './types';
 
 const useStyles = makeStyles({
@@ -27,8 +28,8 @@ const useStyles = makeStyles({
 });
 
 const AUTH_LABEL: Record<Profile['auth_method'], string> = {
-  key: '秘密鍵',
-  password: 'パスワード',
+  key: N_('秘密鍵'),
+  password: N_('パスワード'),
   agent: 'SSH agent',
 };
 
@@ -57,36 +58,36 @@ export function Home({ profiles, disabled, onConnect, onEdit, onNew, onLocal, on
   return (
     <div className={styles.page}>
       <div className={styles.head}>
-        <Title2>接続</Title2>
+        <Title2>{t('接続')}</Title2>
         <div className={styles.grow} />
         <SearchBox
-          placeholder="名前・ホストで検索"
+          placeholder={t('名前・ホストで検索')}
           value={query}
           onChange={(_, d) => setQuery(d.value)}
           style={{ width: 240 }}
         />
         <Button appearance="primary" icon={<Add24Regular />} disabled={disabled} onClick={onNew}>
-          新しい接続
+          {t('新しい接続')}
         </Button>
       </div>
       <div className={styles.quick}>
-        <Caption1>すぐ使う</Caption1>
+        <Caption1>{t('すぐ使う')}</Caption1>
         <Button icon={<Window24Regular />} onClick={onLocal}>
-          ローカル端末
+          {t('ローカル端末')}
         </Button>
         <Button icon={<ArrowImport20Regular />} disabled={disabled} onClick={onImport}>
-          旧版から取り込む
+          {t('旧版から取り込む')}
         </Button>
       </div>
       {profiles.length === 0 ? (
         <Card className={styles.empty}>
-          <Subtitle1>まだ接続先がありません</Subtitle1>
+          <Subtitle1>{t('まだ接続先がありません')}</Subtitle1>
           <Body1>
-            ホスト名と利用者名を入れるだけで登録できます。パスワードや秘密鍵は接続するときに入力します。旧版（Python）をお使いだった場合は、「旧版から取り込む」で接続先や保存済みのパスワードを引き継げます。
+            {t('ホスト名と利用者名を入れるだけで登録できます。パスワードや秘密鍵は接続するときに入力します。旧版（Python）をお使いだった場合は、「旧版から取り込む」で接続先や保存済みのパスワードを引き継げます。')}
           </Body1>
         </Card>
       ) : shown.length === 0 ? (
-        <Body1>該当する接続先がありません</Body1>
+        <Body1>{t('該当する接続先がありません')}</Body1>
       ) : (
         <div className={styles.grid}>
           {shown.map((index) => {
@@ -111,7 +112,7 @@ export function Home({ profiles, disabled, onConnect, onEdit, onNew, onLocal, on
                   action={
                     <Button
                       appearance="subtle"
-                      aria-label="編集"
+                      aria-label={t('編集')}
                       icon={<DocumentEdit20Regular />}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -122,11 +123,11 @@ export function Home({ profiles, disabled, onConnect, onEdit, onNew, onLocal, on
                 />
                 <div className={styles.meta}>
                   <Badge appearance="tint" color="brand">
-                    {AUTH_LABEL[p.auth_method]}
+                    {t(AUTH_LABEL[p.auth_method])}
                   </Badge>
                   {p.proxy_jump && (
                     <Badge appearance="tint" color="warning" icon={<Settings20Regular />}>
-                      踏み台
+                      {t('踏み台')}
                     </Badge>
                   )}
                 </div>

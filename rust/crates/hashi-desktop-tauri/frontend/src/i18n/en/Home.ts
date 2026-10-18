@@ -1,0 +1,15 @@
+export default {
+  '秘密鍵': 'Private key',
+  'パスワード': 'Password',
+  '接続': 'Connections',
+  '名前・ホストで検索': 'Search by name or host',
+  '新しい接続': 'New connection',
+  'すぐ使う': 'Quick start',
+  'ローカル端末': 'Local terminal',
+  '旧版から取り込む': 'Import from old version',
+  'まだ接続先がありません': 'No connections yet',
+  'ホスト名と利用者名を入れるだけで登録できます。パスワードや秘密鍵は接続するときに入力します。旧版（Python）をお使いだった場合は、「旧版から取り込む」で接続先や保存済みのパスワードを引き継げます。': 'Just enter a host name and user name to add one. You enter the password or private key when you connect. If you used the old Python version, "Import from old version" brings over your connections and saved passwords.',
+  '該当する接続先がありません': 'No matching connections',
+  '編集': 'Edit',
+  '踏み台': 'Jump host',
+} as Record<string, string>;

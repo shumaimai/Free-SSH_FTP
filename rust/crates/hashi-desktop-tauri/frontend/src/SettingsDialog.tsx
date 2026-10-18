@@ -25,6 +25,7 @@ import {
 } from '@fluentui/react-components';
 import { Checkmark16Filled } from '@fluentui/react-icons';
 import type { Api } from './api';
+import { setLanguage, t, useLanguage, type LangSetting } from './i18n';
 import type { AppSettings } from './types';
 import {
   ACCENTS,
@@ -64,6 +65,9 @@ const useStyles = makeStyles({
   },
 });
 
+// 言語名は、どの言語で表示していても自分の言語で出す。
+const LANGUAGE_NAMES: Record<'ja' | 'en', string> = { ja: '日本語', en: 'English' }; // i18n-ignore: 言語名
+
 interface Props {
   api: Api;
   open: boolean;
@@ -75,6 +79,7 @@ interface Props {
 
 export function SettingsDialog({ api, open, value, dark, onChange, onClose }: Props) {
   const styles = useStyles();
+  const language = useLanguage();
   const [tab, setTab] = useState<'look' | 'general'>('look');
   const [general, setGeneral] = useState<AppSettings | null>(null);
   const [generalError, setGeneralError] = useState<string | null>(null);
@@ -146,6 +151,13 @@ export function SettingsDialog({ api, open, value, dark, onChange, onClose }: Pr
             </>
           )}
           <div className={styles.body} style={{ display: tab === 'look' ? undefined : 'none' }}>
+            <Field label={t('言語')}>
+              <Select value={language.setting} onChange={(_, d) => setLanguage(d.value as LangSetting)}>
+                <option value="auto">{t('自動（OSの言語）')}</option>
+                <option value="ja">{LANGUAGE_NAMES.ja}</option>
+                <option value="en">{LANGUAGE_NAMES.en}</option>
+              </Select>
+            </Field>
             <Field label="テーマ">
               <RadioGroup layout="horizontal" value={value.mode} onChange={(_, d) => set('mode', d.value as ThemeMode)}>
                 {MODES.map((m) => (
