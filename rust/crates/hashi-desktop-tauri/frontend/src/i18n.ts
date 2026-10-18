@@ -137,3 +137,19 @@ export function tr(message: string, depth = 0): string {
   for (const [ja, en] of phrases) if (out.includes(ja)) out = out.split(ja).join(en);
   return out;
 }
+
+/** invoke が失敗したときに渡す値。String() では訳した文になり、original は Rust が返した日本語のまま。 */
+export class RustMessage {
+  constructor(
+    readonly original: string,
+    readonly text: string,
+  ) {}
+  toString(): string {
+    return this.text;
+  }
+}
+
+/** エラーが Rust の日本語の文(の一部)を含むか。文の見分けは、表示を訳す前の原文で行う。 */
+export function rustHas(error: unknown, ja: string): boolean {
+  return (error instanceof RustMessage ? error.original : String(error)).includes(ja);
+}

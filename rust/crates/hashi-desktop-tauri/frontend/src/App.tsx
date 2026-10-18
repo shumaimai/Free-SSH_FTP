@@ -46,7 +46,7 @@ import { ForwardDialog } from './ForwardDialog';
 import { ExternalDialog } from './ExternalDialog';
 import { ApprovalDialog } from './ApprovalDialog';
 import { Grip } from './Grip';
-import { t, useLanguage } from './i18n';
+import { rustHas, t, useLanguage } from './i18n';
 import { DEFAULT_APPEARANCE, UI_FONTS, fluentTheme, sanitize, type Appearance } from './appearance';
 
 /** ファイル/AIパネルの既定幅と下限、端末側に残す最低幅(px)。 */
@@ -345,7 +345,7 @@ export function App({ api }: { api: Api }) {
       const message = String(error);
       setChallengeError(message);
       // 終了した要求への応答は、再試行しても通らない。
-      if (message.includes('終了')) { // i18n-ignore: Rust側のエラー文(日本語)を見分ける
+      if (rustHas(error, '終了')) { // i18n-ignore: Rust側のエラー文(日本語)を見分ける
         setChallenges((old) => old.filter((c) => c.challenge_id !== current.challenge_id));
       }
     }

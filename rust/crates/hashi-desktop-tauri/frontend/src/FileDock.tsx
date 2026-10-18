@@ -53,7 +53,7 @@ import type { Api } from './api';
 import { PermissionDialog } from './PermissionDialog';
 import { LocalPane } from './LocalPane';
 import { Grip } from './Grip';
-import { N_, t } from './i18n';
+import { N_, rustHas, t } from './i18n';
 import type { ExistingPolicy, FileEntry, FileJob, Follow, LocalListing, TransferMode } from './types';
 
 const useStyles = makeStyles({
@@ -215,7 +215,7 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
         followUp(listing.follow);
       } catch (e) {
         const message = String(e);
-        if (message.includes('置き換えられました')) return; // i18n-ignore: Rust側のエラー文との照合
+        if (rustHas(e, '置き換えられました')) return; // i18n-ignore: Rust側のエラー文との照合
         if (follow) setNotice(message);
         else setLocalError(message);
       } finally {
@@ -244,7 +244,7 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
       } catch (e) {
         // 古い要求が新しい要求に置き換えられただけなら、エラーにしない。
         const message = String(e);
-        if (message.includes('置き換えられました')) return; // i18n-ignore: Rust側のエラー文との照合
+        if (rustHas(e, '置き換えられました')) return; // i18n-ignore: Rust側のエラー文との照合
         // 同期ブラウズの追随の失敗は、エラー欄ではなく通知にする。
         if (follow) setNotice(message);
         else setError(message);

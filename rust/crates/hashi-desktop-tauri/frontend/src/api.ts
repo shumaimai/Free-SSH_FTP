@@ -1,5 +1,5 @@
 // 画面とRust側の境界。本番はTauriのcommand/eventだけを使い、試験用(VITE_MOCK)は偽の実装へ差し替える。
-import { tr } from './i18n';
+import { RustMessage, tr } from './i18n';
 import type { Appearance } from './appearance';
 import type {
   AppSettings,
@@ -182,7 +182,7 @@ async function tauriApi(): Promise<Api> {
   const invoke = <T>(...args: Parameters<typeof core.invoke>): Promise<T> =>
     core.invoke<T>(...args).then(
       (value) => localize(value),
-      (error) => Promise.reject(typeof error === 'string' ? tr(error) : error),
+      (error) => Promise.reject(typeof error === 'string' ? new RustMessage(error, tr(error)) : error),
     );
   const listen = <T>(name: string, handler: (event: { payload: T }) => void) =>
     events.listen<T>(name, (event) => handler({ ...event, payload: localize(event.payload) }));
