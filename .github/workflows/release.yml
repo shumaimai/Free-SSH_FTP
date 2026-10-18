@@ -109,10 +109,16 @@ jobs:
         run: Compress-Archive -Path "rust/target/Hashi-${{ github.ref_name }}" -DestinationPath "rust/target/Hashi-${{ github.ref_name }}-windows-x64.zip"
 
       # --- 配布物の確認手段(コード署名の代わりではない。SmartScreen の表示は変わらない) ---
-      - name: SHA-256 を作る
+      - name: SHA-256 を作る(書式は sha256sum と同じ形に固定する)
         shell: bash
-        working-directory: rust/target
-        run: sha256sum "Hashi-${{ github.ref_name }}-windows-x64.zip" | tee SHA256SUMS.txt
+        run: |
+          python - <<'PY'
+          import hashlib, pathlib
+          zip_path = pathlib.Path("rust/target/Hashi-${{ github.ref_name }}-windows-x64.zip")
+          line = f"{hashlib.sha256(zip_path.read_bytes()).hexdigest()}  {zip_path.name}\n"
+          pathlib.Path("rust/target/SHA256SUMS.txt").write_text(line, encoding="utf-8", newline="\n")
+          print(line, end="")
+          PY
 
       - name: ビルド証明(どのコミットのどの workflow で作られたかを GitHub が保証する)
         uses: actions/attest-build-provenance@v2

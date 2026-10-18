@@ -7,7 +7,7 @@
 ## 仕組み
 
 - `packaging/` にテンプレート(`@VERSION@` `@SHA256@` を置換する)。
-- `tools/package_manifests.py X.Y.Z --zip <zip> <出力>` が提出用の一式を作る。
+- `tools/package_manifests.py X.Y.Z --zip <zip> <出力>`(`--sha256 <64桁>` でも可) が提出用の一式を作る。
 - release.yml はタグのたびにこれを実行し、workflow の成果物 `package-manifests-vX.Y.Z` に置く。
 
 ## winget
@@ -22,12 +22,14 @@
 未確認の点:
 - zip(portable)の `Hashi.exe` はシンボリックリンク経由で起動される。`WebView2Loader.dll`
   と `HashiMCP-RustPreview.exe` を本体の隣から見つけられるか(外部連携の登録も含む)は実機で確認していない。
+- zip の最上位フォルダが版つき(`Hashi-vX.Y.Z\`)なので、winget で更新すると `HashiMCP-RustPreview.exe` の場所が
+  変わり、Claude Desktop / Claude Code に登録済みの外部連携(MCP)が切れる可能性がある(未確認)。
 - 署名の無い exe は、winget-pkgs の検証(Defender / SmartScreen の自動スキャン)で止まることがある。
 
 ## Scoop
 
 1. 自分のバケット用リポジトリ(例: `scoop-hashi`)を作り、`bucket/hashi.json` に `scoop/hashi.json` を置く。
 2. 利用者は `scoop bucket add hashi https://github.com/shumaimai/scoop-hashi` → `scoop install hashi`。
-3. `checkver` / `autoupdate` は `SHA256SUMS.txt`(Release に添付)を読む。
+3. `checkver` / `autoupdate` は `SHA256SUMS.txt`(Release に添付。v2.0.0 には無いので、v2.0.0 のハッシュは手で書く)を読む。
 
 メイン bucket や extras への登録は、公開後しばらくして利用者が付いてから検討する。

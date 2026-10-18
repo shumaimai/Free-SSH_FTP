@@ -24,7 +24,7 @@ extract it, and run `Hashi.exe`. There is no installer.
 - Keep `WebView2Loader.dll` and `HashiMCP-RustPreview.exe` in the same folder as `Hashi.exe`.
 - **The build is not code-signed**, so SmartScreen may show a warning the first time. You can check that the zip
   was built by this repository's GitHub Actions with the attached `SHA256SUMS.txt` and the build attestation:
-  see [Verifying your download](docs/verify-download.md).
+  see [Verifying your download](docs/verify-download.md). (These are attached from the release after v2.0.0.)
 - The v1.x Python version stores its data elsewhere. "Import from the old version" on the home screen reads
   its connections, saved passwords and host keys (it never modifies the old data).
 

@@ -22,7 +22,7 @@ v2.0.0 から Rust + Tauri(画面は React / Fluent UI / xterm.js)で作り直�
 - `Hashi.exe` と同じフォルダの `WebView2Loader.dll`・`HashiMCP-RustPreview.exe` は離さないでください。
 - 現在の配布物にはコード署名が無いため、初回は SmartScreen の確認が出ることがあります。
   代わりに、Release の `SHA256SUMS.txt` とビルド証明で、zip が公式のビルドか確かめられます
-  ([確認の手順](docs/verify-download.md))。
+  ([確認の手順](docs/verify-download.md)。v2.0.0 の次の版から付きます)。
 - 旧 Python 版(v1.x)とは保存先が別です。ホームの「旧版から取り込む」で接続先・保存済みパスワード・
   ホスト鍵を読み込めます(旧版の設定は書き換えません)。
 

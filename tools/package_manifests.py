@@ -1,6 +1,6 @@
 """winget / Scoop 用のマニフェストをテンプレートから作る。
 
-    python tools/package_manifests.py 2.0.0 <zipのSHA-256> <出力フォルダ>
+    python tools/package_manifests.py 2.0.0 --sha256 <zipのSHA-256> <出力フォルダ>
     python tools/package_manifests.py 2.0.0 --zip Hashi-v2.0.0-windows-x64.zip <出力フォルダ>
 
 テンプレートは packaging/ にある。出力は winget-pkgs / Scoop バケットへ出す提出物の下書き。
@@ -26,8 +26,9 @@ def main() -> int:
         stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser()
     parser.add_argument("version", help="X.Y.Z(先頭の v は付けない)")
-    parser.add_argument("sha256", nargs="?", help="zip の SHA-256(16進64桁)")
-    parser.add_argument("--zip", help="SHA-256 をこの zip から計算する")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--sha256", help="zip の SHA-256(16進64桁)")
+    source.add_argument("--zip", help="SHA-256 をこの zip から計算する")
     parser.add_argument("output")
     args = parser.parse_args()
 
@@ -35,10 +36,10 @@ def main() -> int:
         parser.error("version は X.Y.Z 形式にしてください")
     if args.zip:
         digest = hashlib.sha256(Path(args.zip).read_bytes()).hexdigest()
-    elif args.sha256 and re.fullmatch(r"[0-9a-fA-F]{64}", args.sha256):
+    elif re.fullmatch(r"[0-9a-fA-F]{64}", args.sha256):
         digest = args.sha256.lower()
     else:
-        parser.error("SHA-256(16進64桁)か --zip が必要です")
+        parser.error("--sha256 は16進64桁にしてください")
 
     out = Path(args.output)
     for src, name in TEMPLATES:

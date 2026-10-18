@@ -8,6 +8,11 @@ The release zip is not code-signed yet, so SmartScreen may warn you. You can sti
 downloaded was built by this repository's GitHub Actions workflow. This does not replace code signing and
 does not change SmartScreen's behaviour.
 
+> **注意:** `SHA256SUMS.txt` とビルド証明は **v2.0.0 の次の版から**付きます。v2.0.0 の zip には付いていないので、
+> この確認は通りません(v2.0.0 が偽物という意味ではありません)。
+> **Note:** `SHA256SUMS.txt` and the attestation are attached **from the release after v2.0.0**. The v2.0.0 zip
+> has neither, so these checks do not apply to it (that does not mean v2.0.0 is fake).
+
 ## 1. SHA-256
 
 Release に添付の `SHA256SUMS.txt` と、手元の zip のハッシュを比べます。
