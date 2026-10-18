@@ -4,9 +4,10 @@
 // 直書きを許す行は、同じ行の末尾に `// i18n-ignore: 理由` と書く。
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseAst } from 'vite';
 
-const root = new URL('..', import.meta.url).pathname;
+const root = fileURLToPath(new URL('..', import.meta.url)); // Windows でも正しいパスになる(.pathname は /D:/… になる)
 const src = join(root, 'src');
 const JA = /[぀-ヿ㐀-鿿＀-￯]/;
 const SKIP = new Set(['mock.ts']); // ブラウザ確認用の模擬データ。表に出る文言ではない。
@@ -38,7 +39,7 @@ for (const file of walk(src)) {
   const report = (node, what) => {
     const line = lineOf(text, node.start);
     if (lines[line - 1].includes('i18n-ignore')) return;
-    errors.push(`${relative(root, file)}:${line}: ${what}`);
+    errors.push(`${relative(root, file).replaceAll('\\', '/')}:${line}: ${what}`);
   };
   (function visit(node) {
     if (!node || typeof node !== 'object') return;
