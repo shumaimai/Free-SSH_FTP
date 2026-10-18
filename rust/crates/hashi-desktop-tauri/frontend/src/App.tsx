@@ -46,6 +46,7 @@ import { ForwardDialog } from './ForwardDialog';
 import { ExternalDialog } from './ExternalDialog';
 import { ApprovalDialog } from './ApprovalDialog';
 import { Grip } from './Grip';
+import { rustHas, t, useLanguage } from './i18n';
 import { DEFAULT_APPEARANCE, UI_FONTS, fluentTheme, sanitize, type Appearance } from './appearance';
 
 /** ファイル/AIパネルの既定幅と下限、端末側に残す最低幅(px)。 */
@@ -136,6 +137,7 @@ function useDark(): boolean {
 
 export function App({ api }: { api: Api }) {
   const styles = useStyles();
+  useLanguage(); // 言語を切り替えたら全体を描き直す
   const systemDark = useDark();
   const [appearance, setAppearance] = useState<Appearance>(DEFAULT_APPEARANCE);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -268,7 +270,7 @@ export function App({ api }: { api: Api }) {
   const openAiModels = useCallback(() => {
     const existing = tabsRef.current.find((t) => t.kind === 'aimodels');
     if (existing) setActive(existing.key);
-    else openTab({ kind: 'aimodels', label: 'AIモデル' });
+    else openTab({ kind: 'aimodels', label: t('AIモデル') });
   }, [openTab]);
 
   const [discard, setDiscard] = useState<string | null>(null);
@@ -322,7 +324,7 @@ export function App({ api }: { api: Api }) {
       const list = await api.profileSave(dialog.index, profile);
       setProfiles(list);
       setDialog(null);
-      setNotice('保存しました');
+      setNotice(t('保存しました'));
       if (connect) {
         const index = dialog.index ?? (list.length > before ? list.length - 1 : list.length - 1);
         openTab({ kind: 'ssh', index, label: profile.name || profile.host });
@@ -343,7 +345,7 @@ export function App({ api }: { api: Api }) {
       const message = String(error);
       setChallengeError(message);
       // 終了した要求への応答は、再試行しても通らない。
-      if (message.includes('終了')) {
+      if (rustHas(error, '終了')) { // i18n-ignore: Rust側のエラー文(日本語)を見分ける
         setChallenges((old) => old.filter((c) => c.challenge_id !== current.challenge_id));
       }
     }
@@ -384,7 +386,7 @@ export function App({ api }: { api: Api }) {
             size="medium"
           >
             <Tab value="home" icon={<Home20Regular />}>
-              ホーム
+              {t('ホーム')}
             </Tab>
             {tabs.map((tab) => (
               <Tab
@@ -416,10 +418,10 @@ export function App({ api }: { api: Api }) {
                     />
                   )}
                   {tab.label}
-                  {tab.dirty && <span aria-label="未保存" style={{ marginLeft: 4, color: tokens.colorBrandForeground1 }}>●</span>}
+                  {tab.dirty && <span aria-label={t('未保存')} style={{ marginLeft: 4, color: tokens.colorBrandForeground1 }}>●</span>}
                   <span
                     role="button"
-                    aria-label={`${tab.label}を閉じる`}
+                    aria-label={t('{name}を閉じる', { name: tab.label })}
                     className={styles.tabClose}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -437,33 +439,33 @@ export function App({ api }: { api: Api }) {
             <Button
               appearance="subtle"
               onClick={() => void api.updateOpenPage().catch((e) => setNotice(String(e)))}
-              title="リリースページを開く"
+              title={t('リリースページを開く')}
             >
-              新しい版 {update.tag}
+              {t('新しい版 {tag}', { tag: update.tag })}
             </Button>
           )}
           <Menu>
             <MenuTrigger disableButtonEnhancement>
               <Button appearance="subtle" icon={<Wrench20Regular />}>
-                ツール
+                {t('ツール')}
               </Button>
             </MenuTrigger>
             <MenuPopover>
               <MenuList>
                 <MenuItem icon={<FolderOpen20Regular />} onClick={() => openEditor(api.editorOpenLocal())}>
-                  この PC のファイルを開く...
+                  {t('この PC のファイルを開く...')}
                 </MenuItem>
                 <MenuItem icon={<Key20Regular />} onClick={() => setKeygenOpen(true)}>
-                  SSH鍵を作る...
+                  {t('SSH鍵を作る...')}
                 </MenuItem>
                 <MenuItem icon={<Bot20Regular />} onClick={openAiModels}>
-                  AIモデルの管理
+                  {t('AIモデルの管理')}
                 </MenuItem>
                 <MenuItem icon={<Bot20Regular />} onClick={() => setExternalOpen(true)}>
-                  外部連携（MCP）...
+                  {t('外部連携（MCP）...')}
                 </MenuItem>
                 <MenuItem icon={<PlugConnected20Filled />} onClick={() => setForwardOpen(true)}>
-                  ポート転送...
+                  {t('ポート転送...')}
                 </MenuItem>
               </MenuList>
             </MenuPopover>
@@ -472,14 +474,14 @@ export function App({ api }: { api: Api }) {
             appearance="subtle"
             checked={dockOpen}
             icon={<PanelRight20Regular />}
-            aria-label="ファイル・AIパネル"
+            aria-label={t('ファイル・AIパネル')}
             onClick={() => setDockOpen((open) => !open)}
           >
-            ファイル・AI
+            {t('ファイル・AI')}
           </ToggleButton>
           <Button
             appearance="subtle"
-            aria-label="外観の設定"
+            aria-label={t('外観の設定')}
             icon={<Settings20Regular />}
             onClick={() => setSettingsOpen(true)}
           />
@@ -492,7 +494,7 @@ export function App({ api }: { api: Api }) {
                 <MessageBarBody>{warnings.join(' / ')}</MessageBarBody>
                 <MessageBarActions>
                   <Button size="small" onClick={() => setWarnings([])}>
-                    閉じる
+                    {t('閉じる')}
                   </Button>
                 </MessageBarActions>
               </MessageBar>
@@ -561,11 +563,11 @@ export function App({ api }: { api: Api }) {
                   <div className={styles.banner}>
                     <MessageBar intent={st.state === 'error' ? 'error' : 'info'}>
                       <MessageBarBody>
-                        {st.message || (st.state === 'error' ? '接続できませんでした' : '接続が終了しました')}
+                        {st.message || (st.state === 'error' ? t('接続できませんでした') : t('接続が終了しました'))}
                       </MessageBarBody>
                       <MessageBarActions>
                         <Button size="small" onClick={() => closeTab(tab.key)}>
-                          タブを閉じる
+                          {t('タブを閉じる')}
                         </Button>
                       </MessageBarActions>
                     </MessageBar>
@@ -595,7 +597,7 @@ export function App({ api }: { api: Api }) {
         </div>
         {dockOpen && (
           <Grip
-            label="パネルの幅"
+            label={t('パネルの幅')}
             onBegin={() => {
               dragStart.current = wide ? dualWidth : dockWidth;
             }}
@@ -619,7 +621,7 @@ export function App({ api }: { api: Api }) {
               onTabSelect={(_, d) => setDockTab(d.value as 'files' | 'ai')}
               style={{ marginBottom: 8 }}
             >
-              <Tab value="files">ファイル</Tab>
+              <Tab value="files">{t('ファイル')}</Tab>
               <Tab value="ai">AI</Tab>
             </TabList>
             <div style={{ height: 'calc(100% - 40px)', minHeight: 0, display: dockTab === 'files' ? 'block' : 'none' }}>
@@ -665,7 +667,7 @@ export function App({ api }: { api: Api }) {
           try {
             setProfiles(await api.profileDelete(dialog.index));
             setDialog(null);
-            setNotice('接続先を削除しました');
+            setNotice(t('接続先を削除しました'));
           } catch (error) {
             setDialog({ ...dialog, error: String(error) });
           }
@@ -678,7 +680,7 @@ export function App({ api }: { api: Api }) {
           try {
             await api.secretsForget(dialog.index);
             setSavedSecrets([]);
-            setNotice('保存済みの秘密を削除しました');
+            setNotice(t('保存済みの秘密を削除しました'));
           } catch (error) {
             setDialog({ ...dialog, error: String(error) });
           }
@@ -723,12 +725,12 @@ export function App({ api }: { api: Api }) {
       <Dialog open={discard !== null} onOpenChange={(_, d) => !d.open && setDiscard(null)}>
         <DialogSurface>
           <DialogBody>
-            <DialogTitle>保存していない変更があります</DialogTitle>
+            <DialogTitle>{t('保存していない変更があります')}</DialogTitle>
             <DialogContent>
-              {tabs.find((t) => t.key === discard)?.label} への変更は保存されていません。閉じると失われます。
+              {t('{name} への変更は保存されていません。閉じると失われます。', { name: tabs.find((tab) => tab.key === discard)?.label ?? '' })}
             </DialogContent>
             <DialogActions>
-              <Button onClick={() => setDiscard(null)}>編集に戻る</Button>
+              <Button onClick={() => setDiscard(null)}>{t('編集に戻る')}</Button>
               <Button
                 appearance="primary"
                 onClick={() => {
@@ -736,7 +738,7 @@ export function App({ api }: { api: Api }) {
                   setDiscard(null);
                 }}
               >
-                保存せず閉じる
+                {t('保存せず閉じる')}
               </Button>
             </DialogActions>
           </DialogBody>
@@ -745,14 +747,14 @@ export function App({ api }: { api: Api }) {
       <Dialog open={quitAsk} onOpenChange={(_, d) => !d.open && setQuitAsk(false)}>
         <DialogSurface>
           <DialogBody>
-            <DialogTitle>保存していない編集があります</DialogTitle>
+            <DialogTitle>{t('保存していない編集があります')}</DialogTitle>
             <DialogContent>
-              編集中のファイルに保存していない変更があります。このまま終了すると失われます。
+              {t('編集中のファイルに保存していない変更があります。このまま終了すると失われます。')}
             </DialogContent>
             <DialogActions>
-              <Button onClick={() => setQuitAsk(false)}>やめる</Button>
+              <Button onClick={() => setQuitAsk(false)}>{t('やめる')}</Button>
               <Button appearance="primary" onClick={() => void api.appQuit()}>
-                保存せず終了
+                {t('保存せず終了')}
               </Button>
             </DialogActions>
           </DialogBody>

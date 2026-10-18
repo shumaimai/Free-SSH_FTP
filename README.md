@@ -1,5 +1,7 @@
 # Hashi — SSH / SFTP クライアント
 
+**日本語** | [English](README.en.md)
+
 ![Rust](https://github.com/shumaimai/Free-SSH_FTP/actions/workflows/rust.yml/badge.svg)
 ![Release](https://img.shields.io/github/v/release/shumaimai/Free-SSH_FTP?sort=semver)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -8,6 +10,7 @@
 PuTTY + WinSCP を別々に開かなくていいのがコンセプト。ホームで接続先を選ぶと、
 **ブラウザ風のタブ**(1 接続 = 1 タブ)でターミナルとファイル操作が並ぶ。
 
+画面は日本語と英語に対応しています(設定 → 言語。英語の説明は [README.en.md](README.en.md))。
 v2.0.0 から Rust + Tauri(画面は React / Fluent UI / xterm.js)で作り直した版を配布しています。
 旧 Python 版(v1.x)の使い方は [下のほう](#旧python版v1x) にまとめています。
 
@@ -19,11 +22,12 @@ v2.0.0 から Rust + Tauri(画面は React / Fluent UI / xterm.js)で作り直�
 - Windows 10 / 11(64bit)。WebView2 ランタイムが必要です(通常は標準で入っています)。
 - `Hashi.exe` と同じフォルダの `WebView2Loader.dll`・`HashiMCP-RustPreview.exe` は離さないでください。
 - 現在の配布物にはコード署名が無いため、初回は SmartScreen の確認が出ることがあります。
-  署名は [SignPath Foundation](https://signpath.org/) へ申し込む準備をしています。
+  代わりに、Release の `SHA256SUMS.txt` とビルド証明で、zip が公式のビルドか確かめられます
+  ([確認の手順](docs/verify-download.md)。v2.0.0 の次の版から付きます)。
 - 旧 Python 版(v1.x)とは保存先が別です。ホームの「旧版から取り込む」で接続先・保存済みパスワード・
   ホスト鍵を読み込めます(旧版の設定は書き換えません)。
 
-**[Code signing policy / コード署名ポリシー](docs/code-signing-policy.md)**(通信とプライバシーの説明も含む)
+通信とプライバシーの説明は [docs/code-signing-policy.md](docs/code-signing-policy.md#privacy-policy--プライバシー) にあります。
 
 ## 主な機能
 
@@ -121,7 +125,7 @@ rust/                         Cargo workspace(v2 の本体)
   crates/hashi-desktop-native egui 版の候補(配布しない。移行が済むまで残す)
 hashi/, main.py               旧 Python 版(v1.x。リリースはしないがコードは残す)
 tools/                        配布物の作成・リリースノート・診断
-docs/                         移行の記録・互換表・コード署名ポリシー
+docs/                         移行の記録・互換表・ダウンロードの確認・配布の手順
 ```
 
 ## 旧Python版(v1.x)

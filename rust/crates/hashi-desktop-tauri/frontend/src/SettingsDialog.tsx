@@ -25,6 +25,7 @@ import {
 } from '@fluentui/react-components';
 import { Checkmark16Filled } from '@fluentui/react-icons';
 import type { Api } from './api';
+import { setLanguage, t, useLanguage, type LangSetting } from './i18n';
 import type { AppSettings } from './types';
 import {
   ACCENTS,
@@ -64,6 +65,9 @@ const useStyles = makeStyles({
   },
 });
 
+// 言語名は、どの言語で表示していても自分の言語で出す。
+const LANGUAGE_NAMES: Record<'ja' | 'en', string> = { ja: '日本語', en: 'English' }; // i18n-ignore: 言語名
+
 interface Props {
   api: Api;
   open: boolean;
@@ -75,6 +79,7 @@ interface Props {
 
 export function SettingsDialog({ api, open, value, dark, onChange, onClose }: Props) {
   const styles = useStyles();
+  const language = useLanguage();
   const [tab, setTab] = useState<'look' | 'general'>('look');
   const [general, setGeneral] = useState<AppSettings | null>(null);
   const [generalError, setGeneralError] = useState<string | null>(null);
@@ -96,29 +101,30 @@ export function SettingsDialog({ api, open, value, dark, onChange, onClose }: Pr
     <Dialog open={open} onOpenChange={(_, d) => !d.open && onClose()}>
       <DialogSurface aria-describedby={undefined} style={{ maxWidth: 560 }}>
         <DialogBody>
-          <DialogTitle>設定</DialogTitle>
+          <DialogTitle>{t('設定')}</DialogTitle>
           <DialogContent className={styles.body}>
           <TabList selectedValue={tab} onTabSelect={(_, d) => setTab(d.value as 'look' | 'general')}>
-            <Tab value="look">外観</Tab>
-            <Tab value="general">全般</Tab>
+            <Tab value="look">{t('外観')}</Tab>
+            <Tab value="general">{t('全般')}</Tab>
           </TabList>
           {tab === 'general' && general && (
             <>
               <Checkbox
                 checked={general.updateCheck}
                 onChange={(_, d) => saveGeneral({ ...general, updateCheck: d.checked === true })}
-                label="起動時に新しい版を確認する"
+                label={t('起動時に新しい版を確認する')}
               />
               <Caption1>
-                GitHub の Releases（api.github.com）へ問い合わせます。送るのは通常の通信情報（IPアドレス・User-Agent）だけです。
-                オフにすると、利用者が指定した接続先（SSHサーバー・AIサービス）以外へは通信しません（次の起動から）。
+                {t(
+                  'GitHub の Releases（api.github.com）へ問い合わせます。送るのは通常の通信情報（IPアドレス・User-Agent）だけです。オフにすると、利用者が指定した接続先（SSHサーバー・AIサービス）以外へは通信しません（次の起動から）。',
+                )}
               </Caption1>
               <Checkbox
                 checked={general.sessionLog}
                 onChange={(_, d) => saveGeneral({ ...general, sessionLog: d.checked === true })}
-                label="SSH端末の受信出力を自動保存する（PuTTYのloggingに相当）"
+                label={t('SSH端末の受信出力を自動保存する（PuTTYのloggingに相当）')}
               />
-              <Field label="保存先（空なら設定フォルダ/logs）">
+              <Field label={t('保存先（空なら設定フォルダ/logs）')}>
                 <div style={{ display: 'flex', gap: 8 }}>
                   <Input
                     style={{ flex: 1 }}
@@ -133,11 +139,11 @@ export function SettingsDialog({ api, open, value, dark, onChange, onClose }: Pr
                       if (dir) saveGeneral({ ...general, sessionLogDir: dir });
                     }}
                   >
-                    参照
+                    {t('参照')}
                   </Button>
                 </div>
               </Field>
-              <Caption1>改行で確定した行だけを記録します。vimなどの全画面表示は記録しません。新しい接続から適用します。</Caption1>
+              <Caption1>{t('改行で確定した行だけを記録します。vimなどの全画面表示は記録しません。新しい接続から適用します。')}</Caption1>
               {generalError && (
                 <MessageBar intent="error">
                   <MessageBarBody>{generalError}</MessageBarBody>
@@ -146,23 +152,30 @@ export function SettingsDialog({ api, open, value, dark, onChange, onClose }: Pr
             </>
           )}
           <div className={styles.body} style={{ display: tab === 'look' ? undefined : 'none' }}>
-            <Field label="テーマ">
+            <Field label={t('言語')}>
+              <Select value={language.setting} onChange={(_, d) => setLanguage(d.value as LangSetting)}>
+                <option value="auto">{t('自動（OSの言語）')}</option>
+                <option value="ja">{LANGUAGE_NAMES.ja}</option>
+                <option value="en">{LANGUAGE_NAMES.en}</option>
+              </Select>
+            </Field>
+            <Field label={t('テーマ')}>
               <RadioGroup layout="horizontal" value={value.mode} onChange={(_, d) => set('mode', d.value as ThemeMode)}>
                 {MODES.map((m) => (
-                  <Radio key={m.id} value={m.id} label={m.label} />
+                  <Radio key={m.id} value={m.id} label={t(m.label)} />
                 ))}
               </RadioGroup>
             </Field>
-            <Field label="アクセント色">
-              <div className={styles.swatches} role="radiogroup" aria-label="アクセント色">
+            <Field label={t('アクセント色')}>
+              <div className={styles.swatches} role="radiogroup" aria-label={t('アクセント色')}>
                 {ACCENTS.map((a) => (
                   <button
                     key={a.id}
                     type="button"
                     role="radio"
                     aria-checked={value.accent === a.id}
-                    aria-label={a.label}
-                    title={a.label}
+                    aria-label={t(a.label)}
+                    title={t(a.label)}
                     className={mergeClasses(styles.swatch, value.accent === a.id && styles.swatchOn)}
                     style={{ backgroundColor: a.color }}
                     onClick={() => set('accent', a.id)}
@@ -172,25 +185,25 @@ export function SettingsDialog({ api, open, value, dark, onChange, onClose }: Pr
                 ))}
               </div>
             </Field>
-            <Field label="画面のフォント">
+            <Field label={t('画面のフォント')}>
               <Select value={value.uiFont} onChange={(_, d) => set('uiFont', d.value)}>
                 {UI_FONTS.map((f) => (
                   <option key={f.id} value={f.id}>
-                    {f.label}
+                    {t(f.label)}
                   </option>
                 ))}
               </Select>
             </Field>
-            <Field label="端末のフォント">
+            <Field label={t('端末のフォント')}>
               <Select value={value.termFont} onChange={(_, d) => set('termFont', d.value)}>
                 {TERM_FONTS.map((f) => (
                   <option key={f.id} value={f.id}>
-                    {f.label}
+                    {t(f.label)}
                   </option>
                 ))}
               </Select>
             </Field>
-            <Field label={`端末の文字サイズ（${value.termSize}px）`}>
+            <Field label={t('端末の文字サイズ（{size}px）', { size: value.termSize })}>
               <div className={styles.sizeRow}>
                 <Slider
                   style={{ flex: 1 }}
@@ -202,11 +215,11 @@ export function SettingsDialog({ api, open, value, dark, onChange, onClose }: Pr
                 />
               </div>
             </Field>
-            <Field label="端末の配色">
+            <Field label={t('端末の配色')}>
               <Select value={value.termScheme} onChange={(_, d) => set('termScheme', d.value)}>
                 {TERM_SCHEMES.map((s) => (
                   <option key={s.id} value={s.id}>
-                    {s.label}
+                    {t(s.label)}
                   </option>
                 ))}
               </Select>
@@ -219,19 +232,19 @@ export function SettingsDialog({ api, open, value, dark, onChange, onClose }: Pr
                 fontFamily: font,
                 fontSize: value.termSize,
               }}
-              aria-label="端末の表示例"
+              aria-label={t('端末の表示例')}
             >
               <span style={{ color: term.green }}>user@hashi</span>:<span style={{ color: term.blue }}>~</span>$ ls
               {'\n'}docs  <span style={{ color: term.blue }}>projects</span>  <span style={{ color: term.red }}>archive.tar.gz</span>
-              {'\n'}日本語の表示例 — 橋
+              {'\n'}{'日本語の表示例 — 橋'}{/* i18n-ignore: 日本語フォントの確認用の見本 */}
             </div>
-            <Caption1>選ぶとすぐに反映され、次回の起動でも使われます。画面のフォントは、この機械に入っているものだけが使われます。</Caption1>
+            <Caption1>{t('選ぶとすぐに反映され、次回の起動でも使われます。画面のフォントは、この機械に入っているものだけが使われます。')}</Caption1>
           </div>
           </DialogContent>
           <DialogActions>
-            <Button onClick={() => onChange(DEFAULT_APPEARANCE)}>既定に戻す</Button>
+            <Button onClick={() => onChange(DEFAULT_APPEARANCE)}>{t('既定に戻す')}</Button>
             <Button appearance="primary" onClick={onClose}>
-              閉じる
+              {t('閉じる')}
             </Button>
           </DialogActions>
         </DialogBody>

@@ -22,6 +22,7 @@ import {
   TabList,
   tokens,
 } from '@fluentui/react-components';
+import { t } from './i18n';
 import type { Profile } from './types';
 
 const useStyles = makeStyles({
@@ -60,20 +61,20 @@ export function ProfileDialog({ open, initial, existing, error, onSave, onDelete
     <Dialog open={open} onOpenChange={(_, d) => !d.open && onClose()}>
       <DialogSurface aria-describedby={undefined} style={{ maxWidth: 560 }}>
         <DialogBody>
-          <DialogTitle>{existing ? '接続を編集' : '新しい接続'}</DialogTitle>
+          <DialogTitle>{existing ? t('接続を編集') : t('新しい接続')}</DialogTitle>
           <DialogContent className={styles.form}>
-            <Field label="名前">
+            <Field label={t('名前')}>
               <Input
                 value={p.name}
-                placeholder="例: 本番サーバー（空ならホスト名）"
+                placeholder={t('例: 本番サーバー（空ならホスト名）')}
                 onChange={(_, d) => set('name', d.value)}
               />
             </Field>
             <div className={styles.row}>
-              <Field label="ホスト" required>
+              <Field label={t('ホスト')} required>
                 <Input value={p.host} placeholder="example.com" onChange={(_, d) => set('host', d.value)} />
               </Field>
-              <Field label="ポート">
+              <Field label={t('ポート')}>
                 <Input
                   type="number"
                   style={{ width: '100%', minWidth: 0 }}
@@ -82,16 +83,16 @@ export function ProfileDialog({ open, initial, existing, error, onSave, onDelete
                 />
               </Field>
             </div>
-            <Field label="利用者名" required>
+            <Field label={t('利用者名')} required>
               <Input value={p.username} onChange={(_, d) => set('username', d.value)} />
             </Field>
-            <Field label="ログイン方法">
+            <Field label={t('ログイン方法')}>
               <TabList
                 selectedValue={p.auth_method}
                 onTabSelect={(_, d) => set('auth_method', d.value as Profile['auth_method'])}
               >
-                <Tab value="key">秘密鍵</Tab>
-                <Tab value="password">パスワード</Tab>
+                <Tab value="key">{t('秘密鍵')}</Tab>
+                <Tab value="password">{t('パスワード')}</Tab>
                 <Tab value="agent">SSH agent</Tab>
               </TabList>
             </Field>
@@ -100,7 +101,7 @@ export function ProfileDialog({ open, initial, existing, error, onSave, onDelete
                 <Input
                   className={styles.grow}
                   value={p.key_path}
-                  placeholder="空なら ~/.ssh の標準の鍵を探します"
+                  placeholder={t('空なら ~/.ssh の標準の鍵を探します')}
                   onChange={(_, d) => set('key_path', d.value)}
                 />
                 <Button
@@ -109,48 +110,50 @@ export function ProfileDialog({ open, initial, existing, error, onSave, onDelete
                     if (path) set('key_path', path);
                   }}
                 >
-                  選ぶ
+                  {t('選ぶ')}
                 </Button>
               </div>
             )}
             {p.auth_method === 'password' && (
               <Caption1>
-                {savedSecrets.includes('password') ? '保存済みのパスワードを使います。拒否されたときは入力を求めます。' : 'パスワードは接続するときに入力します。'}
+                {savedSecrets.includes('password') ? t('保存済みのパスワードを使います。拒否されたときは入力を求めます。') : t('パスワードは接続するときに入力します。')}
               </Caption1>
             )}
             {existing && savedSecrets.length > 0 && (
               <div className={styles.keyRow}>
                 <Caption1 className={styles.grow}>
-                  保存済み: {savedSecrets.map((k) => (k === 'password' ? 'パスワード' : 'パスフレーズ')).join('・')}
+                  {t('保存済み: {names}', {
+                    names: savedSecrets.map((k) => (k === 'password' ? t('パスワード') : t('パスフレーズ'))).join(t('・')),
+                  })}
                 </Caption1>
                 <Button size="small" appearance="subtle" onClick={() => void onForgetSecrets()}>
-                  保存済みの秘密を削除
+                  {t('保存済みの秘密を削除')}
                 </Button>
               </div>
             )}
-            {p.auth_method === 'agent' && <Caption1>起動中のSSH agentを使います。</Caption1>}
+            {p.auth_method === 'agent' && <Caption1>{t('起動中のSSH agentを使います。')}</Caption1>}
             <Accordion collapsible>
               <AccordionItem value="more">
-                <AccordionHeader>詳細設定</AccordionHeader>
+                <AccordionHeader>{t('詳細設定')}</AccordionHeader>
                 <AccordionPanel className={styles.form}>
-                  <Field label="踏み台（ProxyJump）">
+                  <Field label={t('踏み台（ProxyJump）')}>
                     <Input
                       value={p.proxy_jump}
-                      placeholder="例: user@bastion.example.com"
+                      placeholder={t('例: user@bastion.example.com')}
                       onChange={(_, d) => set('proxy_jump', d.value)}
                     />
                   </Field>
-                  <Field label="ファイル画面の開始フォルダ">
+                  <Field label={t('ファイル画面の開始フォルダ')}>
                     <Input
                       value={p.initial_path}
-                      placeholder="空ならホームフォルダ"
+                      placeholder={t('空ならホームフォルダ')}
                       onChange={(_, d) => set('initial_path', d.value)}
                     />
                   </Field>
                   <Checkbox
                     checked={p.agent_forwarding}
                     onChange={(_, d) => set('agent_forwarding', d.checked === true)}
-                    label="SSH agentを接続先へ転送する（接続先に署名を許可します）"
+                    label={t('SSH agentを接続先へ転送する（接続先に署名を許可します）')}
                   />
                 </AccordionPanel>
               </AccordionItem>
@@ -168,17 +171,17 @@ export function ProfileDialog({ open, initial, existing, error, onSave, onDelete
                 style={{ marginRight: 'auto', color: tokens.colorPaletteRedForeground1 }}
                 onClick={() => (armed ? onDelete() : setArmed(true))}
               >
-                {armed ? 'もう一度押すと削除' : '削除'}
+                {armed ? t('もう一度押すと削除') : t('削除')}
               </Button>
             )}
             <Button className={styles.actions} onClick={onClose}>
-              キャンセル
+              {t('キャンセル')}
             </Button>
             <Button className={styles.actions} disabled={!ready} onClick={() => onSave(p, false)}>
-              保存
+              {t('保存')}
             </Button>
             <Button className={styles.actions} appearance="primary" disabled={!ready} onClick={() => onSave(p, true)}>
-              保存して接続
+              {t('保存して接続')}
             </Button>
           </DialogActions>
         </DialogBody>

@@ -24,20 +24,21 @@ import {
   Textarea,
 } from '@fluentui/react-components';
 import type { Api } from './api';
+import { N_, t } from './i18n';
 import type { ExternalStatus, RegisterStatus, ShareMode } from './types';
 
 const REGISTER_STATE: Record<RegisterStatus['desktopState'], string> = {
-  registered: '登録済みです。Claude Desktopを起動し直すと使えます。',
-  notRegistered: '未登録です。',
-  otherPath: '別の場所のHashiが登録されています。登録すると今のHashiへ更新します。',
-  unreadable: '設定ファイルを読めないため、上書きしません。下の「手動で登録する」を使ってください。',
-  noConfig: 'Claude Desktopの設定フォルダが見つかりません。一度Claude Desktopを起動してください。',
+  registered: N_('登録済みです。Claude Desktopを起動し直すと使えます。'),
+  notRegistered: N_('未登録です。'),
+  otherPath: N_('別の場所のHashiが登録されています。登録すると今のHashiへ更新します。'),
+  unreadable: N_('設定ファイルを読めないため、上書きしません。下の「手動で登録する」を使ってください。'),
+  noConfig: N_('Claude Desktopの設定フォルダが見つかりません。一度Claude Desktopを起動してください。'),
 };
 
 const MODE_LABEL: Record<ShareMode, string> = {
-  consult: '読むだけ',
-  confirm: '操作ごとに確認',
-  auto: '選択した端末で自動実行',
+  consult: N_('読むだけ'),
+  confirm: N_('操作ごとに確認'),
+  auto: N_('選択した端末で自動実行'),
 };
 
 interface Props {
@@ -72,7 +73,7 @@ export function ExternalDialog({ api, open, targets, onClose }: Props) {
     void navigator.clipboard
       .writeText(text)
       .then(() => setInfo(done))
-      .catch(() => setError('コピーできませんでした。選択して手動でコピーしてください'));
+      .catch(() => setError(t('コピーできませんでした。選択して手動でコピーしてください')));
 
   useEffect(() => {
     if (!open) return;
@@ -97,7 +98,7 @@ export function ExternalDialog({ api, open, targets, onClose }: Props) {
     }
   };
 
-  const live = targets.filter((t) => selected.includes(t.sessionId)).map((t) => t.sessionId);
+  const live = targets.filter((x) => selected.includes(x.sessionId)).map((x) => x.sessionId);
   const sharing = status ? status.shared > 0 : false;
   // 共有中(MCP起動中)は設定を固定する。変えるには停止して、設定し直してから開始する。
   const locked = sharing || (status?.mcpRunning ?? false);
@@ -106,73 +107,76 @@ export function ExternalDialog({ api, open, targets, onClose }: Props) {
     <Dialog open={open} onOpenChange={(_, d) => !d.open && onClose()}>
       <DialogSurface style={{ maxWidth: 'min(620px, calc(100vw - 32px))' }}>
         <DialogBody>
-          <DialogTitle>外部連携（MCP）</DialogTitle>
+          <DialogTitle>{t('外部連携（MCP）')}</DialogTitle>
           <DialogContent style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <Text>MCPクライアント（Claude Desktopなど）に、端末の閲覧・操作を許可します。</Text>
+            <Text>{t('MCPクライアント（Claude Desktopなど）に、端末の閲覧・操作を許可します。')}</Text>
             <Caption1>
-              アプリ内のAIに見せる端末は、AIパネルで選びます。端末の出力は信頼できない観測データで、秘密の除去は完全ではありません。
+              {t('アプリ内のAIに見せる端末は、AIパネルで選びます。端末の出力は信頼できない観測データで、秘密の除去は完全ではありません。')}
             </Caption1>
             <RadioGroup value={locked && status ? status.mode : mode} disabled={locked} onChange={(_, d) => setMode(d.value as ShareMode)}>
               {(Object.keys(MODE_LABEL) as ShareMode[]).map((m) => (
-                <Radio key={m} value={m} label={MODE_LABEL[m]} />
+                <Radio key={m} value={m} label={t(MODE_LABEL[m])} />
               ))}
             </RadioGroup>
-            <Text weight="semibold">共有する端末</Text>
-            {targets.length === 0 && <Caption1>接続できている端末がありません。</Caption1>}
-            {targets.map((t) => (
+            <Text weight="semibold">{t('共有する端末')}</Text>
+            {targets.length === 0 && <Caption1>{t('接続できている端末がありません。')}</Caption1>}
+            {targets.map((x) => (
               <Checkbox
-                key={t.sessionId}
-                label={t.label}
-                checked={selected.includes(t.sessionId)}
+                key={x.sessionId}
+                label={x.label}
+                checked={selected.includes(x.sessionId)}
                 disabled={locked}
                 onChange={(_, d) =>
                   setSelected((old) =>
-                    d.checked ? [...old.filter((id) => id !== t.sessionId), t.sessionId] : old.filter((id) => id !== t.sessionId),
+                    d.checked ? [...old.filter((id) => id !== x.sessionId), x.sessionId] : old.filter((id) => id !== x.sessionId),
                   )
                 }
               />
             ))}
-            <Caption1>共有を開始するとMCPも始まります。期限はありません。共有中は設定を変えられません。変えるときは停止して、設定し直してから開始してください。</Caption1>
+            <Caption1>
+              {t('共有を開始するとMCPも始まります。期限はありません。共有中は設定を変えられません。変えるときは停止して、設定し直してから開始してください。')}
+            </Caption1>
             <div style={{ display: 'flex', gap: 8 }}>
               <Button
                 appearance="primary"
                 disabled={busy || locked || live.length === 0}
-                onClick={() => void run(() => api.externalShare(mode, live), `${live.length}端末の共有を開始しました`)}
+                onClick={() => void run(() => api.externalShare(mode, live), t('{n}端末の共有を開始しました', { n: live.length }))}
               >
-                共有を開始
+                {t('共有を開始')}
               </Button>
-              <Button disabled={busy || !(sharing || status?.mcpRunning)} onClick={() => void run(() => api.externalStop(), '共有とMCPを停止しました')}>
-                停止
+              <Button disabled={busy || !(sharing || status?.mcpRunning)} onClick={() => void run(() => api.externalStop(), t('共有とMCPを停止しました'))}>
+                {t('停止')}
               </Button>
             </div>
             {status && (
               <Caption1>
-                {status.shared}端末を共有中 ·{' '}
-                {status.mode === 'confirm' ? '操作ごとに確認' : status.mode === 'auto' ? '自動実行' : '読むだけ'} ·{' '}
-                {status.seconds === null ? '期限なし' : `残り${Math.floor(status.seconds / 60)}分`}
-                {status.active > 0 ? ` · 実行中・承認待ち ${status.active}件` : ''}
+                {[
+                  t('{n}端末を共有中', { n: status.shared }),
+                  status.mode === 'confirm' ? t('操作ごとに確認') : status.mode === 'auto' ? t('自動実行') : t('読むだけ'),
+                  status.seconds === null ? t('期限なし') : t('残り{n}分', { n: Math.floor(status.seconds / 60) }),
+                  ...(status.active > 0 ? [t('実行中・承認待ち {n}件', { n: status.active })] : []),
+                ].join(' · ')}
               </Caption1>
             )}
             <Divider />
-            <Text weight="semibold">Claudeに登録（最初の1回だけ）</Text>
+            <Text weight="semibold">{t('Claudeに登録（最初の1回だけ）')}</Text>
             <Caption1>
-              登録するのはHashiのヘルパーの場所だけです。Hashiを再起動しても、登録し直す必要はありません。
+              {t('登録するのはHashiのヘルパーの場所だけです。Hashiを再起動しても、登録し直す必要はありません。')}
             </Caption1>
             {reg && !reg.helperFound && (
               <MessageBar intent="warning" layout="multiline" style={{ flexShrink: 0 }}>
                 <MessageBarBody>
-                  HashiMCP-RustPreview.exeが、Hashi本体と同じフォルダにありません。同梱のフォルダのまま使ってください。
+                  {t('HashiMCP-RustPreview.exeが、Hashi本体と同じフォルダにありません。同梱のフォルダのまま使ってください。')}
                 </MessageBarBody>
               </MessageBar>
             )}
             {reg && (
               <>
                 <Text>Claude Desktop</Text>
-                <Caption1>{REGISTER_STATE[reg.desktopState]}</Caption1>
+                <Caption1>{t(REGISTER_STATE[reg.desktopState])}</Caption1>
                 <MessageBar intent="warning" layout="multiline" style={{ flexShrink: 0 }}>
                   <MessageBarBody>
-                    登録の前に、Claude Desktopを完全に終了してください（タスクトレイのアイコンを右クリックして「終了」）。起動中に登録すると、Claude
-                    Desktopが設定を保存し直すときに消えます。
+                    {t('登録の前に、Claude Desktopを完全に終了してください（タスクトレイのアイコンを右クリックして「終了」）。起動中に登録すると、Claude Desktopが設定を保存し直すときに消えます。')}
                   </MessageBarBody>
                 </MessageBar>
                 <div>
@@ -189,33 +193,33 @@ export function ExternalDialog({ api, open, targets, onClose }: Props) {
                           setReg(next);
                           setInfo(
                             next.backup
-                              ? `登録しました。元の設定は ${next.backup} に残しました。Claude Desktopを起動し直してください`
-                              : '登録しました。Claude Desktopを起動し直してください',
+                              ? t('登録しました。元の設定は {backup} に残しました。Claude Desktopを起動し直してください', { backup: next.backup })
+                              : t('登録しました。Claude Desktopを起動し直してください'),
                           );
                         })
                         .catch((e) => setError(String(e)))
                         .finally(() => setBusy(false));
                     }}
                   >
-                    Claude Desktopに登録
+                    {t('Claude Desktopに登録')}
                   </Button>
                 </div>
                 <Text>Claude Code</Text>
-                <Caption1>ターミナルに貼って実行してください。</Caption1>
+                <Caption1>{t('ターミナルに貼って実行してください。')}</Caption1>
                 <Textarea readOnly rows={2} value={reg.codeCommand} style={{ fontFamily: 'Consolas, monospace' }} />
                 <div>
-                  <Button onClick={() => copy(reg.codeCommand, 'コマンドをコピーしました')}>コマンドをコピー</Button>
+                  <Button onClick={() => copy(reg.codeCommand, t('コマンドをコピーしました'))}>{t('コマンドをコピー')}</Button>
                 </div>
                 <Accordion collapsible>
                   <AccordionItem value="manual">
-                    <AccordionHeader size="small">手動で登録する</AccordionHeader>
+                    <AccordionHeader size="small">{t('手動で登録する')}</AccordionHeader>
                     <AccordionPanel>
                       <Caption1>
-                        MCPクライアントの設定ファイルの「mcpServers」に、次の項目を加えてください。ほかの項目は変えないでください。
+                        {t('MCPクライアントの設定ファイルの「mcpServers」に、次の項目を加えてください。ほかの項目は変えないでください。')}
                       </Caption1>
                       <Textarea readOnly rows={6} value={reg.manualConfig} style={{ fontFamily: 'Consolas, monospace', width: '100%' }} />
                       <div style={{ marginTop: 6 }}>
-                        <Button onClick={() => copy(reg.manualConfig, '設定をコピーしました')}>設定をコピー</Button>
+                        <Button onClick={() => copy(reg.manualConfig, t('設定をコピーしました'))}>{t('設定をコピー')}</Button>
                       </div>
                     </AccordionPanel>
                   </AccordionItem>
@@ -234,7 +238,7 @@ export function ExternalDialog({ api, open, targets, onClose }: Props) {
             )}
           </DialogContent>
           <DialogActions>
-            <Button onClick={onClose}>閉じる</Button>
+            <Button onClick={onClose}>{t('閉じる')}</Button>
           </DialogActions>
         </DialogBody>
       </DialogSurface>

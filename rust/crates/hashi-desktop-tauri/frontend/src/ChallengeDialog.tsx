@@ -17,6 +17,7 @@ import {
   MessageBarTitle,
   tokens,
 } from '@fluentui/react-components';
+import { t } from './i18n';
 import type { Challenge, ChallengeAnswer } from './types';
 
 const useStyles = makeStyles({
@@ -44,7 +45,7 @@ export function ChallengeDialog({ challenge, error, onAnswer }: Props) {
   useEffect(() => setText(''), [challenge?.challenge_id]);
   if (!challenge) return null;
   const { scope } = challenge;
-  const target = `${scope.username}@${scope.host}:${scope.port}${scope.hop !== null ? `（踏み台${scope.hop + 1}）` : ''}`;
+  const target = `${scope.username}@${scope.host}:${scope.port}${scope.hop !== null ? t('（踏み台{n}）', { n: scope.hop + 1 }) : ''}`;
   const body = challenge.challenge;
   return (
     <Dialog open modalType="alert">
@@ -57,23 +58,23 @@ export function ChallengeDialog({ challenge, error, onAnswer }: Props) {
                 {body.old ? (
                   <MessageBar intent="error">
                     <MessageBarBody>
-                      <MessageBarTitle>このサーバーの鍵が、前に信頼した鍵と違います</MessageBarTitle>
-                      サーバーの入れ替えか、通信の乗っ取りの可能性があります。心当たりがなければ中止してください。
+                      <MessageBarTitle>{t('このサーバーの鍵が、前に信頼した鍵と違います')}</MessageBarTitle>
+                      {t('サーバーの入れ替えか、通信の乗っ取りの可能性があります。心当たりがなければ中止してください。')}
                     </MessageBarBody>
                   </MessageBar>
                 ) : (
-                  <Body1>初めて接続するサーバーです。管理者から聞いた指紋と同じか確認してから信頼してください。</Body1>
+                  <Body1>{t('初めて接続するサーバーです。管理者から聞いた指紋と同じか確認してから信頼してください。')}</Body1>
                 )}
                 {body.old && (
                   <>
-                    <Caption1>前に信頼した指紋</Caption1>
+                    <Caption1>{t('前に信頼した指紋')}</Caption1>
                     <div className={styles.mono}>{body.old.fingerprint}</div>
                   </>
                 )}
-                <Caption1>{body.old ? '今回の指紋' : '指紋'}（{body.key.key_type}）</Caption1>
+                <Caption1>{t('{label}（{type}）', { label: body.old ? t('今回の指紋') : t('指紋'), type: body.key.key_type })}</Caption1>
                 <div className={styles.mono}>{body.key.fingerprint}</div>
                 {body.old && (
-                  <Field label="信頼するには trust と入力してください">
+                  <Field label={t('信頼するには trust と入力してください')}>
                     <Input value={text} onChange={(_, d) => setText(d.value)} />
                   </Field>
                 )}
@@ -99,18 +100,18 @@ export function ChallengeDialog({ challenge, error, onAnswer }: Props) {
             )}
           </DialogContent>
           <DialogActions>
-            <Button onClick={() => onAnswer({ type: 'cancel' })}>中止</Button>
+            <Button onClick={() => onAnswer({ type: 'cancel' })}>{t('中止')}</Button>
             {body.type === 'host_key' ? (
               <Button
                 appearance="primary"
                 disabled={body.old !== null && text !== 'trust'}
                 onClick={() => onAnswer({ type: 'trust', confirmation: text })}
               >
-                信頼して接続
+                {t('信頼して接続')}
               </Button>
             ) : (
               <Button appearance="primary" onClick={() => onAnswer({ type: 'secret', value: text })}>
-                送信
+                {t('送信')}
               </Button>
             )}
           </DialogActions>

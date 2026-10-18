@@ -15,10 +15,14 @@
   **公式 Claude Code の内蔵起動(#160)は移植しない**(利用条件の確認が難しいため。ローカル MCP で連携する)。
   **クラウド同期(#65)はまだ先**(一人では荷が重い。勝手に始めない)。**オーナーの手元に Windows 実機は無い**ので、
   実機の確認は CI と利用者からの報告に頼る。未確認は未確認と書く。
-- **コード署名は SignPath Foundation を申し込む準備まで済み**(`docs/code-signing-policy.md`・`docs/signpath-setup.md`・
-  `.signpath/artifact-configuration.xml`)。申し込み・SignPath の設定・Secrets の登録はオーナーが行う。
-  `SIGNPATH_API_TOKEN` が無いあいだ release.yml は署名を飛ばす。**新しい通信先を増やしたらポリシーのプライバシー節も直す**
-  (SignPath の条件。勝手な外部通信を足さない)。
+- **コード署名: SignPath Foundation の申し込みは承認されなかった(2026-10。公開して間もなく利用者が少ないため)。**
+  現在の配布物は**未署名**。`docs/code-signing-policy.md`・`docs/signpath-setup.md`・`.signpath/artifact-configuration.xml`・
+  release.yml の署名手順は、再申し込みや有料署名への切替のために残す(`SIGNPATH_API_TOKEN` が無いので署名は飛ばされる)。
+  署名の代わりではないが、リリースに `SHA256SUMS.txt` とビルド証明(artifact attestation)を付けた(`docs/verify-download.md`)。
+  winget / Scoop は `packaging/` のテンプレートと `tools/package_manifests.py` まで。**提出はオーナーが行う**(`docs/distribution.md`)。
+  **新しい通信先を増やしたらポリシーのプライバシー節も直す**(勝手な外部通信を足さない)。
+- **広報の方針(2026-10)**: 英語の README(`README.en.md`)を置いた。README.md と内容を揃えること(片方だけ直さない)。
+  **画面は日英対応済み**(下の「画面の多言語化」)。勝手に外部へ投稿・提出しない。
 - **v2.0.0 から配布物は Rust + Tauri 版**(`rust/crates/hashi-desktop-tauri`)。版の単一ソースは
   `rust/Cargo.toml` の `workspace.package.version`。`release.yml` は `vX.Y.Z` タグで Tauri 版をビルドし、
   Cargo の版と照合する。旧Python版(v1.x、`hashi/__init__.py`)はリリースしない(コードは残す)。
@@ -669,6 +673,14 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
   サインアウトは遠隔失効を試み、結果に関係なくトークンを消す（名前は残す）。接続は要求ごとに`TokenSource`からトークンを得て、
   関数はnamespace `hashi`へまとめる（返った`hashi.名前`は戻す）。登録は`ai_models`の`service: chatgpt`＋`account`。
   旧Python版のChatGPT登録は取り込まない（もう一度サインインする）。実アカウントでの確認は未実施（偽サーバーまで）。
+- 画面の多言語化: 文言の原文は日本語で、`frontend/src/i18n.ts` の `t('原文', {名前: 値})` がキーにそのまま使う。英語は `src/i18n/en/<ファイル>.ts`。
+  表のラベルは定義時に訳せないので `N_('原文')` で印を付け、表示で `t(label)`。日本語の直書き(コメント以外)は `npm run build` 前の `scripts/check-i18n.mjs` が止める
+  (例外は行末の `// i18n-ignore: 理由`)。言語は設定の「言語」(自動はOSの言語。保存先は webview の localStorage `hashi.language`)。
+  Rust が返す日本語の文は `tr()` が `src/i18n/rust/*.json`(キー=Rustの文字列リテラル、`{}`/`{name}` は穴、訳では出現順に `{1}` `{2}`、画面に出ない文は `null`)で英語にする。
+  `api.ts` が invoke の失敗と `message`/`error`/`warning`/`note(s)` 項目を訳す。**Rustの文を日本語のまま比較して分岐しない**
+  (比較は `rustHas(error, '原文の一部')`。表示は訳されるため)。Rust側の日本語リテラルを足したら台帳へ足す(CI の `tools/rust_messages.py check` が止める)。
+  AIへ送る指示文・ツール説明・保存形式の識別子は訳さない(`null`)。既知の限界: Rust から直接出るOSのネイティブ窓(終了時の警告)は日本語のまま、
+  タブ名・表示中の通知は作った時点の言語で固定、AIの返答の言語はモデル任せ。画面での英語表示は実機(Tauri)では未確認(ブラウザのモックと型検査まで)。
 - コード署名（SignPath）: 署名するのは`Hashi.exe`と`HashiMCP-RustPreview.exe`だけ。どちらも製品名`Hashi`・版を埋め込む
   （ヘルパーは`hashi-mcp/build.rs`）。`.signpath/artifact-configuration.xml`はSignPath画面へ貼る控え。署名後は
   `Get-AuthenticodeSignature`で確かめてから差し替える。

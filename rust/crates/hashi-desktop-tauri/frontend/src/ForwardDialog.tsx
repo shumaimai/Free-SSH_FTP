@@ -17,6 +17,7 @@ import {
   Select,
   tokens,
 } from '@fluentui/react-components';
+import { t } from './i18n';
 import type { Api } from './api';
 import type { ForwardInfo } from './types';
 
@@ -70,46 +71,46 @@ export function ForwardDialog({ api, open, sessionId, label, onClose }: Props) {
     <Dialog open={open} onOpenChange={(_, d) => !d.open && onClose()}>
       <DialogSurface aria-describedby={undefined} style={{ maxWidth: 520 }}>
         <DialogBody>
-          <DialogTitle>ポート転送</DialogTitle>
+          <DialogTitle>{t('ポート転送')}</DialogTitle>
           <DialogContent className={styles.form}>
             {!sessionId ? (
-              <Body1>SSHで接続した画面を開いてから使います。</Body1>
+              <Body1>{t('SSHで接続した画面を開いてから使います。')}</Body1>
             ) : (
               <>
-                <Caption1>対象: {label}</Caption1>
-                <Field label="種類">
+                <Caption1>{t('対象: {label}', { label })}</Caption1>
+                <Field label={t('種類')}>
                   <Select value={kind} onChange={(_, d) => setKind(d.value)}>
-                    <option value="L">ローカル -L（自分のPCの待受 → 接続先経由）</option>
-                    <option value="R">リモート -R（接続先の待受 → 自分のPC側）</option>
-                    <option value="D">SOCKS5 -D（接続先経由のプロキシ）</option>
+                    <option value="L">{t('ローカル -L（自分のPCの待受 → 接続先経由）')}</option>
+                    <option value="R">{t('リモート -R（接続先の待受 → 自分のPC側）')}</option>
+                    <option value="D">{t('SOCKS5 -D（接続先経由のプロキシ）')}</option>
                   </Select>
                 </Field>
                 <div className={styles.row}>
-                  <Field label="待受アドレス（公開範囲を確認してください）">
+                  <Field label={t('待受アドレス（公開範囲を確認してください）')}>
                     <Input value={bind} onChange={(_, d) => setBind(d.value)} />
                   </Field>
-                  <Field label="待受ポート">
+                  <Field label={t('待受ポート')}>
                     <Input type="number" style={{ width: "100%", minWidth: 0 }} value={port} onChange={(_, d) => setPort(d.value)} />
                   </Field>
                 </div>
                 {kind !== 'D' ? (
                   <div className={styles.row}>
-                    <Field label="転送先ホスト">
+                    <Field label={t('転送先ホスト')}>
                       <Input value={host} onChange={(_, d) => setHost(d.value)} />
                     </Field>
-                    <Field label="転送先ポート">
+                    <Field label={t('転送先ポート')}>
                       <Input type="number" style={{ width: "100%", minWidth: 0 }} value={targetPort} onChange={(_, d) => setTargetPort(d.value)} />
                     </Field>
                   </div>
                 ) : (
                   <Caption1 className={styles.note}>
-                    SOCKS5は認証なしのCONNECTです。標準のloopback待受（127.0.0.1）を推奨します。
+                    {t('SOCKS5は認証なしのCONNECTです。標準のloopback待受（127.0.0.1）を推奨します。')}
                   </Caption1>
                 )}
-                <Caption1 className={styles.note}>待受ポートを0にすると、空いているポートを自動で割り当てます。</Caption1>
+                <Caption1 className={styles.note}>{t('待受ポートを0にすると、空いているポートを自動で割り当てます。')}</Caption1>
                 <div>
                   <Button appearance="primary" disabled={busy} onClick={() => void start()}>
-                    開始
+                    {t('開始')}
                   </Button>
                 </div>
                 {error && (
@@ -117,7 +118,7 @@ export function ForwardDialog({ api, open, sessionId, label, onClose }: Props) {
                     <MessageBarBody>{error}</MessageBarBody>
                   </MessageBar>
                 )}
-                {list.length > 0 && <Caption1>動作中の転送</Caption1>}
+                {list.length > 0 && <Caption1>{t('動作中の転送')}</Caption1>}
                 {list.map((f) => (
                   <div key={f.id} className={styles.item}>
                     <span className={styles.grow}>{f.label}</span>
@@ -134,7 +135,7 @@ export function ForwardDialog({ api, open, sessionId, label, onClose }: Props) {
                           })
                       }
                     >
-                      停止
+                      {t('停止')}
                     </Button>
                   </div>
                 ))}
@@ -142,7 +143,7 @@ export function ForwardDialog({ api, open, sessionId, label, onClose }: Props) {
             )}
           </DialogContent>
           <DialogActions>
-            <Button onClick={onClose}>閉じる</Button>
+            <Button onClick={onClose}>{t('閉じる')}</Button>
           </DialogActions>
         </DialogBody>
       </DialogSurface>

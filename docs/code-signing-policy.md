@@ -2,10 +2,13 @@
 
 Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
 
-> Status: the application to SignPath Foundation is in preparation. Until it is approved, releases are
-> published **unsigned**, and this page describes the process that will apply to signed releases.
-> 状態: SignPath Foundation へ申し込み準備中。承認されるまでのリリースは**未署名**で、
-> このページは署名が始まってからの手順を示す。
+> Status: the application to SignPath Foundation was **not accepted** (2026-10; the project is new and has
+> few users so far). Releases are published **unsigned**. This page is kept for a future application, and the
+> privacy section below applies today. To check a download without a signature, see
+> [verify-download.md](verify-download.md).
+> 状態: SignPath Foundation への申し込みは**承認されなかった**(2026-10。公開して間もなく、利用者がまだ少ないため)。
+> リリースは**未署名**。このページは再申し込みのために残し、プライバシーの節は現在も有効。
+> 署名が無い配布物の確認方法は [verify-download.md](verify-download.md)。
 
 ## What is signed / 署名するもの
 

@@ -23,6 +23,7 @@ import {
 import { Attach20Regular, Bot20Regular, ChatAdd20Regular, Dismiss12Regular, Send20Filled, Stop20Regular } from '@fluentui/react-icons';
 import type { Api } from './api';
 import type { AiAttachment, AiModelsList, AiStatus, ShareMode } from './types';
+import { N_, t } from './i18n';
 
 /** 添付の上限(Rust側でも同じ上限で検査する)。 */
 const MAX_FILES = 4;
@@ -33,15 +34,19 @@ interface Pending extends AiAttachment {
   thumb: string | null;
 }
 
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /** ファイルを読み、中身をbase64にする。 */
 function readFile(file: File): Promise<Pending> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onerror = () => reject(new Error(`「${file.name}」を読めませんでした`));
+    reader.onerror = () => reject(new Error(t('「{name}」を読めませんでした', { name: file.name })));
     reader.onload = () => {
       const url = String(reader.result);
       const data = url.slice(url.indexOf(',') + 1);
-      const name = file.name || (file.type.startsWith('image/') ? '貼り付けた画像' : '貼り付けたファイル');
+      const name = file.name || (file.type.startsWith('image/') ? t('貼り付けた画像') : t('貼り付けたファイル'));
       resolve({ name, data, thumb: file.type.startsWith('image/') ? url : null });
     };
     reader.readAsDataURL(file);
@@ -125,11 +130,11 @@ interface Msg {
   text: string;
 }
 
-const MODE_LABEL: Record<ShareMode, string> = { consult: '読むだけ', confirm: '操作は確認', auto: '自動で操作' };
+const MODE_LABEL: Record<ShareMode, string> = { consult: N_('読むだけ'), confirm: N_('操作は確認'), auto: N_('自動で操作') };
 const MODE_HELP: Record<ShareMode, string> = {
-  consult: '画面を読むだけで、AIは操作しません。送る前に内容を確認できます。',
-  confirm: 'AIが操作したいとき、そのつど許可を求めます。',
-  auto: '選んだ端末で、確認なしにAIが実行します（停止するまで）。',
+  consult: N_('画面を読むだけで、AIは操作しません。送る前に内容を確認できます。'),
+  confirm: N_('AIが操作したいとき、そのつど許可を求めます。'),
+  auto: N_('選んだ端末で、確認なしにAIが実行します（停止するまで）。'),
 };
 
 /** 本文を```で分け、コードの部分だけ等幅で出す。 */
@@ -183,7 +188,7 @@ export function AiDock({ api, targets, onManage }: Props) {
     if (list.length === 0) return;
     const big = list.find((f) => f.size > MAX_BYTES);
     if (big) {
-      setMessages((old) => [...old, { role: 'error', text: `「${big.name}」が大きすぎます(5MBまで)` }]);
+      setMessages((old) => [...old, { role: 'error', text: t('「{name}」が大きすぎます(5MBまで)', { name: big.name }) }]);
       return;
     }
     void Promise.all(list.map(readFile))
@@ -191,7 +196,7 @@ export function AiDock({ api, targets, onManage }: Props) {
         setFiles((old) => {
           const next = [...old, ...read];
           if (next.length > MAX_FILES) {
-            setMessages((m) => [...m, { role: 'error', text: `添付できるのは${MAX_FILES}件までです` }]);
+            setMessages((m) => [...m, { role: 'error', text: t('添付できるのは{n}件までです', { n: MAX_FILES }) }]);
           }
           return next.slice(0, MAX_FILES);
         }),
@@ -245,7 +250,7 @@ export function AiDock({ api, targets, onManage }: Props) {
   }, [messages, running]);
   // 終わった端末は共有対象から外す。
   useEffect(() => {
-    setSelected((old) => old.filter((id) => targets.some((t) => t.sessionId === id)));
+    setSelected((old) => old.filter((id) => targets.some((x) => x.sessionId === id)));
   }, [targets]);
 
   const choose = async (id: string) => {
@@ -275,7 +280,7 @@ export function AiDock({ api, targets, onManage }: Props) {
     const attached = files;
     setQuestion('');
     setFiles([]);
-    const shown = attached.length ? `${text}${text ? '\n' : ''}[添付] ${attached.map((f) => f.name).join(', ')}` : text;
+    const shown = attached.length ? `${text}${text ? '\n' : ''}${t('[添付]')} ${attached.map((f) => f.name).join(', ')}` : text;
     setMessages((old) => [...old, { role: 'user', text: shown }]);
     setRunning(true);
     try {
@@ -311,15 +316,15 @@ export function AiDock({ api, targets, onManage }: Props) {
     void api.aiStop();
   };
 
-  if (!status || !models) return <Caption1 className={styles.note}>読み込み中…</Caption1>;
+  if (!status || !models) return <Caption1 className={styles.note}>{t('読み込み中…')}</Caption1>;
 
   // ---- 登録が1件も無い ----
   if (models.entries.length === 0) {
     return (
       <div className={styles.setup}>
-        <Subtitle2>AIモデルが未登録です</Subtitle2>
+        <Subtitle2>{t('AIモデルが未登録です')}</Subtitle2>
         <Button appearance="primary" style={{ alignSelf: 'flex-start' }} onClick={onManage}>
-          AIモデルを登録する
+          {t('AIモデルを登録する')}
         </Button>
       </div>
     );
@@ -332,22 +337,22 @@ export function AiDock({ api, targets, onManage }: Props) {
       <div className={styles.row}>
         <Select
           className={styles.grow}
-          aria-label="使うAIモデル"
+          aria-label={t('使うAIモデル')}
           value={models.active ?? ''}
           disabled={switching || running}
           onChange={(_, d) => void choose(d.value)}
         >
-          {!models.active && <option value="">AIモデルを選んでください</option>}
+          {!models.active && <option value="">{t('AIモデルを選んでください')}</option>}
           {models.entries.map((e) => (
             <option key={e.id} value={e.id}>
               {e.label}
             </option>
           ))}
         </Select>
-        <Tooltip content="AIモデルの管理" relationship="label">
+        <Tooltip content={t('AIモデルの管理')} relationship="label">
           <Button appearance="subtle" icon={<Bot20Regular />} onClick={onManage} />
         </Tooltip>
-        <Tooltip content="新しい会話" relationship="label">
+        <Tooltip content={t('新しい会話')} relationship="label">
           <Button
             appearance="subtle"
             icon={<ChatAdd20Regular />}
@@ -356,7 +361,7 @@ export function AiDock({ api, targets, onManage }: Props) {
           />
         </Tooltip>
       </div>
-      {switching && <Spinner size="tiny" label="切り替え中" />}
+      {switching && <Spinner size="tiny" label={t('切り替え中')} />}
       {problem && (
         <MessageBar intent="error">
           <MessageBarBody>{problem}</MessageBarBody>
@@ -373,7 +378,7 @@ export function AiDock({ api, targets, onManage }: Props) {
     return (
       <div className={styles.root}>
         {header}
-        <Caption1 className={styles.note}>使うAIモデルを選んでください。</Caption1>
+        <Caption1 className={styles.note}>{t('使うAIモデルを選んでください。')}</Caption1>
       </div>
     );
   }
@@ -383,18 +388,20 @@ export function AiDock({ api, targets, onManage }: Props) {
       {targets.length > 0 && (
         <div className={styles.share}>
           <div className={styles.wrap}>
-            <Caption1 className={styles.note}>見せる端末</Caption1>
-            {targets.map((t) => (
+            <Caption1 className={styles.note}>{t('見せる端末')}</Caption1>
+            {targets.map((target) => (
               <ToggleButton
-                key={t.sessionId}
+                key={target.sessionId}
                 size="small"
-                appearance={selected.includes(t.sessionId) ? 'primary' : 'outline'}
-                checked={selected.includes(t.sessionId)}
+                appearance={selected.includes(target.sessionId) ? 'primary' : 'outline'}
+                checked={selected.includes(target.sessionId)}
                 onClick={() =>
-                  setSelected((old) => (old.includes(t.sessionId) ? old.filter((x) => x !== t.sessionId) : [...old, t.sessionId]))
+                  setSelected((old) =>
+                    old.includes(target.sessionId) ? old.filter((x) => x !== target.sessionId) : [...old, target.sessionId],
+                  )
                 }
               >
-                {t.label}
+                {target.label}
               </ToggleButton>
             ))}
           </div>
@@ -403,17 +410,17 @@ export function AiDock({ api, targets, onManage }: Props) {
               <div className={styles.wrap}>
                 {(Object.keys(MODE_LABEL) as ShareMode[]).map((m) => (
                   <ToggleButton key={m} size="small" appearance={mode === m ? 'primary' : 'outline'} checked={mode === m} onClick={() => setMode(m)}>
-                    {MODE_LABEL[m]}
+                    {t(MODE_LABEL[m])}
                   </ToggleButton>
                 ))}
               </div>
-              <Caption1 className={mergeClasses(styles.note, mode === 'auto' && styles.error)}>{MODE_HELP[mode]}</Caption1>
+              <Caption1 className={mergeClasses(styles.note, mode === 'auto' && styles.error)}>{t(MODE_HELP[mode])}</Caption1>
             </>
           )}
         </div>
       )}
       <div className={styles.scroll} ref={scrollRef}>
-        {messages.length === 0 && <Caption1 className={styles.note}>質問を入力してください。</Caption1>}
+        {messages.length === 0 && <Caption1 className={styles.note}>{t('質問を入力してください。')}</Caption1>}
         {messages.map((m, i) =>
           m.role === 'user' ? (
             <div key={i} className={styles.bubbleUser}>
@@ -431,7 +438,7 @@ export function AiDock({ api, targets, onManage }: Props) {
         )}
         {running && messages[messages.length - 1]?.role !== 'ai' && (
           <div className={styles.bubbleAi}>
-            <Caption1 className={styles.note}>考えています…</Caption1>
+            <Caption1 className={styles.note}>{t('考えています…')}</Caption1>
           </div>
         )}
       </div>
@@ -444,7 +451,7 @@ export function AiDock({ api, targets, onManage }: Props) {
               <Button
                 size="small"
                 appearance="transparent"
-                aria-label={`${f.name}を外す`}
+                aria-label={t('{name}を外す', { name: f.name })}
                 icon={<Dismiss12Regular />}
                 onClick={() => setFiles((old) => old.filter((_, j) => j !== i))}
               />
@@ -463,7 +470,7 @@ export function AiDock({ api, targets, onManage }: Props) {
             e.target.value = '';
           }}
         />
-        <Tooltip content="ファイルを添付(画像・テキスト。Ctrl+Vで貼り付けも可)" relationship="label">
+        <Tooltip content={t('ファイルを添付(画像・テキスト。Ctrl+Vで貼り付けも可)')} relationship="label">
           <Button
             appearance="subtle"
             icon={<Attach20Regular />}
@@ -476,7 +483,7 @@ export function AiDock({ api, targets, onManage }: Props) {
           resize="none"
           rows={2}
           value={question}
-          placeholder="質問を入力（Ctrl+Enterで送信）"
+          placeholder={t('質問を入力（Ctrl+Enterで送信）')}
           onChange={(_, d) => setQuestion(d.value)}
           onPaste={(e) => {
             // 画像などのファイルを貼り付けたら添付にする。文字の貼り付けはそのまま。
@@ -494,11 +501,11 @@ export function AiDock({ api, targets, onManage }: Props) {
           }}
         />
         {running ? (
-          <Tooltip content="停止" relationship="label">
+          <Tooltip content={t('停止')} relationship="label">
             <Button appearance="outline" icon={<Stop20Regular />} onClick={stop} />
           </Tooltip>
         ) : (
-          <Tooltip content="送信" relationship="label">
+          <Tooltip content={t('送信')} relationship="label">
             <Button appearance="primary" icon={<Send20Filled />} disabled={!question.trim() && files.length === 0} onClick={() => void send()} />
           </Tooltip>
         )}
@@ -517,7 +524,7 @@ export function AiDock({ api, targets, onManage }: Props) {
             return last?.role === 'user' && last.text === text ? old.slice(0, -1) : old;
           });
           // 表示用の「[添付] …」行は入力欄へ戻さず、添付は添付として戻す。
-          const typed = pendingFiles.current.length ? text.replace(/\n?\[添付\] [^\n]*$/, '') : text;
+          const typed = pendingFiles.current.length ? text.replace(new RegExp(`\\n?${escapeRegExp(t('[添付]'))} [^\\n]*$`), '') : text;
           setQuestion((current) => current || typed);
           setFiles((current) => (current.length ? current : pendingFiles.current));
         }}
@@ -544,14 +551,14 @@ function PreviewDialog({
     <Dialog open={context !== null} modalType="alert">
       <DialogSurface aria-describedby={undefined} style={{ maxWidth: 680 }}>
         <DialogBody>
-          <DialogTitle>AIへ送る内容の確認</DialogTitle>
+          <DialogTitle>{t('AIへ送る内容の確認')}</DialogTitle>
           <DialogContent>
-            <Caption1>端末の画面がそのままAIに送られます。秘密情報が残っていないか確認し、必要なら直してください。</Caption1>
+            <Caption1>{t('端末の画面がそのままAIに送られます。秘密情報が残っていないか確認し、必要なら直してください。')}</Caption1>
             {mode === 'consult' ? (
-              <Caption1>「読むだけ」では、AIが見るのはここで送る内容だけです。</Caption1>
+              <Caption1>{t('「読むだけ」では、AIが見るのはここで送る内容だけです。')}</Caption1>
             ) : (
               <Caption1 className={styles.error}>
-                操作を任せるモードでは、AIはこのあとも共有中の端末の出力を読み取ります(秘密らしい文字列は伏せますが、完全ではありません)。
+                {t('操作を任せるモードでは、AIはこのあとも共有中の端末の出力を読み取ります(秘密らしい文字列は伏せますが、完全ではありません)。')}
               </Caption1>
             )}
             <Textarea
@@ -564,9 +571,9 @@ function PreviewDialog({
             />
           </DialogContent>
           <DialogActions>
-            <Button onClick={onCancel}>戻る</Button>
+            <Button onClick={onCancel}>{t('戻る')}</Button>
             <Button appearance="primary" onClick={() => onSend(text)}>
-              この内容を送る
+              {t('この内容を送る')}
             </Button>
           </DialogActions>
         </DialogBody>

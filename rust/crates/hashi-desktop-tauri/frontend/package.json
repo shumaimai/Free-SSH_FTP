@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
-    "typecheck": "tsc --noEmit"
+    "build": "npm run check-i18n && tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "check-i18n": "node scripts/check-i18n.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "6.11.1",

@@ -25,6 +25,7 @@ import {
   tokens,
 } from '@fluentui/react-components';
 import { Add20Regular, Code20Regular, Delete20Regular, Edit20Regular } from '@fluentui/react-icons';
+import { t } from './i18n';
 import type { Api } from './api';
 import type { Snippet } from './types';
 
@@ -91,7 +92,7 @@ export function SnippetBar({ api, sessionId, onError }: Props) {
       <Menu onOpenChange={(_, d) => d.open && void reload()}>
         <MenuTrigger disableButtonEnhancement>
           <Button size="small" appearance="subtle" icon={<Code20Regular />} disabled={!sessionId}>
-            スニペット
+            {t('スニペット')}
           </Button>
         </MenuTrigger>
         <MenuPopover>
@@ -102,10 +103,10 @@ export function SnippetBar({ api, sessionId, onError }: Props) {
                 {snippet.name}
               </MenuItem>
             ))}
-            {list.length === 0 && !loadError && <MenuItem disabled>スニペットはまだありません</MenuItem>}
+            {list.length === 0 && !loadError && <MenuItem disabled>{t('スニペットはまだありません')}</MenuItem>}
             <MenuDivider />
             <MenuItem icon={<Edit20Regular />} onClick={() => setManaging(true)}>
-              管理...
+              {t('管理...')}
             </MenuItem>
           </MenuList>
         </MenuPopover>
@@ -124,10 +125,10 @@ export function SnippetBar({ api, sessionId, onError }: Props) {
                   />
                 </Field>
               ))}
-              <Caption1 className={styles.note}>入力しなかった変数は、{'{{名前}}'}のまま送られます。</Caption1>
+              <Caption1 className={styles.note}>{t('入力しなかった変数は、{token}のまま送られます。', { token: `{{${t('変数名')}}}` })}</Caption1>
             </DialogContent>
             <DialogActions>
-              <Button onClick={() => setPending(null)}>やめる</Button>
+              <Button onClick={() => setPending(null)}>{t('やめる')}</Button>
               <Button
                 appearance="primary"
                 onClick={() => {
@@ -137,7 +138,7 @@ export function SnippetBar({ api, sessionId, onError }: Props) {
                     void api.snippetSend(sessionId, current.index, values).catch((e) => onError(String(e)));
                 }}
               >
-                送る
+                {t('送る')}
               </Button>
             </DialogActions>
           </DialogBody>
@@ -188,11 +189,11 @@ function SnippetManager({
     <Dialog open={open} onOpenChange={(_, d) => !d.open && onClose()}>
       <DialogSurface aria-describedby={undefined} style={{ maxWidth: 720 }}>
         <DialogBody>
-          <DialogTitle>スニペットの管理</DialogTitle>
+          <DialogTitle>{t('スニペットの管理')}</DialogTitle>
           <DialogContent>
             {loadError && (
               <MessageBar intent="error">
-                <MessageBarBody>{loadError}（保存済みの記録を守るため、編集は無効です）</MessageBarBody>
+                <MessageBarBody>{t('{error}（保存済みの記録を守るため、編集は無効です）', { error: loadError })}</MessageBarBody>
               </MessageBar>
             )}
             <div className={styles.manager}>
@@ -204,26 +205,26 @@ function SnippetManager({
                     style={{ justifyContent: 'flex-start' }}
                     onClick={() => setCurrent(i)}
                   >
-                    {s.name || '（名前なし）'}
+                    {s.name || t('（名前なし）')}
                   </Button>
                 ))}
                 <Button
                   icon={<Add20Regular />}
                   disabled={loadError !== null}
                   onClick={() => {
-                    setDraft((old) => [...old, { name: '新しいスニペット', body: '', send_enter: true }]);
+                    setDraft((old) => [...old, { name: t('新しいスニペット'), body: '', send_enter: true }]);
                     setCurrent(draft.length);
                   }}
                 >
-                  追加
+                  {t('追加')}
                 </Button>
               </div>
               {item ? (
                 <div className={styles.form}>
-                  <Field label="名前">
+                  <Field label={t('名前')}>
                     <Input value={item.name} onChange={(_, d) => update({ name: d.value })} />
                   </Field>
-                  <Field label="本文（{{名前}} は送るときに入力できます）">
+                  <Field label={t('本文（{token} は送るときに入力できます）', { token: `{{${t('変数名')}}}` })}>
                     <Textarea
                       textarea={{ className: styles.mono }}
                       rows={6}
@@ -234,7 +235,7 @@ function SnippetManager({
                   <Checkbox
                     checked={item.send_enter}
                     onChange={(_, d) => update({ send_enter: d.checked === true })}
-                    label="送ったあとにEnterを押す"
+                    label={t('送ったあとにEnterを押す')}
                   />
                   <Button
                     icon={<Delete20Regular />}
@@ -245,11 +246,11 @@ function SnippetManager({
                       setCurrent(0);
                     }}
                   >
-                    このスニペットを削除
+                    {t('このスニペットを削除')}
                   </Button>
                 </div>
               ) : (
-                <Body1 className={styles.note}>左の「追加」から作ります。</Body1>
+                <Body1 className={styles.note}>{t('左の「追加」から作ります。')}</Body1>
               )}
             </div>
             {error && (
@@ -259,7 +260,7 @@ function SnippetManager({
             )}
           </DialogContent>
           <DialogActions>
-            <Button onClick={onClose}>キャンセル</Button>
+            <Button onClick={onClose}>{t('キャンセル')}</Button>
             <Button
               appearance="primary"
               disabled={loadError !== null}
@@ -273,7 +274,7 @@ function SnippetManager({
                   .catch((e) => setError(String(e)))
               }
             >
-              保存
+              {t('保存')}
             </Button>
           </DialogActions>
         </DialogBody>

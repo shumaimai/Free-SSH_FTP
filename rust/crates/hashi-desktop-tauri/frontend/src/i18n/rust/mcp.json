@@ -1,0 +1,17 @@
+{
+ "使い方: HashiMCP-RustPreview [endpoint.json]": "Usage: HashiMCP-RustPreview [endpoint.json]",
+ "ホームフォルダが不明です": "The home folder is unknown.",
+ "{HELPER_NAME}をHashiと同じフォルダに配置してください": "Place {1} in the same folder as Hashi.",
+ "Hashiに接続できません。Hashiを起動し、「外部連携(MCP)」で端末の「共有を開始」をしてから、もう一度お試しください。": "Cannot connect to Hashi. Start Hashi, click \"Start sharing\" for a terminal under \"External integration (MCP)\", and try again.",
+ "MCPの接続情報フォルダが不正です": "The MCP connection info folder is invalid.",
+ "一時フォルダの権限を制限できません": "Could not restrict permissions on the temporary folder.",
+ "ユーザーSIDを確認できません": "Cannot determine the user SID.",
+ "Hashi MCPは停止しています": "Hashi MCP is stopped.",
+ "接続数の上限です": "The connection limit has been reached.",
+ "このクライアントは初期化済みです": "This client is already initialized.",
+ "初期化してください": "Initialize first.",
+ "初期化が完了していません": "Initialization is not complete.",
+ "MCP要求が大きすぎます": "The MCP request is too large.",
+ "接続情報が不正です": "The connection info is invalid.",
+ "起動中のHashiへ接続できません": "Cannot connect to the running Hashi."
+}

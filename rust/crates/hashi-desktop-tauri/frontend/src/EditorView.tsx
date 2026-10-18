@@ -24,6 +24,7 @@ import { nginx } from '@codemirror/legacy-modes/mode/nginx';
 import type { Api } from './api';
 import type { OpenedDoc } from './types';
 import { TERM_FONTS, type Appearance } from './appearance';
+import { t } from './i18n';
 
 const useStyles = makeStyles({
   root: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 },
@@ -122,13 +123,13 @@ function Bar({
   return (
     <div className={styles.bar}>
       <Button appearance="primary" size="small" icon={<Save20Regular />} disabled={busy || !dirty} onClick={save}>
-        保存
+        {t('保存')}
       </Button>
       <Button size="small" icon={<SaveEdit20Regular />} disabled={busy} onClick={saveAs}>
-        名前を付けて保存...
+        {t('名前を付けて保存...')}
       </Button>
       <Caption1 className={styles.path} title={path}>
-        {doc.sessionId ? '[サーバー] ' : '[この PC] '}
+        {(doc.sessionId ? t('[サーバー]') : t('[この PC]')) + ' '}
         {path}
       </Caption1>
       <div className={styles.grow} />
@@ -201,7 +202,7 @@ function TextEditor({ api, doc, active, dark, appearance, onDirty, onSaved, onMe
           callbacks.current.onDirty(now);
           setPath(result.path);
           callbacks.current.onSaved(result.name, result.path, result.sessionId);
-          callbacks.current.onMessage(`${result.name} を保存しました`);
+          callbacks.current.onMessage(t('{name} を保存しました', { name: result.name }));
         }
       } catch (e) {
         setError(String(e));
@@ -401,7 +402,7 @@ function HexEditor({ api, doc, active, appearance, onDirty, onSaved, onMessage }
         setNibble(null);
         setPath(result.path);
         onSaved(result.name, result.path, result.sessionId);
-        onMessage(`${result.name} を保存しました`);
+        onMessage(t('{name} を保存しました', { name: result.name }));
       }
     } catch (e) {
       setError(String(e));
@@ -454,7 +455,7 @@ function HexEditor({ api, doc, active, appearance, onDirty, onSaved, onMessage }
         busy={busy}
         save={() => void save(false)}
         saveAs={() => void save(true)}
-        extra={`16進 / サイズ不変 / 位置 0x${cursor.toString(16)} / 変更 ${patches.size}バイト`}
+        extra={t('16進 / サイズ不変 / 位置 0x{pos} / 変更 {n}バイト', { pos: cursor.toString(16), n: patches.size })}
       />
       {error && (
         <MessageBar intent="error">
@@ -466,7 +467,7 @@ function HexEditor({ api, doc, active, appearance, onDirty, onSaved, onMessage }
           ref={box}
           tabIndex={0}
           role="textbox"
-          aria-label="16進エディタ"
+          aria-label={t('16進エディタ')}
           className={styles.hex}
           style={{ fontFamily: font, fontSize: `${appearance.termSize}px` }}
           onScroll={(e) => setScroll(e.currentTarget.scrollTop)}

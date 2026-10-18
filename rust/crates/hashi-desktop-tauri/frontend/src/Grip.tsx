@@ -2,6 +2,7 @@
 // ダブルクリックで既定に戻す。キーボードでも左右キーで動かせる。
 import { useRef, useState } from 'react';
 import { makeStyles, mergeClasses, tokens } from '@fluentui/react-components';
+import { t } from './i18n';
 
 /** ドラッグ中の印。端末は大きさを合わせる前に一瞬はみ出すので、その間のスクロールバーを隠す(styles.css)。 */
 let releaseTimer: number | undefined;
@@ -50,7 +51,7 @@ export function Grip({ label, onBegin, onMove, onReset, className }: Props) {
       role="separator"
       aria-orientation="vertical"
       aria-label={label}
-      title={`${label}(ダブルクリックで元に戻す)`}
+      title={t('{label}(ダブルクリックで元に戻す)', { label })}
       tabIndex={0}
       className={mergeClasses(styles.grip, dragging && styles.active, className)}
       onPointerDown={(e) => {

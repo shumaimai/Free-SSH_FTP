@@ -491,7 +491,9 @@ ruff check .
 - 配布zip・動作確認用exeは`tools/rust_artifact.py`だけで作り、手で`cp`しないこと。本体は`Hashi.exe`（Tauri版。版は`rust/Cargo.toml`、`v*`タグのリリースはTauri版）で、egui版`Hashi-RustPreview.exe`を本体にしないこと（取り違え事故の再発防止。スクリプトが名前・中身・アイコン資源を検査する）。
 - ChatGPTサインイン（`hashi_ai::chatgpt`）のstate/nonce/PKCE照合、IDトークンのRS256署名・iss/aud/exp・プラン使用scopeの検証を弱めないこと。トークンを画面・ログ・設定JSONへ出さないこと（AI専用ストアの`oauth:accounts`だけ）。jwks・失効の接続先を発行者以外のホストへ向けないこと。
 - 公式Claude Codeの内蔵起動（#160）をRust版へ移植しないこと（オーナー判断）。クラウド同期（#65）を勝手に始めないこと。
-- コード署名（SignPath）の対象は`Hashi.exe`と`HashiMCP-RustPreview.exe`だけ。製品名`Hashi`と版の埋め込み（ヘルパーは`hashi-mcp/build.rs`）を消さないこと。
+- コード署名（SignPath）は申し込みが承認されず未署名で配布中（再申し込み用に手順は残す）。署名する場合の対象は`Hashi.exe`と`HashiMCP-RustPreview.exe`だけ。製品名`Hashi`と版の埋め込み（ヘルパーは`hashi-mcp/build.rs`）を消さないこと。
 - 利用者が設定していない外部への通信を足さないこと。足すなら`docs/code-signing-policy.md`のプライバシー節と、止める設定を用意すること（SignPathの条件）。
 - CI/リリースで動くPythonスクリプトは、子プロセス出力とstdoutをUTF-8に固定すること（Windows runnerはcp1252。v2.0.0の初回リリースがこれで失敗した）。
 - Windows実機での確認はオーナーの手元でもできない。実機未確認のことを確認済みと書かないこと。
+- README.mdとREADME.en.mdは内容を揃えること。winget/Scoopへの提出や外部への投稿を勝手にしないこと（オーナーが行う）。
+- 画面の文言は`t('日本語の原文')`で書き、英訳を`frontend/src/i18n/en/`へ足すこと（日本語の直書きは`npm run build`が止める）。Rustが返す日本語の文を足したら`frontend/src/i18n/rust/*.json`の台帳へ英訳（画面に出ない文は`null`）を足すこと。Rustの日本語の文を比較して分岐しないこと（`rustHas`を使う）。

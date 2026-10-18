@@ -1,0 +1,18 @@
+export default {
+  '対話端末へ入力': 'Type into the interactive terminal',
+  '対話端末へキー送信': 'Send keys to the interactive terminal',
+  '独立コマンドを実行': 'Run an independent command',
+  'Ctrl+Cを送信': 'Send Ctrl+C',
+  '外部からの端末操作の確認': 'Confirm external terminal action',
+  '内容を確認してから許可してください。': 'Check the content before you allow it.',
+  '依頼元: {actor}': 'Requested by: {actor}',
+  '操作: {action}': 'Action: {action}',
+  '端末: {label}（世代{generation}）': 'Terminal: {label} (generation {generation})',
+  '開始フォルダ: {cwd}': 'Starting folder: {cwd}',
+  '内容（行数: {lines}、文字数: {chars}）。枠内をスクロールして最後まで確認してください': 'Content (lines: {lines}, characters: {chars}). Scroll inside the box and check all of it',
+  '入力のあと、Enterも送信します。': 'Enter is also sent after the input.',
+  'Enterは送信しません(文字を打つだけです)。': 'Enter is not sent (the text is only typed).',
+  '途中の改行もEnterとして送るため、その行ごとに実行されます。': 'Line breaks in the middle are also sent as Enter, so each line is executed.',
+  '拒否': 'Deny',
+  '許可して実行': 'Allow and run',
+} as Record<string, string>;

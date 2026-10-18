@@ -11,7 +11,14 @@
 - コード署名の準備(SignPath Foundation)。[コード署名ポリシー](docs/code-signing-policy.md)(通信とプライバシーの説明を含む)、
   `release.yml` の署名手順(Secrets を登録するまでは飛ばす)、MCP ヘルパーへの版情報の埋め込み。
 
+- **画面の英語化**。設定に「言語」(自動 / 日本語 / English。自動はOSの言語)。Rustが返すエラー文なども英語に訳して表示する
+  (台帳 `frontend/src/i18n/rust/`)。日本語の直書きや訳の抜けは `npm run build` と CI が止める。実機(Windows)での表示確認は未実施。
+- 英語の README(`README.en.md`)、ダウンロードの確認手順(`docs/verify-download.md`)。
+- リリースに `SHA256SUMS.txt` とビルド証明(GitHub artifact attestation)を付ける。winget / Scoop 用マニフェストの
+  テンプレート(`packaging/`)と生成スクリプト(`tools/package_manifests.py`)。提出は未実施。
+
 ### 変更
+- SignPath Foundation への申し込みは承認されなかったため、署名ポリシー・README の記述を「未署名・再申し込み用に保管」に直した。
 - 設定の更新確認の説明を正式版向けに直し、問い合わせ先(GitHub)と止め方を明記。
 - README・CONTRIBUTING・SECURITY・Issue / PR テンプレートを v2(Rust + Tauri)向けに更新。
 - 公式 Claude Code の内蔵起動(#160)は Tauri 版へ移植しない方針にした(利用条件の確認が難しいため。ローカル MCP で連携できる)。
