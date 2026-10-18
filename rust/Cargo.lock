@@ -2437,7 +2437,7 @@ dependencies = [
 
 [[package]]
 name = "hashi-ai"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2457,7 +2457,7 @@ dependencies = [
 
 [[package]]
 name = "hashi-core"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2484,7 +2484,7 @@ dependencies = [
 
 [[package]]
 name = "hashi-desktop-native"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "eframe",
@@ -2508,7 +2508,7 @@ dependencies = [
 
 [[package]]
 name = "hashi-desktop-tauri"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2533,7 +2533,7 @@ dependencies = [
 
 [[package]]
 name = "hashi-mcp"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "hashi-ai",
@@ -2548,7 +2548,7 @@ dependencies = [
 
 [[package]]
 name = "hashi-storage"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "base64 0.22.1",
  "fernet",
@@ -2565,7 +2565,7 @@ dependencies = [
 
 [[package]]
 name = "hashi-terminal"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "alacritty_terminal",
  "serde",
