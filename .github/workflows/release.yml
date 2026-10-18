@@ -11,7 +11,9 @@ on:
       - "v*"
 
 permissions:
-  contents: write   # リリース作成に必要
+  contents: write       # リリース作成に必要
+  id-token: write       # ビルド証明(artifact attestation)の署名に必要
+  attestations: write   # ビルド証明を保存する
 
 jobs:
   build-windows:
@@ -106,11 +108,35 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path "rust/target/Hashi-${{ github.ref_name }}" -DestinationPath "rust/target/Hashi-${{ github.ref_name }}-windows-x64.zip"
 
+      # --- 配布物の確認手段(コード署名の代わりではない。SmartScreen の表示は変わらない) ---
+      - name: SHA-256 を作る
+        shell: bash
+        working-directory: rust/target
+        run: sha256sum "Hashi-${{ github.ref_name }}-windows-x64.zip" | tee SHA256SUMS.txt
+
+      - name: ビルド証明(どのコミットのどの workflow で作られたかを GitHub が保証する)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: rust/target/Hashi-${{ github.ref_name }}-windows-x64.zip
+
+      - name: winget / Scoop 用マニフェストを作る
+        shell: bash
+        run: |
+          python tools/package_manifests.py "${{ steps.version.outputs.version }}" \
+            --zip "rust/target/Hashi-${{ github.ref_name }}-windows-x64.zip" rust/target/package-manifests
+
+      - name: マニフェストを成果物として保存(提出はオーナーが行う)
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-manifests-${{ github.ref_name }}
+          path: rust/target/package-manifests
+          if-no-files-found: error
+
       - name: リリースノート生成
         shell: bash
         run: |
           python tools/release_notes.py CHANGELOG.md "${GITHUB_REF_NAME#v}" > release-notes.md
-          printf '\n---\n[Code signing policy / コード署名ポリシー](https://github.com/%s/blob/main/docs/code-signing-policy.md)\n' "$GITHUB_REPOSITORY" >> release-notes.md
+          printf '\n---\nVerify the download / ダウンロードの確認: `SHA256SUMS.txt` and `gh attestation verify <zip> --repo %s` ([details](https://github.com/%s/blob/main/docs/verify-download.md))\n' "$GITHUB_REPOSITORY" "$GITHUB_REPOSITORY" >> release-notes.md
           cat release-notes.md
 
       - name: リリース作成 + 添付
@@ -120,4 +146,6 @@ jobs:
           body_path: release-notes.md
           draft: false
           prerelease: false
-          files: rust/target/Hashi-${{ github.ref_name }}-windows-x64.zip
+          files: |
+            rust/target/Hashi-${{ github.ref_name }}-windows-x64.zip
+            rust/target/SHA256SUMS.txt

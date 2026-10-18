@@ -15,10 +15,14 @@
   **公式 Claude Code の内蔵起動(#160)は移植しない**(利用条件の確認が難しいため。ローカル MCP で連携する)。
   **クラウド同期(#65)はまだ先**(一人では荷が重い。勝手に始めない)。**オーナーの手元に Windows 実機は無い**ので、
   実機の確認は CI と利用者からの報告に頼る。未確認は未確認と書く。
-- **コード署名は SignPath Foundation を申し込む準備まで済み**(`docs/code-signing-policy.md`・`docs/signpath-setup.md`・
-  `.signpath/artifact-configuration.xml`)。申し込み・SignPath の設定・Secrets の登録はオーナーが行う。
-  `SIGNPATH_API_TOKEN` が無いあいだ release.yml は署名を飛ばす。**新しい通信先を増やしたらポリシーのプライバシー節も直す**
-  (SignPath の条件。勝手な外部通信を足さない)。
+- **コード署名: SignPath Foundation の申し込みは承認されなかった(2026-10。公開して間もなく利用者が少ないため)。**
+  現在の配布物は**未署名**。`docs/code-signing-policy.md`・`docs/signpath-setup.md`・`.signpath/artifact-configuration.xml`・
+  release.yml の署名手順は、再申し込みや有料署名への切替のために残す(`SIGNPATH_API_TOKEN` が無いので署名は飛ばされる)。
+  署名の代わりではないが、リリースに `SHA256SUMS.txt` とビルド証明(artifact attestation)を付けた(`docs/verify-download.md`)。
+  winget / Scoop は `packaging/` のテンプレートと `tools/package_manifests.py` まで。**提出はオーナーが行う**(`docs/distribution.md`)。
+  **新しい通信先を増やしたらポリシーのプライバシー節も直す**(勝手な外部通信を足さない)。
+- **広報の方針(2026-10)**: 英語の README(`README.en.md`)を置いた。README.md と内容を揃えること(片方だけ直さない)。
+  画面の英語化は未着手(画面の文字列は日本語の直書き。Rust 側のエラー文も日本語)。勝手に外部へ投稿・提出しない。
 - **v2.0.0 から配布物は Rust + Tauri 版**(`rust/crates/hashi-desktop-tauri`)。版の単一ソースは
   `rust/Cargo.toml` の `workspace.package.version`。`release.yml` は `vX.Y.Z` タグで Tauri 版をビルドし、
   Cargo の版と照合する。旧Python版(v1.x、`hashi/__init__.py`)はリリースしない(コードは残す)。
