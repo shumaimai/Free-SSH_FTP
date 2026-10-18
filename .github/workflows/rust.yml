@@ -64,6 +64,8 @@ jobs:
       - name: Web frontend (type check and build)
         working-directory: rust/crates/hashi-desktop-tauri/frontend
         run: npm ci && npm run build
+      - name: Rust messages catalog (English translations of Japanese messages)
+        run: python tools/rust_messages.py check
       - name: Linux test daemon directory
         if: runner.os == 'Linux'
         run: sudo mkdir -p /run/sshd
