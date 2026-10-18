@@ -35,6 +35,7 @@ import {
   type ChatGptAccount,
   type ChatGptModel,
 } from './types';
+import { t } from './i18n';
 
 const useStyles = makeStyles({
   page: { display: 'flex', flexDirection: 'column', gap: '12px', padding: '24px 32px', height: '100%', boxSizing: 'border-box', overflow: 'hidden' },
@@ -214,7 +215,7 @@ export function AiModelsPage({ api }: Props) {
       setMessage(
         next.warning
           ? { text: next.warning, error: true }
-          : { text: next.active === saved ? '保存しました（このモデルを使っています）' : '保存しました', error: false },
+          : { text: next.active === saved ? t('保存しました（このモデルを使っています）') : t('保存しました'), error: false },
       );
     });
 
@@ -223,7 +224,7 @@ export function AiModelsPage({ api }: Props) {
       const result = await api.aiModelCheck(draft, key);
       setCandidates(result.models);
       setMessage({
-        text: result.ok ? `${result.message}（モデル: ${result.model ?? '-'}）` : result.message,
+        text: result.ok ? t('{message}（モデル: {model}）', { message: result.message, model: result.model ?? '-' }) : result.message,
         error: !result.ok,
       });
     });
@@ -232,14 +233,17 @@ export function AiModelsPage({ api }: Props) {
     run('models', async () => {
       const found = await api.aiModelCandidates(draft, key);
       setCandidates(found);
-      setMessage({ text: found.length ? `${found.length}件のモデルが見つかりました` : 'モデルの一覧は空でした。名前を直接入力してください', error: found.length === 0 });
+      setMessage({
+        text: found.length ? t('{n}件のモデルが見つかりました', { n: found.length }) : t('モデルの一覧は空でした。名前を直接入力してください'),
+        error: found.length === 0,
+      });
     });
 
   const use = (id: string) =>
     run('use', async () => {
       const result = await api.aiModelUse(id);
       await reload();
-      setMessage({ text: `${result.model} を使います。会話は新しくなりました`, error: false });
+      setMessage({ text: t('{model} を使います。会話は新しくなりました', { model: result.model }), error: false });
     });
 
   const remove = (id: string) =>
@@ -256,7 +260,7 @@ export function AiModelsPage({ api }: Props) {
       await api.aiForget(draft.service, draft.base);
       await reload();
       setArmed('');
-      setMessage({ text: '保存したキーを削除しました', error: false });
+      setMessage({ text: t('保存したキーを削除しました'), error: false });
     });
 
   const loadChatModels = async (account: string) => {
@@ -275,7 +279,7 @@ export function AiModelsPage({ api }: Props) {
       const found = await loadChatModels(id);
       await reload();
       setMessage({
-        text: found.length ? 'サインインしました。モデルを選んで保存してください' : 'サインインしましたが、使えるモデルがありませんでした',
+        text: found.length ? t('サインインしました。モデルを選んで保存してください') : t('サインインしましたが、使えるモデルがありませんでした'),
         error: found.length === 0,
       });
     });
@@ -283,7 +287,10 @@ export function AiModelsPage({ api }: Props) {
   const fetchChatModels = () =>
     run('models', async () => {
       const found = await loadChatModels(draft.account);
-      setMessage({ text: found.length ? `${found.length}件のモデルが見つかりました` : '使えるモデルがありませんでした', error: found.length === 0 });
+      setMessage({
+        text: found.length ? t('{n}件のモデルが見つかりました', { n: found.length }) : t('使えるモデルがありませんでした'),
+        error: found.length === 0,
+      });
     });
 
   const signOut = (id: string) =>
@@ -295,9 +302,9 @@ export function AiModelsPage({ api }: Props) {
       await reload();
       setMessage(
         result.revoked
-          ? { text: 'サインアウトしました', error: false }
+          ? { text: t('サインアウトしました'), error: false }
           : {
-              text: 'このPCのサインイン情報は消しました。ChatGPT側での取り消しは確認できませんでした（ChatGPTの設定から接続を解除できます）',
+              text: t('このPCのサインイン情報は消しました。ChatGPT側での取り消しは確認できませんでした（ChatGPTの設定から接続を解除できます）'),
               error: true,
             },
       );
@@ -315,13 +322,13 @@ export function AiModelsPage({ api }: Props) {
   return (
     <div className={styles.page}>
       <div className={styles.head}>
-        <Title2>AIモデルの管理</Title2>
-        <Caption1 className={styles.note}>APIキーとChatGPTのサインイン情報は、このPCの専用の暗号化ファイルにだけ保存します。</Caption1>
+        <Title2>{t('AIモデルの管理')}</Title2>
+        <Caption1 className={styles.note}>{t('APIキーとChatGPTのサインイン情報は、このPCの専用の暗号化ファイルにだけ保存します。')}</Caption1>
       </div>
       <div className={styles.body}>
         <div className={styles.list}>
           <Button appearance="primary" icon={<Add20Regular />} onClick={() => select('new')}>
-            AIモデルを追加
+            {t('AIモデルを追加')}
           </Button>
           {entries.map((e) => (
             <button
@@ -334,12 +341,12 @@ export function AiModelsPage({ api }: Props) {
               <div className={styles.itemRow}>
                 {list?.active === e.id && (
                   <Badge appearance="filled" color="brand" icon={<Checkmark20Regular />}>
-                    使用中
+                    {t('使用中')}
                   </Badge>
                 )}
                 {!e.hasKey && (
                   <Badge appearance="tint" color="warning">
-                    {e.service === 'chatgpt' ? 'サインアウト中' : 'キー未登録'}
+                    {e.service === 'chatgpt' ? t('サインアウト中') : t('キー未登録')}
                   </Badge>
                 )}
               </div>
@@ -349,11 +356,11 @@ export function AiModelsPage({ api }: Props) {
 
         <div className={styles.panel}>
           {selection === null ? (
-            <Spinner size="small" label="読み込み中" />
+            <Spinner size="small" label={t('読み込み中')} />
           ) : (
             <>
-              <Subtitle2>{selection === 'new' ? '新しいAIモデル' : '登録内容'}</Subtitle2>
-              <Field label="サービス" hint={service?.blurb}>
+              <Subtitle2>{selection === 'new' ? t('新しいAIモデル') : t('登録内容')}</Subtitle2>
+              <Field label={t('サービス')} hint={service?.blurb}>
                 <Select value={draft.service} disabled={busy !== ''} onChange={(_, d) => pickService(d.value)}>
                   {services.map((s) => (
                     <option key={s.id} value={s.id}>
@@ -363,7 +370,7 @@ export function AiModelsPage({ api }: Props) {
                 </Select>
               </Field>
               {isUrl && (
-                <Field label="接続先URL">
+                <Field label={t('接続先URL')}>
                   <Input
                     value={draft.base}
                     placeholder={service?.defaultBase || 'https://example.com/v1'}
@@ -373,8 +380,8 @@ export function AiModelsPage({ api }: Props) {
               )}
               {service?.needsKey && (
                 <Field
-                  label="APIキー"
-                  hint={savedKey ? '保存済みのキーを使います。変えるときだけ貼り付けてください。' : undefined}
+                  label={t('APIキー')}
+                  hint={savedKey ? t('保存済みのキーを使います。変えるときだけ貼り付けてください。') : undefined}
                 >
                   <div className={styles.row}>
                     <Input
@@ -382,12 +389,12 @@ export function AiModelsPage({ api }: Props) {
                       type="password"
                       autoComplete="off"
                       value={key}
-                      placeholder={savedKey ? '保存済み' : 'ここに貼り付け'}
+                      placeholder={savedKey ? t('保存済み') : t('ここに貼り付け')}
                       onChange={(_, d) => setKey(d.value)}
                     />
                     {service.hasKeyPage && (
                       <Link onClick={() => void api.aiOpenKeyPage(draft.service).catch((e) => setMessage({ text: String(e), error: true }))}>
-                        キーの取得ページを開く
+                        {t('キーの取得ページを開く')}
                       </Link>
                     )}
                   </div>
@@ -396,11 +403,11 @@ export function AiModelsPage({ api }: Props) {
               {isChat && (
                 <>
                   <Field
-                    label="ChatGPTアカウント"
+                    label={t('ChatGPTアカウント')}
                     hint={
                       busy === 'signin'
-                        ? 'ブラウザでChatGPTにサインインし、Hashiを許可してください（3分以内）。'
-                        : 'ブラウザでサインインします。パスワードはHashiに入力しません。'
+                        ? t('ブラウザでChatGPTにサインインし、Hashiを許可してください（3分以内）。')
+                        : t('ブラウザでサインインします。パスワードはHashiに入力しません。')
                     }
                   >
                     <div className={styles.row}>
@@ -413,28 +420,27 @@ export function AiModelsPage({ api }: Props) {
                           setChatModels([]);
                         }}
                       >
-                        <option value="">（サインインしたアカウントを選ぶ）</option>
+                        <option value="">{t('（サインインしたアカウントを選ぶ）')}</option>
                         {chatAccounts.map((a) => (
                           <option key={a.id} value={a.id}>
-                            {a.label}
-                            {a.connected ? '' : ' · サインアウト済み'}
+                            {a.connected ? a.label : t('{label} · サインアウト済み', { label: a.label })}
                           </option>
                         ))}
                       </Select>
                       {busy === 'signin' ? (
-                        <Button onClick={() => void api.chatgptCancel()}>中止</Button>
+                        <Button onClick={() => void api.chatgptCancel()}>{t('中止')}</Button>
                       ) : chatAccount && !chatAccount.connected ? (
                         <Button disabled={busy !== ''} onClick={() => void signIn(chatAccount.id)}>
-                          もう一度サインイン
+                          {t('もう一度サインイン')}
                         </Button>
                       ) : (
                         <Button disabled={busy !== ''} onClick={() => void signIn(null)}>
-                          {chatAccounts.length ? '別のアカウントでサインイン' : 'サインイン'}
+                          {chatAccounts.length ? t('別のアカウントでサインイン') : t('サインイン')}
                         </Button>
                       )}
                     </div>
                   </Field>
-                  <Field label="モデル" hint="サインインしたアカウントで使えるモデルから選びます。">
+                  <Field label={t('モデル')} hint={t('サインインしたアカウントで使えるモデルから選びます。')}>
                     <div className={styles.row}>
                       <Select
                         className={styles.grow}
@@ -442,7 +448,7 @@ export function AiModelsPage({ api }: Props) {
                         disabled={busy !== ''}
                         onChange={(_, d) => set('model', d.value)}
                       >
-                        <option value="">（一覧を取得して選ぶ）</option>
+                        <option value="">{t('（一覧を取得して選ぶ）')}</option>
                         {chatOptions.map((m) => (
                           <option key={m.slug} value={m.slug}>
                             {m.displayName}
@@ -454,24 +460,24 @@ export function AiModelsPage({ api }: Props) {
                         disabled={busy !== '' || chatAccount?.connected !== true}
                         onClick={() => void fetchChatModels()}
                       >
-                        {busy === 'models' ? '取得中…' : '一覧を取得'}
+                        {busy === 'models' ? t('取得中…') : t('一覧を取得')}
                       </Button>
                     </div>
                   </Field>
                 </>
               )}
               {!isChat && (
-                <Field label="モデル名" hint="空のままなら、使うときに自動で選びます。">
+                <Field label={t('モデル名')} hint={t('空のままなら、使うときに自動で選びます。')}>
                   <div className={styles.row}>
                     <Input
                       className={styles.grow}
                       value={draft.model}
-                      placeholder="例: claude-sonnet-5-5 / gpt-5"
+                      placeholder={t('例: claude-sonnet-5-5 / gpt-5')}
                       onChange={(_, d) => set('model', d.value)}
                     />
                     {candidates.length > 0 && (
                       <Select value="" onChange={(_, d) => d.value && set('model', d.value)} style={{ maxWidth: 190 }}>
-                        <option value="">一覧から選ぶ</option>
+                        <option value="">{t('一覧から選ぶ')}</option>
                         {candidates.map((m) => (
                           <option key={m} value={m}>
                             {m}
@@ -480,21 +486,21 @@ export function AiModelsPage({ api }: Props) {
                       </Select>
                     )}
                     <Button size="small" disabled={busy !== '' || !canCall} onClick={() => void fetchModels()}>
-                      {busy === 'models' ? '取得中…' : '一覧を取得'}
+                      {busy === 'models' ? t('取得中…') : t('一覧を取得')}
                     </Button>
                   </div>
                 </Field>
               )}
               <Accordion collapsible>
                 <AccordionItem value="adv">
-                  <AccordionHeader size="small">詳細</AccordionHeader>
+                  <AccordionHeader size="small">{t('詳細')}</AccordionHeader>
                   <AccordionPanel>
-                    <Field label="表示名">
-                      <Input value={draft.name} placeholder="例: 仕事用 / 安いモデル" onChange={(_, d) => set('name', d.value)} />
+                    <Field label={t('表示名')}>
+                      <Input value={draft.name} placeholder={t('例: 仕事用 / 安いモデル')} onChange={(_, d) => set('name', d.value)} />
                     </Field>
                     {isUrl && (
                       <>
-                        <Field label="通信の形式">
+                        <Field label={t('通信の形式')}>
                           <Select value={draft.protocol} onChange={(_, d) => set('protocol', d.value)}>
                             {protocols.map(([id, label]) => (
                               <option key={id} value={id}>
@@ -506,7 +512,7 @@ export function AiModelsPage({ api }: Props) {
                         <Checkbox
                           checked={draft.useTools}
                           onChange={(_, d) => set('useTools', d.checked === true)}
-                          label="関数呼び出し（ツール）に対応している"
+                          label={t('関数呼び出し（ツール）に対応している')}
                         />
                       </>
                     )}
@@ -516,18 +522,18 @@ export function AiModelsPage({ api }: Props) {
 
               <div className={styles.actions}>
                 <Button appearance="primary" disabled={busy !== '' || !canSave} onClick={() => void save()}>
-                  {busy === 'save' ? '保存中…' : '保存'}
+                  {busy === 'save' ? t('保存中…') : t('保存')}
                 </Button>
                 <Button disabled={busy !== '' || !canCall} onClick={() => void check()}>
-                  {busy === 'check' ? '確認中…' : '接続を確認'}
+                  {busy === 'check' ? t('確認中…') : t('接続を確認')}
                 </Button>
                 {current && list?.active !== current.id && (
                   <Button disabled={busy !== '' || dirty} onClick={() => void use(current.id)}>
-                    このモデルを使う
+                    {t('このモデルを使う')}
                   </Button>
                 )}
                 {busy !== '' && <Spinner size="tiny" />}
-                {dirty && selection !== 'new' && <Caption1 className={styles.note}>未保存の変更があります</Caption1>}
+                {dirty && selection !== 'new' && <Caption1 className={styles.note}>{t('未保存の変更があります')}</Caption1>}
               </div>
               {message && (
                 <MessageBar intent={message.error ? 'error' : 'success'}>
@@ -538,7 +544,7 @@ export function AiModelsPage({ api }: Props) {
               {current && (
                 <Accordion collapsible>
                   <AccordionItem value="delete">
-                    <AccordionHeader size="small">削除</AccordionHeader>
+                    <AccordionHeader size="small">{t('削除')}</AccordionHeader>
                     <AccordionPanel>
                       <div className={styles.actions}>
                         <Button
@@ -546,9 +552,9 @@ export function AiModelsPage({ api }: Props) {
                           disabled={busy !== ''}
                           onClick={() => (armed === 'model' ? void remove(current.id) : setArmed('model'))}
                         >
-                          {armed === 'model' ? 'もう一度押すと削除' : 'この登録を削除'}
+                          {armed === 'model' ? t('もう一度押すと削除') : t('この登録を削除')}
                         </Button>
-                        <Caption1 className={styles.note}>{isChat ? 'サインインは残ります。' : 'キーは残ります。'}</Caption1>
+                        <Caption1 className={styles.note}>{isChat ? t('サインインは残ります。') : t('キーは残ります。')}</Caption1>
                       </div>
                       {isChat && chatAccount?.connected && (
                         <div className={styles.actions} style={{ marginTop: 8 }}>
@@ -557,9 +563,9 @@ export function AiModelsPage({ api }: Props) {
                             disabled={busy !== ''}
                             onClick={() => (armed === 'signout' ? void signOut(chatAccount.id) : setArmed('signout'))}
                           >
-                            {armed === 'signout' ? 'もう一度押すとサインアウト' : 'このアカウントからサインアウト'}
+                            {armed === 'signout' ? t('もう一度押すとサインアウト') : t('このアカウントからサインアウト')}
                           </Button>
-                          <Caption1 className={styles.note}>このアカウントを使う全登録で使えなくなります。</Caption1>
+                          <Caption1 className={styles.note}>{t('このアカウントを使う全登録で使えなくなります。')}</Caption1>
                         </div>
                       )}
                       {service?.needsKey && savedKey && (
@@ -569,9 +575,9 @@ export function AiModelsPage({ api }: Props) {
                             disabled={busy !== ''}
                             onClick={() => (armed === 'key' ? void forgetKey() : setArmed('key'))}
                           >
-                            {armed === 'key' ? 'もう一度押すと削除' : '保存したキーを削除'}
+                            {armed === 'key' ? t('もう一度押すと削除') : t('保存したキーを削除')}
                           </Button>
-                          <Caption1 className={styles.note}>同じサービス・URLの全登録で使えなくなります。</Caption1>
+                          <Caption1 className={styles.note}>{t('同じサービス・URLの全登録で使えなくなります。')}</Caption1>
                         </div>
                       )}
                     </AccordionPanel>

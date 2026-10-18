@@ -21,6 +21,7 @@ import {
   Textarea,
 } from '@fluentui/react-components';
 import type { Api } from './api';
+import { t } from './i18n';
 import type { KeygenDefaults, KeygenResult } from './types';
 
 const useStyles = makeStyles({
@@ -118,17 +119,17 @@ export function KeygenDialog({ api, open, registerSession, onClose }: Props) {
     <Dialog open={open} onOpenChange={(_, d) => !d.open && !busy && onClose()}>
       <DialogSurface aria-describedby={undefined} style={{ maxWidth: 560 }}>
         <DialogBody>
-          <DialogTitle>SSH鍵を作る</DialogTitle>
+          <DialogTitle>{t('SSH鍵を作る')}</DialogTitle>
           <DialogContent className={styles.form}>
-            <Field label="鍵の種類">
+            <Field label={t('鍵の種類')}>
               <RadioGroup layout="horizontal" value={kind} onChange={(_, d) => changeKind(d.value as Kind)} disabled={busy}>
-                <Radio value="ed25519" label="Ed25519（おすすめ）" />
+                <Radio value="ed25519" label={t('Ed25519（おすすめ）')} />
                 <Radio value="ecdsa" label="ECDSA" />
                 <Radio value="rsa" label="RSA" />
               </RadioGroup>
             </Field>
             {choices.length > 0 && (
-              <Field label="ビット数">
+              <Field label={t('ビット数')}>
                 <Select value={String(bits)} onChange={(_, d) => setBits(Number(d.value))} disabled={busy}>
                   {choices.map((b, i) => (
                     <option key={b} value={i}>
@@ -138,20 +139,20 @@ export function KeygenDialog({ api, open, registerSession, onClose }: Props) {
                 </Select>
               </Field>
             )}
-            <Field label="パスフレーズ（任意）">
+            <Field label={t('パスフレーズ（任意）')}>
               <Input type="password" value={passphrase} disabled={busy} onChange={(_, d) => setPassphrase(d.value)} />
             </Field>
             <Field
-              label="パスフレーズの確認"
+              label={t('パスフレーズの確認')}
               validationState={mismatch ? 'warning' : 'none'}
-              validationMessage={mismatch ? 'パスフレーズが一致しません' : undefined}
+              validationMessage={mismatch ? t('パスフレーズが一致しません') : undefined}
             >
               <Input type="password" value={confirm} disabled={busy} onChange={(_, d) => setConfirm(d.value)} />
             </Field>
-            <Field label="コメント（任意）">
+            <Field label={t('コメント（任意）')}>
               <Input value={comment} disabled={busy} onChange={(_, d) => setComment(d.value)} />
             </Field>
-            <Field label="秘密鍵の保存先">
+            <Field label={t('秘密鍵の保存先')}>
               <div className={styles.row}>
                 <Input className={styles.grow} value={path} disabled={busy} onChange={(_, d) => setPath(d.value)} />
                 <Button
@@ -161,7 +162,7 @@ export function KeygenDialog({ api, open, registerSession, onClose }: Props) {
                     if (picked) setPath(picked);
                   }}
                 >
-                  参照
+                  {t('参照')}
                 </Button>
               </div>
             </Field>
@@ -169,17 +170,17 @@ export function KeygenDialog({ api, open, registerSession, onClose }: Props) {
               <Checkbox
                 checked={overwrite}
                 onChange={(_, d) => setOverwrite(d.checked === true)}
-                label="既存の秘密鍵ファイルを上書きする"
+                label={t('既存の秘密鍵ファイルを上書きする')}
               />
             )}
             <Checkbox
               checked={register}
               disabled={!registerSession || busy}
               onChange={(_, d) => setRegister(d.checked === true)}
-              label={registerSession ? '開いている接続先に公開鍵を登録する' : '公開鍵の登録（接続中のSSHがありません）'}
+              label={registerSession ? t('開いている接続先に公開鍵を登録する') : t('公開鍵の登録（接続中のSSHがありません）')}
             />
-            <Caption1>OpenSSH形式で保存し、Unixでは権限を600にします。</Caption1>
-            {busy && <Spinner size="tiny" label="生成しています…" />}
+            <Caption1>{t('OpenSSH形式で保存し、Unixでは権限を600にします。')}</Caption1>
+            {busy && <Spinner size="tiny" label={t('生成しています…')} />}
             {error && (
               <MessageBar intent="error">
                 <MessageBarBody>{error}</MessageBarBody>
@@ -189,9 +190,11 @@ export function KeygenDialog({ api, open, registerSession, onClose }: Props) {
               <>
                 <MessageBar intent="success">
                   <MessageBarBody>
-                    秘密鍵を保存しました: {result.path}
-                    {result.registered === true && '（公開鍵を接続先に登録しました）'}
-                    {result.registered === false && '（接続先には同じ公開鍵が登録済みでした）'}
+                    {result.registered === true
+                      ? t('秘密鍵を保存しました: {path}（公開鍵を接続先に登録しました）', { path: result.path })
+                      : result.registered === false
+                        ? t('秘密鍵を保存しました: {path}（接続先には同じ公開鍵が登録済みでした）', { path: result.path })
+                        : t('秘密鍵を保存しました: {path}', { path: result.path })}
                   </MessageBarBody>
                 </MessageBar>
                 {result.warning && (
@@ -199,22 +202,22 @@ export function KeygenDialog({ api, open, registerSession, onClose }: Props) {
                     <MessageBarBody>{result.warning}</MessageBarBody>
                   </MessageBar>
                 )}
-                <Field label="公開鍵">
+                <Field label={t('公開鍵')}>
                   <Textarea textarea={{ className: styles.mono }} readOnly rows={3} value={result.publicLine} />
                 </Field>
                 <div className={styles.row}>
-                  <Button onClick={() => void navigator.clipboard?.writeText(result.publicLine)}>公開鍵をコピー</Button>
-                  <Button onClick={() => void navigator.clipboard?.writeText(result.path)}>秘密鍵のパスをコピー</Button>
+                  <Button onClick={() => void navigator.clipboard?.writeText(result.publicLine)}>{t('公開鍵をコピー')}</Button>
+                  <Button onClick={() => void navigator.clipboard?.writeText(result.path)}>{t('秘密鍵のパスをコピー')}</Button>
                 </div>
               </>
             )}
           </DialogContent>
           <DialogActions>
             <Button disabled={busy} onClick={onClose}>
-              閉じる
+              {t('閉じる')}
             </Button>
             <Button appearance="primary" disabled={!ready} onClick={() => void generate()}>
-              生成
+              {t('生成')}
             </Button>
           </DialogActions>
         </DialogBody>

@@ -1,0 +1,18 @@
+export default {
+  'スニペット': 'Snippets',
+  'スニペットはまだありません': 'No snippets yet',
+  '管理...': 'Manage...',
+  '入力しなかった変数は、{token}のまま送られます。': 'Variables you leave empty are sent as {token}.',
+  '変数名': 'name',
+  'やめる': 'Cancel',
+  '送る': 'Send',
+  'スニペットの管理': 'Manage snippets',
+  '{error}（保存済みの記録を守るため、編集は無効です）': '{error} (editing is disabled to protect the saved records)',
+  '（名前なし）': '(no name)',
+  '新しいスニペット': 'New snippet',
+  '追加': 'Add',
+  '本文（{token} は送るときに入力できます）': 'Body ({token} can be filled in when sending)',
+  '送ったあとにEnterを押す': 'Press Enter after sending',
+  'このスニペットを削除': 'Delete this snippet',
+  '左の「追加」から作ります。': 'Create one with "Add" on the left.',
+} as Record<string, string>;

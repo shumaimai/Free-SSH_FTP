@@ -25,6 +25,7 @@ import {
   tokens,
 } from '@fluentui/react-components';
 import type { Api } from './api';
+import { t } from './i18n';
 import type { ImportPreview, ImportResult, Profile } from './types';
 
 const useStyles = makeStyles({
@@ -120,7 +121,9 @@ export function ImportDialog({ api, open, onClose, onDone }: Props) {
       setPreview(null);
       onDone(
         profiles,
-        `${r.added + r.updated}件の接続先を取り込みました${r.secrets_saved ? `（保存済みの秘密${r.secrets_saved}件）` : ''}`,
+        r.secrets_saved
+          ? t('{n}件の接続先を取り込みました（保存済みの秘密{s}件）', { n: r.added + r.updated, s: r.secrets_saved })
+          : t('{n}件の接続先を取り込みました', { n: r.added + r.updated }),
       );
     });
 
@@ -128,33 +131,35 @@ export function ImportDialog({ api, open, onClose, onDone }: Props) {
     <Dialog open={open} onOpenChange={(_, d) => !d.open && close()}>
       <DialogSurface aria-describedby={undefined} style={{ maxWidth: 'min(680px, calc(100vw - 32px))' }}>
         <DialogBody>
-          <DialogTitle>旧版（Python）から取り込む</DialogTitle>
+          <DialogTitle>{t('旧版（Python）から取り込む')}</DialogTitle>
           <DialogContent className={styles.body}>
             {!preview && !result && (
               <>
-                <Body1>旧版の接続先・既知のホスト鍵・スニペット・保存済みのパスワードを、このアプリへコピーします。旧版のデータは読むだけで、変更しません。</Body1>
+                <Body1>{t('旧版の接続先・既知のホスト鍵・スニペット・保存済みのパスワードを、このアプリへコピーします。旧版のデータは読むだけで、変更しません。')}</Body1>
                 <div className={styles.choose}>
                   <Card className={styles.card}>
-                    <Subtitle2>旧版のデータを直接読む</Subtitle2>
+                    <Subtitle2>{t('旧版のデータを直接読む')}</Subtitle2>
                     <Caption1>
-                      旧版の設定フォルダと、旧版が使っていた保存先（Windows資格情報マネージャ／暗号化ファイル）から読みます。
+                      {t('旧版の設定フォルダと、旧版が使っていた保存先（Windows資格情報マネージャ／暗号化ファイル）から読みます。')}
                     </Caption1>
                     <Checkbox
                       checked={legacyStopped}
                       onChange={(_, d) => setLegacyStopped(Boolean(d.checked))}
-                      label="旧Python版をすべて終了した"
+                      label={t('旧Python版をすべて終了した')}
                     />
                     <Button
                       appearance="primary"
                       disabled={busy || !legacyStopped}
                       onClick={() => void run(async () => adopt(await api.importLegacyInspect(legacyStopped)))}
                     >
-                      読み込む
+                      {t('読み込む')}
                     </Button>
                   </Card>
                   <Card className={styles.card}>
-                    <Subtitle2>書き出しファイルを選ぶ</Subtitle2>
-                    <Caption1>旧版の「接続情報の書き出し」で作ったファイル（hashi-export）を読みます。パスワードは書き出し時のパスフレーズで復号します。</Caption1>
+                    <Subtitle2>{t('書き出しファイルを選ぶ')}</Subtitle2>
+                    <Caption1>
+                      {t('旧版の「接続情報の書き出し」で作ったファイル（hashi-export）を読みます。パスワードは書き出し時のパスフレーズで復号します。')}
+                    </Caption1>
                     <Button
                       disabled={busy}
                       onClick={() =>
@@ -164,25 +169,25 @@ export function ImportDialog({ api, open, onClose, onDone }: Props) {
                         })
                       }
                     >
-                      ファイルを選ぶ…
+                      {t('ファイルを選ぶ…')}
                     </Button>
                   </Card>
                 </div>
-                {busy && <Spinner size="tiny" label="読み込み中" />}
+                {busy && <Spinner size="tiny" label={t('読み込み中')} />}
               </>
             )}
 
             {preview && (
               <>
-                <Text weight="semibold">接続先（{preview.profiles.length}件）</Text>
+                <Text weight="semibold">{t('接続先（{n}件）', { n: preview.profiles.length })}</Text>
                 <div className={styles.list}>
-                  {preview.profiles.length === 0 && <Caption1>取り込める接続先がありません</Caption1>}
+                  {preview.profiles.length === 0 && <Caption1>{t('取り込める接続先がありません')}</Caption1>}
                   {preview.profiles.map((p) => (
                     <div key={p.index} className={styles.item}>
                       <Checkbox
                         checked={selected.has(p.index) && (overwrite || !p.exists)}
                         disabled={p.exists && !overwrite}
-                        aria-label={`${p.label}を取り込む`}
+                        aria-label={t('{label}を取り込む', { label: p.label })}
                         onChange={(_, d) =>
                           setSelected((old) => {
                             const next = new Set(old);
@@ -203,22 +208,22 @@ export function ImportDialog({ api, open, onClose, onDone }: Props) {
                       <div className={styles.badges}>
                         {p.exists && (
                           <Badge appearance="tint" color="warning">
-                            登録済み
+                            {t('登録済み')}
                           </Badge>
                         )}
                         {p.proxy_jump && (
                           <Badge appearance="tint" color="informative">
-                            踏み台
+                            {t('踏み台')}
                           </Badge>
                         )}
                         {p.password && (
                           <Badge appearance="tint" color="success">
-                            パスワードあり
+                            {t('パスワードあり')}
                           </Badge>
                         )}
                         {p.passphrase && (
                           <Badge appearance="tint" color="success">
-                            パスフレーズあり
+                            {t('パスフレーズあり')}
                           </Badge>
                         )}
                       </div>
@@ -229,13 +234,13 @@ export function ImportDialog({ api, open, onClose, onDone }: Props) {
                   <Checkbox
                     checked={overwrite}
                     onChange={(_, d) => setOverwrite(Boolean(d.checked))}
-                    label="登録済みの接続先も、旧版の内容で置き換える"
+                    label={t('登録済みの接続先も、旧版の内容で置き換える')}
                   />
                 )}
 
                 {preview.needs_passphrase && !preview.unlocked && (
                   <div className={styles.passRow}>
-                    <Field label="書き出し時のパスフレーズ（保存済みのパスワードを読むため）" style={{ flex: 1 }}>
+                    <Field label={t('書き出し時のパスフレーズ（保存済みのパスワードを読むため）')} style={{ flex: 1 }}>
                       <Input
                         type="password"
                         value={passphrase}
@@ -253,35 +258,37 @@ export function ImportDialog({ api, open, onClose, onDone }: Props) {
                         })
                       }
                     >
-                      復号する
+                      {t('復号する')}
                     </Button>
                   </div>
                 )}
 
-                <Text weight="semibold">あわせて取り込む</Text>
+                <Text weight="semibold">{t('あわせて取り込む')}</Text>
                 <Checkbox
                   checked={knownHosts}
                   onChange={(_, d) => setKnownHosts(Boolean(d.checked))}
-                  label={`承認済みのホスト鍵（新規${preview.hosts_new}件）${
-                    preview.hosts_conflict > 0 ? `。鍵が食い違う${preview.hosts_conflict}件は上書きしません` : ''
-                  }`}
+                  label={
+                    preview.hosts_conflict > 0
+                      ? t('承認済みのホスト鍵（新規{n}件）。鍵が食い違う{c}件は上書きしません', { n: preview.hosts_new, c: preview.hosts_conflict })
+                      : t('承認済みのホスト鍵（新規{n}件）', { n: preview.hosts_new })
+                  }
                 />
                 {preview.snippets_new !== null && (
                   <Checkbox
                     checked={snippets && preview.snippets_new > 0}
                     disabled={preview.snippets_new === 0}
                     onChange={(_, d) => setSnippets(Boolean(d.checked))}
-                    label={`スニペット（新規${preview.snippets_new}件）`}
+                    label={t('スニペット（新規{n}件）', { n: preview.snippets_new })}
                   />
                 )}
                 <Checkbox
                   checked={secrets && secretCount > 0}
                   disabled={secretCount === 0}
                   onChange={(_, d) => setSecrets(Boolean(d.checked))}
-                  label={`保存済みのパスワード・パスフレーズ（${secretCount}件の接続先）をこのアプリに保存する`}
+                  label={t('保存済みのパスワード・パスフレーズ（{n}件の接続先）をこのアプリに保存する', { n: secretCount })}
                 />
                 {secretCount === 0 && !preview.needs_passphrase && (
-                  <Caption1>取り込める保存済みの秘密は見つかりませんでした。接続するときに入力してください。</Caption1>
+                  <Caption1>{t('取り込める保存済みの秘密は見つかりませんでした。接続するときに入力してください。')}</Caption1>
                 )}
                 {preview.notes.map((n) => (
                   <Caption1 key={n}>{n}</Caption1>
@@ -292,11 +299,21 @@ export function ImportDialog({ api, open, onClose, onDone }: Props) {
             {result && (
               <MessageBar intent={result.secrets_failed > 0 ? 'warning' : 'success'}>
                 <MessageBarBody>
-                  接続先: 追加{result.added}件・置き換え{result.updated}件・見送り{result.skipped}件。ホスト鍵: {result.hosts_added}件追加
-                  {result.host_conflicts.length > 0 && `（食い違い${result.host_conflicts.length}件は変更なし: ${result.host_conflicts.join(', ')}）`}
-                  。スニペット: {result.snippets_added}件追加。保存した秘密: {result.secrets_saved}件
-                  {result.secrets_failed > 0 && `（${result.secrets_failed}件は保存できませんでした）`}。
-                  {result.notes.map((n) => ` ${n}。`)}
+                  {[
+                    t('接続先: 追加{a}件・置き換え{u}件・見送り{s}件。', { a: result.added, u: result.updated, s: result.skipped }),
+                    result.host_conflicts.length > 0
+                      ? t('ホスト鍵: {n}件追加（食い違い{c}件は変更なし: {hosts}）。', {
+                          n: result.hosts_added,
+                          c: result.host_conflicts.length,
+                          hosts: result.host_conflicts.join(', '),
+                        })
+                      : t('ホスト鍵: {n}件追加。', { n: result.hosts_added }),
+                    t('スニペット: {n}件追加。', { n: result.snippets_added }),
+                    result.secrets_failed > 0
+                      ? t('保存した秘密: {n}件（{f}件は保存できませんでした）。', { n: result.secrets_saved, f: result.secrets_failed })
+                      : t('保存した秘密: {n}件。', { n: result.secrets_saved }),
+                    ...result.notes.map((n) => t('{note}。', { note: n })),
+                  ].join(' ')}
                 </MessageBarBody>
               </MessageBar>
             )}
@@ -310,7 +327,7 @@ export function ImportDialog({ api, open, onClose, onDone }: Props) {
           <DialogActions>
             {preview && (
               <Button appearance="primary" style={{ whiteSpace: 'nowrap' }} disabled={!canApply} onClick={() => void apply()}>
-                選んだ項目を取り込む
+                {t('選んだ項目を取り込む')}
               </Button>
             )}
             {preview && (
@@ -320,10 +337,10 @@ export function ImportDialog({ api, open, onClose, onDone }: Props) {
                   setPreview(null);
                 }}
               >
-                戻る
+                {t('戻る')}
               </Button>
             )}
-            <Button onClick={close}>{result ? '閉じる' : 'キャンセル'}</Button>
+            <Button onClick={close}>{result ? t('閉じる') : t('キャンセル')}</Button>
           </DialogActions>
         </DialogBody>
       </DialogSurface>

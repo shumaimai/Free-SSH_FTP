@@ -5,6 +5,7 @@
 // 辞書に無い文言は日本語のまま出す（画面が空になるより良い）。抜けは scripts/check-i18n.mjs が build で止める。
 import { useSyncExternalStore } from 'react';
 import { EN } from './i18n/en';
+import { RUST_MESSAGES } from './i18n/rust';
 
 export type Lang = 'ja' | 'en';
 export type LangSetting = 'auto' | Lang;
@@ -81,4 +82,58 @@ export function t(ja: string, params?: Params): string {
 /** 後で t(label) と呼ぶ文言の印（実行時は何もしない）。check-i18n がキーとして数える。 */
 export function N_(ja: string): string {
   return ja;
+}
+
+// ---- Rust側から来る日本語のメッセージ ----
+// エラー文などは Rust が日本語の文字列で返す。台帳(src/i18n/rust/*.json)に「原文の型 → 英訳」があり、
+// 英語のときだけ引く。原文の `{}` `{name}` `{:?}` は任意の文字列に当たる穴で、訳の `{1}` `{2}`… に入る(穴の中身も再帰して訳す)。
+// 台帳に無い文は日本語のまま返す。台帳の抜けは tools/rust_messages.py が CI で止める。
+interface Template {
+  pattern: RegExp;
+  text: string;
+  weight: number;
+}
+
+let exact: Map<string, string> | null = null;
+let templates: Template[] = [];
+let phrases: Array<[string, string]> = [];
+
+const HOLE = /\{[^{}]*\}/g;
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+function buildCatalog() {
+  exact = new Map();
+  templates = [];
+  phrases = [];
+  for (const [key, value] of Object.entries(RUST_MESSAGES)) {
+    if (typeof value !== 'string') continue;
+    const unbraced = key.replace(/\{\{/g, '\u0001').replace(/\}\}/g, '\u0002');
+    const parts = unbraced.split(HOLE);
+    const restore = (x: string) => x.replace(/\u0001/g, '{').replace(/\u0002/g, '}');
+    if (parts.length === 1) {
+      exact.set(restore(unbraced), value);
+      phrases.push([restore(unbraced), value]);
+    } else {
+      const pattern = new RegExp('^' + parts.map((p) => escapeRe(restore(p))).join('([\\s\\S]*?)') + '$');
+      templates.push({ pattern, text: value, weight: parts.join('').length });
+    }
+  }
+  templates.sort((a, b) => b.weight - a.weight);
+  phrases.sort((a, b) => b[0].length - a[0].length);
+}
+
+/** Rustが返した日本語のメッセージを、現在の言語の文言にする(日本語のときはそのまま)。 */
+export function tr(message: string, depth = 0): string {
+  if (current !== 'en' || depth > 4 || !/[\u3040-\u30ff\u3400-\u9fff]/.test(message)) return message;
+  if (!exact) buildCatalog();
+  const hit = exact!.get(message);
+  if (hit !== undefined) return hit;
+  for (const tpl of templates) {
+    const m = tpl.pattern.exec(message);
+    if (m) return tpl.text.replace(/\{(\d+)\}/g, (_, n: string) => tr(m[Number(n)] ?? '', depth + 1));
+  }
+  // 全体に当たらないときは、穴のない文を部分的に置き換える(`a: b` のように組み立てられた文のため)。
+  let out = message;
+  for (const [ja, en] of phrases) if (out.includes(ja)) out = out.split(ja).join(en);
+  return out;
 }

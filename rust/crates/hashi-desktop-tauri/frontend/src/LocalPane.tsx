@@ -11,6 +11,7 @@ import {
 } from '@fluentui/react-icons';
 import type { FileEntry } from './types';
 import { humanSize } from './FileDock';
+import { t } from './i18n';
 
 const useStyles = makeStyles({
   root: { display: 'flex', flexDirection: 'column', gap: '8px', minHeight: 0, minWidth: 0, height: '100%' },
@@ -72,12 +73,12 @@ export function LocalPane(p: Props) {
   return (
     <div className={styles.root} data-pane="local">
       <div className={styles.row}>
-        <Button size="small" icon={<ArrowUp20Regular />} aria-label="ローカルの親フォルダへ" disabled={!p.parent} onClick={() => p.parent && p.onGo(p.parent)} />
-        <Button size="small" icon={<ArrowSync20Regular />} aria-label="ローカルを再読み込み" onClick={p.onRefresh} />
+        <Button size="small" icon={<ArrowUp20Regular />} aria-label={t('ローカルの親フォルダへ')} disabled={!p.parent} onClick={() => p.parent && p.onGo(p.parent)} />
+        <Button size="small" icon={<ArrowSync20Regular />} aria-label={t('ローカルを再読み込み')} onClick={p.onRefresh} />
         <Input
           className={styles.grow}
           size="small"
-          aria-label="ローカルのフォルダのパス"
+          aria-label={t('ローカルのフォルダのパス')}
           value={p.pathInput}
           onChange={(_, d) => p.onPathInput(d.value)}
           onKeyDown={(e) => {
@@ -86,7 +87,7 @@ export function LocalPane(p: Props) {
         />
         <Menu onOpenChange={(_, d) => d.open && p.onRoots()}>
           <MenuTrigger disableButtonEnhancement>
-            <Button size="small" icon={<HardDrive20Regular />} aria-label="ドライブ・ルート" />
+            <Button size="small" icon={<HardDrive20Regular />} aria-label={t('ドライブ・ルート')} />
           </MenuTrigger>
           <MenuPopover>
             <MenuList>
@@ -101,33 +102,33 @@ export function LocalPane(p: Props) {
       </div>
       <div className={styles.wrap}>
         <Button appearance="primary" size="small" icon={<ArrowUpload20Regular />} disabled={!p.canSend || p.selected.size === 0} onClick={p.onSend}>
-          リモートへ送信
+          {t('リモートへ送信')}
         </Button>
         <Button size="small" icon={<FolderOpen20Regular />} onClick={p.onPick}>
-          フォルダを選ぶ
+          {t('フォルダを選ぶ')}
         </Button>
         <div className={styles.grow} />
-        <Checkbox checked={p.hidden} onChange={(_, d) => p.onHidden(d.checked === true)} label="隠しファイル" />
+        <Checkbox checked={p.hidden} onChange={(_, d) => p.onHidden(d.checked === true)} label={t('隠しファイル')} />
       </div>
       <Checkbox
         checked={p.sync}
         onChange={(_, d) => p.onSync(d.checked === true)}
-        label="同期ブラウズ（片側のフォルダ移動を相手側へ相対的に写す）"
+        label={t('同期ブラウズ（片側のフォルダ移動を相手側へ相対的に写す）')}
       />
       {p.error && (
         <MessageBar intent="error">
           <MessageBarBody>{p.error}</MessageBarBody>
         </MessageBar>
       )}
-      <div className={styles.list} role="listbox" aria-multiselectable="true" aria-label="ローカルのファイル一覧">
+      <div className={styles.list} role="listbox" aria-multiselectable="true" aria-label={t('ローカルのファイル一覧')}>
         {p.loading && p.entries.length === 0 && (
           <div style={{ padding: 12 }}>
-            <Spinner size="tiny" label="読み込み中" />
+            <Spinner size="tiny" label={t('読み込み中')} />
           </div>
         )}
         {!p.loading && p.entries.length === 0 && (
           <Caption1 className={styles.note} style={{ padding: 12, display: 'block' }}>
-            空のフォルダです
+            {t('空のフォルダです')}
           </Caption1>
         )}
         {p.entries.map((entry) => (
@@ -151,7 +152,7 @@ export function LocalPane(p: Props) {
             {entry.directory ? <Folder20Filled className={styles.dir} /> : <Document20Regular />}
             <span className={mergeClasses(styles.name, entry.directory && styles.dir)} title={entry.name}>
               {entry.name}
-              {entry.symlink && ' （リンク）'}
+              {entry.symlink && ' ' + t('（リンク）')}
             </span>
             {!entry.directory && <span className={styles.size}>{humanSize(entry.size)}</span>}
           </div>

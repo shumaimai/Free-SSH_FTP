@@ -15,6 +15,7 @@ import {
   MessageBarBody,
   Text,
 } from '@fluentui/react-components';
+import { t } from './i18n';
 import type { Api } from './api';
 import type { PermissionStatus } from './types';
 
@@ -60,20 +61,20 @@ export function PermissionDialog({ api, open, sessionId, onClose }: Props) {
     <Dialog open={open} onOpenChange={(_, d) => !d.open && onClose()}>
       <DialogSurface style={{ maxWidth: 'min(620px, calc(100vw - 32px))' }}>
         <DialogBody>
-          <DialogTitle>一時的な権限変更</DialogTitle>
+          <DialogTitle>{t('一時的な権限変更')}</DialogTitle>
           <DialogContent style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <Text>一覧と転送で権限が足りないとき、自分が所有するファイルのmodeを一時的に変えて作業し、終わったら元へ戻します。</Text>
+            <Text>{t('一覧と転送で権限が足りないとき、自分が所有するファイルのmodeを一時的に変えて作業し、終わったら元へ戻します。')}</Text>
             <Caption1>
-              復元に失敗したときは記録を残し、再接続後にここから復元できます。sudo・ACL・旧版（Python）の未復元記録の取り込みには対応していません。
-              旧版に未復元の記録があるときは、有効にできません（旧版で復旧してください）。
+              {t('復元に失敗したときは記録を残し、再接続後にここから復元できます。sudo・ACL・旧版（Python）の未復元記録の取り込みには対応していません。')}
+              {t('旧版に未復元の記録があるときは、有効にできません（旧版で復旧してください）。')}
             </Caption1>
             <Checkbox
               checked={legacy}
               onChange={(_, d) => setLegacy(Boolean(d.checked))}
-              label="旧Python版をすべて終了した（確認できない旧版も含む）"
+              label={t('旧Python版をすべて終了した（確認できない旧版も含む）')}
               disabled={status?.enabled}
             />
-            <Text weight="semibold">この接続: {status ? (status.enabled ? '有効' : '無効') : '確認中'}</Text>
+            <Text weight="semibold">{t('この接続: {state}', { state: status ? (status.enabled ? t('有効') : t('無効')) : t('確認中') })}</Text>
             {status?.note && <Caption1>{status.note}</Caption1>}
             {error && (
               <MessageBar intent="error">
@@ -93,19 +94,19 @@ export function PermissionDialog({ api, open, sessionId, onClose }: Props) {
               onClick={() =>
                 void run(async () => {
                   setStatus(await api.permissionsEnable(sessionId, legacy));
-                  setInfo('この接続で有効にしました（接続を閉じるまで）');
+                  setInfo(t('この接続で有効にしました（接続を閉じるまで）'));
                 })
               }
             >
-              この接続で有効にする
+              {t('この接続で有効にする')}
             </Button>
             <Button
               disabled={busy || !status?.enabled}
               onClick={() => void run(async () => setInfo(await api.permissionsRecover(sessionId)))}
             >
-              この接続の未復元記録を復元
+              {t('この接続の未復元記録を復元')}
             </Button>
-            <Button onClick={onClose}>閉じる</Button>
+            <Button onClick={onClose}>{t('閉じる')}</Button>
           </DialogActions>
         </DialogBody>
       </DialogSurface>

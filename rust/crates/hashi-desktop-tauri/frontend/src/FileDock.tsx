@@ -53,6 +53,7 @@ import type { Api } from './api';
 import { PermissionDialog } from './PermissionDialog';
 import { LocalPane } from './LocalPane';
 import { Grip } from './Grip';
+import { N_, t } from './i18n';
 import type { ExistingPolicy, FileEntry, FileJob, Follow, LocalListing, TransferMode } from './types';
 
 const useStyles = makeStyles({
@@ -130,11 +131,11 @@ export function parentOf(path: string): string {
 }
 
 const PHASE: Record<FileJob['phase'], { label: string; color: 'brand' | 'success' | 'danger' | 'informative' | 'warning' }> = {
-  queued: { label: '待機中', color: 'informative' },
-  running: { label: '実行中', color: 'brand' },
-  done: { label: '完了', color: 'success' },
-  failed: { label: '失敗', color: 'danger' },
-  cancelled: { label: '取消', color: 'warning' },
+  queued: { label: N_('待機中'), color: 'informative' },
+  running: { label: N_('実行中'), color: 'brand' },
+  done: { label: N_('完了'), color: 'success' },
+  failed: { label: N_('失敗'), color: 'danger' },
+  cancelled: { label: N_('取消'), color: 'warning' },
 };
 
 interface Props {
@@ -214,7 +215,7 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
         followUp(listing.follow);
       } catch (e) {
         const message = String(e);
-        if (message.includes('置き換えられました')) return;
+        if (message.includes('置き換えられました')) return; // i18n-ignore: Rust側のエラー文との照合
         if (follow) setNotice(message);
         else setLocalError(message);
       } finally {
@@ -243,7 +244,7 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
       } catch (e) {
         // 古い要求が新しい要求に置き換えられただけなら、エラーにしない。
         const message = String(e);
-        if (message.includes('置き換えられました')) return;
+        if (message.includes('置き換えられました')) return; // i18n-ignore: Rust側のエラー文との照合
         // 同期ブラウズの追随の失敗は、エラー欄ではなく通知にする。
         if (follow) setNotice(message);
         else setError(message);
@@ -286,7 +287,7 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
         const box = remoteBox.current?.getBoundingClientRect();
         const inside = box && box.width > 0 && x >= box.left && x <= box.right && y >= box.top && y <= box.bottom;
         if (!inside) {
-          setNotice('送信するファイルは、リモートのファイル一覧の上にドロップしてください');
+          setNotice(t('送信するファイルは、リモートのファイル一覧の上にドロップしてください'));
           return;
         }
         void api.filesUploadDropped(id, pathRef.current, policy, mode).catch((e) => setError(String(e)));
@@ -423,13 +424,13 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
   const run = (task: Promise<unknown>) => task.catch((e) => setError(String(e)));
 
   if (!sessionId) {
-    return <Body1 className={styles.note}>SSHで接続したサーバーを開くと、ここにファイルが並びます。</Body1>;
+    return <Body1 className={styles.note}>{t('SSHで接続したサーバーを開くと、ここにファイルが並びます。')}</Body1>;
   }
   if (!available) {
     return (
       <MessageBar intent="warning">
         <MessageBarBody>
-          {unavailableMessage ? `ファイルを開けません: ${unavailableMessage}` : '接続が済むと、ここにファイルが並びます。'}
+          {unavailableMessage ? t('ファイルを開けません: {message}', { message: unavailableMessage }) : t('接続が済むと、ここにファイルが並びます。')}
         </MessageBarBody>
       </MessageBar>
     );
@@ -442,15 +443,15 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
         <Button
           size="small"
           icon={<ArrowUp20Regular />}
-          aria-label="親フォルダへ"
+          aria-label={t('親フォルダへ')}
           disabled={!path || path === '/'}
           onClick={() => void load(parentOf(path))}
         />
-        <Button size="small" icon={<ArrowSync20Regular />} aria-label="再読み込み" onClick={() => void load(path)} />
+        <Button size="small" icon={<ArrowSync20Regular />} aria-label={t('再読み込み')} onClick={() => void load(path)} />
         <Input
           className={styles.grow}
           size="small"
-          aria-label="フォルダのパス"
+          aria-label={t('フォルダのパス')}
           value={pathInput}
           onChange={(_, d) => setPathInput(d.value)}
           onKeyDown={(e) => {
@@ -459,7 +460,7 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
         />
         <Menu>
           <MenuTrigger disableButtonEnhancement>
-            <Button size="small" icon={<Star20Regular />} aria-label="ブックマーク" />
+            <Button size="small" icon={<Star20Regular />} aria-label={t('ブックマーク')} />
           </MenuTrigger>
           <MenuPopover>
             <MenuList>
@@ -467,7 +468,7 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
                 onClick={() => void run(api.filesBookmarkAdd(sessionId, path).then(setBookmarks))}
                 disabled={!path}
               >
-                現在のフォルダを登録
+                {t('現在のフォルダを登録')}
               </MenuItem>
               {bookmarks.map((b) => (
                 <MenuItem key={b} onClick={() => void load(b)}>
@@ -493,7 +494,7 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
             )
           }
         >
-          {twoPane ? '受信（左のフォルダへ）' : '受信'}
+          {twoPane ? t('受信（左のフォルダへ）') : t('受信')}
         </Button>
         <Button
           size="small"
@@ -501,7 +502,7 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
           disabled={!current || current.directory}
           onClick={() => current && onEdit(sessionId, current.path)}
         >
-          編集
+          {t('編集')}
         </Button>
         <Button
           size="small"
@@ -509,7 +510,7 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
           disabled={!path}
           onClick={() => void run(api.filesUploadPick(sessionId, path, false, policy, mode))}
         >
-          送信
+          {t('アップロード')}
         </Button>
         <Button
           size="small"
@@ -517,7 +518,7 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
           disabled={!path}
           onClick={() => void run(api.filesUploadPick(sessionId, path, true, policy, mode))}
         >
-          フォルダ送信
+          {t('フォルダ送信')}
         </Button>
         <Button
           size="small"
@@ -530,7 +531,7 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
             setConfirmation('');
           }}
         >
-          削除
+          {t('削除')}
         </Button>
         <div className={styles.grow} />
         <Button
@@ -540,36 +541,36 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
           aria-pressed={twoPane}
           onClick={() => onTwoPane(!twoPane)}
         >
-          2ペイン
+          {t('2ペイン')}
         </Button>
         <Button size="small" appearance="subtle" icon={<ShieldKeyhole20Regular />} onClick={() => setPermOpen(true)}>
-          権限補助
+          {t('権限補助')}
         </Button>
         <Popover positioning="below-end">
           <PopoverTrigger disableButtonEnhancement>
             <Button size="small" appearance="subtle" icon={<Options20Regular />}>
-              転送の設定
+              {t('転送の設定')}
             </Button>
           </PopoverTrigger>
           <PopoverSurface style={{ width: 320 }}>
-            <Field label="すでに同名のファイルがあるとき">
+            <Field label={t('すでに同名のファイルがあるとき')}>
               <RadioGroup value={policy} onChange={(_, d) => setPolicy(d.value as ExistingPolicy)}>
-                <Radio value="refuse" label="中止する" />
-                <Radio value="overwrite" label="上書きする" />
-                <Radio value="resume" label="続きから送る（途中のファイルへ追記）" />
-                <Radio value="skip" label="飛ばす" />
+                <Radio value="refuse" label={t('中止する')} />
+                <Radio value="overwrite" label={t('上書きする')} />
+                <Radio value="resume" label={t('続きから送る（途中のファイルへ追記）')} />
+                <Radio value="skip" label={t('飛ばす')} />
               </RadioGroup>
             </Field>
-            <Field label="書き込み方式" style={{ marginTop: 8 }}>
+            <Field label={t('書き込み方式')} style={{ marginTop: 8 }}>
               <RadioGroup value={mode} onChange={(_, d) => setMode(d.value as TransferMode)}>
-                <Radio value="atomic" label="原本を守る（既定）" />
-                <Radio value="in_place" label="直接書込み（Python互換）" />
+                <Radio value="atomic" label={t('原本を守る（既定）')} />
+                <Radio value="in_place" label={t('直接書込み（Python互換）')} />
               </RadioGroup>
             </Field>
             <Caption1 className={mode === 'in_place' ? styles.error : styles.note}>
               {mode === 'in_place'
-                ? '直接書込みは取消・失敗でも転送先が変更され、部分データが残る場合があります。'
-                : '原本を守る方式には、親フォルダへの書込み権限とサーバーの対応が必要です。'}
+                ? t('直接書込みは取消・失敗でも転送先が変更され、部分データが残る場合があります。')
+                : t('原本を守る方式には、親フォルダへの書込み権限とサーバーの対応が必要です。')}
             </Caption1>
           </PopoverSurface>
         </Popover>
@@ -578,7 +579,7 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
         <SearchBox
           className={styles.grow}
           size="small"
-          placeholder="このフォルダ以下を検索"
+          placeholder={t('このフォルダ以下を検索')}
           value={query}
           onChange={(_, d) => setQuery(d.value)}
           onKeyDown={(e) => {
@@ -596,14 +597,14 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
             }
           }}
         />
-        <Checkbox checked={hidden} onChange={(_, d) => setHidden(d.checked === true)} label="隠しファイル" />
+        <Checkbox checked={hidden} onChange={(_, d) => setHidden(d.checked === true)} label={t('隠しファイル')} />
       </div>
       {searching !== null && (
         <MessageBar intent="info">
           <MessageBarBody>
-            「{searching}」の検索結果 {entries.length}件
+            {t('「{query}」の検索結果 {n}件', { query: searching, n: entries.length })}
             <Button size="small" appearance="transparent" icon={<Dismiss16Regular />} onClick={() => void load(path)}>
-              閉じる
+              {t('閉じる')}
             </Button>
           </MessageBarBody>
         </MessageBar>
@@ -613,13 +614,13 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
           <MessageBarBody>{error}</MessageBarBody>
         </MessageBar>
       )}
-      <div className={styles.list} role="listbox" aria-label="ファイル一覧">
+      <div className={styles.list} role="listbox" aria-label={t('ファイル一覧')}>
         {loading && shown.length === 0 && (
           <div style={{ padding: 12 }}>
-            <Spinner size="tiny" label="読み込み中" />
+            <Spinner size="tiny" label={t('読み込み中')} />
           </div>
         )}
-        {!loading && shown.length === 0 && <Caption1 className={styles.note} style={{ padding: 12, display: 'block' }}>空のフォルダです</Caption1>}
+        {!loading && shown.length === 0 && <Caption1 className={styles.note} style={{ padding: 12, display: 'block' }}>{t('空のフォルダです')}</Caption1>}
         {shown.map((entry) => (
           <div
             key={entry.path}
@@ -646,18 +647,18 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
             {entry.directory ? <Folder20Filled className={styles.dir} /> : <Document20Regular />}
             <span className={mergeClasses(styles.name, entry.directory && styles.dir)} title={entry.name}>
               {entry.name}
-              {entry.symlink && ' （リンク）'}
+              {entry.symlink && ' ' + t('（リンク）')}
             </span>
             {!entry.directory && <span className={styles.size}>{humanSize(entry.size)}</span>}
           </div>
         ))}
       </div>
       {activeJobs.length > 0 && (
-        <div className={styles.jobs} aria-label="転送">
+        <div className={styles.jobs} aria-label={t('転送')}>
           <div className={styles.row}>
-            <Caption1 className={styles.grow}>転送</Caption1>
+            <Caption1 className={styles.grow}>{t('転送')}</Caption1>
             <Button size="small" appearance="subtle" onClick={() => void api.filesClearJobs().then(() => api.filesJobs().then(setJobs))}>
-              完了分を消す
+              {t('完了分を消す')}
             </Button>
           </div>
           {activeJobs.map((job) => (
@@ -667,11 +668,11 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
                   {job.label}
                 </Caption1>
                 <Badge appearance="tint" color={PHASE[job.phase].color}>
-                  {PHASE[job.phase].label}
+                  {t(PHASE[job.phase].label)}
                 </Badge>
                 {(job.phase === 'queued' || job.phase === 'running') && (
                   <Button size="small" appearance="subtle" onClick={() => void api.filesCancel(job.id)}>
-                    取消
+                    {t('取消')}
                   </Button>
                 )}
               </div>
@@ -684,18 +685,19 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
       <Dialog open={deleteTarget !== null} onOpenChange={(_, d) => !d.open && setDeleteTarget(null)}>
         <DialogSurface aria-describedby={undefined}>
           <DialogBody>
-            <DialogTitle>削除の確認</DialogTitle>
+            <DialogTitle>{t('削除の確認')}</DialogTitle>
             <DialogContent>
               <Body1>
-                {deleteTarget?.name}
-                {deleteTarget?.directory ? ' とその中身をすべて削除します。' : ' を削除します。'}元に戻せません。
+                {deleteTarget?.directory
+                  ? t('{name} とその中身をすべて削除します。元に戻せません。', { name: deleteTarget.name })
+                  : t('{name} を削除します。元に戻せません。', { name: deleteTarget?.name ?? '' })}
               </Body1>
-              <Field label="実行するには delete と入力してください" style={{ marginTop: 10 }}>
+              <Field label={t('実行するには delete と入力してください')} style={{ marginTop: 10 }}>
                 <Input value={confirmation} onChange={(_, d) => setConfirmation(d.value)} />
               </Field>
             </DialogContent>
             <DialogActions>
-              <Button onClick={() => setDeleteTarget(null)}>やめる</Button>
+              <Button onClick={() => setDeleteTarget(null)}>{t('やめる')}</Button>
               <Button
                 appearance="primary"
                 disabled={confirmation !== 'delete'}
@@ -705,7 +707,7 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
                   if (target) void run(api.filesDelete(sessionId, target.path, target.name, confirmation));
                 }}
               >
-                削除する
+                {t('削除する')}
               </Button>
             </DialogActions>
           </DialogBody>
@@ -763,7 +765,7 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
               localSelRef.current = new Set([entry.name]);
             }
             const n = Math.max(localSelRef.current.size, 1);
-            startDrag('local', n > 1 ? `${n}件` : entry.name, e);
+            startDrag('local', n > 1 ? t('{n}件', { n }) : entry.name, e);
           }}
           onHidden={setLocalHidden}
           onSync={setSync}
@@ -772,7 +774,7 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
       )}
       {twoPane && (
         <Grip
-          label="ローカルとリモートの幅"
+          label={t('ローカルとリモートの幅')}
           onBegin={() => {
             ratioStart.current = paneRatio;
           }}
@@ -791,7 +793,7 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
             <MessageBarBody>{notice}</MessageBarBody>
             <MessageBarActions>
               <Button size="small" appearance="transparent" onClick={() => setNotice('')}>
-                閉じる
+                {t('閉じる')}
               </Button>
             </MessageBarActions>
           </MessageBar>

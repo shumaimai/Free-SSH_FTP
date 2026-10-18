@@ -88,7 +88,8 @@ for (const name of readdirSync(dictDir).filter((n) => n.endsWith('.ts'))) {
       errors.push(`i18n/en/${name}: ${JSON.stringify(k)} の訳が文字列リテラルではありません`);
       continue;
     }
-    if (k in dict) errors.push(`i18n/en/${name}: キーが重複しています: ${JSON.stringify(k)}`);
+    // 同じ原文は複数のファイルに同じ訳で置いてよい。訳が食い違うものだけ失敗にする。
+    if (k in dict && dict[k] !== v) errors.push(`i18n/en/${name}: 同じキーで訳が違います: ${JSON.stringify(k)}`);
     dict[k] = v;
     if (JA.test(v)) errors.push(`i18n/en/${name}: 訳に日本語が残っています: ${JSON.stringify(k)}`);
     const names = (s) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort().join(',');

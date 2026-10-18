@@ -1,0 +1,16 @@
+export default {
+  'システムに合わせる': 'Match system',
+  'ライト': 'Light',
+  'ダーク': 'Dark',
+  'ティール': 'Teal',
+  'ブルー': 'Blue',
+  'グリーン': 'Green',
+  'パープル': 'Purple',
+  'ローズ': 'Rose',
+  'オレンジ': 'Orange',
+  'グレー': 'Gray',
+  '標準（Segoe UI / 游ゴシック UI）': 'Default (Segoe UI / Yu Gothic UI)',
+  '画面のテーマに合わせる': 'Match interface theme',
+  'Campbell（Windows標準）': 'Campbell (Windows default)',
+  '明るい（紙のような白）': 'Light (paper white)',
+} as Record<string, string>;

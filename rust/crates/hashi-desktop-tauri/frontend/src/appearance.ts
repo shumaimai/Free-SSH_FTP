@@ -1,6 +1,7 @@
 // 外観の候補。保存するのはここのidだけで、色やフォント名そのものは保存しない（Rust側も同じidだけ受け付ける）。
 import { createDarkTheme, createLightTheme, type BrandVariants, type Theme } from '@fluentui/react-components';
 import type { ITheme } from '@xterm/xterm';
+import { N_ } from './i18n';
 
 export type ThemeMode = 'system' | 'light' | 'dark';
 
@@ -23,30 +24,30 @@ export const DEFAULT_APPEARANCE: Appearance = {
 };
 
 export const MODES: { id: ThemeMode; label: string }[] = [
-  { id: 'system', label: 'システムに合わせる' },
-  { id: 'light', label: 'ライト' },
-  { id: 'dark', label: 'ダーク' },
+  { id: 'system', label: N_('システムに合わせる') },
+  { id: 'light', label: N_('ライト') },
+  { id: 'dark', label: N_('ダーク') },
 ];
 
 export const ACCENTS: { id: string; label: string; color: string }[] = [
-  { id: 'teal', label: 'ティール', color: '#0f8b7d' },
-  { id: 'blue', label: 'ブルー', color: '#0f6cbd' },
-  { id: 'green', label: 'グリーン', color: '#2f8f46' },
-  { id: 'purple', label: 'パープル', color: '#7a4bc7' },
-  { id: 'rose', label: 'ローズ', color: '#c2385a' },
-  { id: 'orange', label: 'オレンジ', color: '#c4651b' },
-  { id: 'slate', label: 'グレー', color: '#52606d' },
+  { id: 'teal', label: N_('ティール'), color: '#0f8b7d' },
+  { id: 'blue', label: N_('ブルー'), color: '#0f6cbd' },
+  { id: 'green', label: N_('グリーン'), color: '#2f8f46' },
+  { id: 'purple', label: N_('パープル'), color: '#7a4bc7' },
+  { id: 'rose', label: N_('ローズ'), color: '#c2385a' },
+  { id: 'orange', label: N_('オレンジ'), color: '#c4651b' },
+  { id: 'slate', label: N_('グレー'), color: '#52606d' },
 ];
 
 export const UI_FONTS: { id: string; label: string; stack: string }[] = [
   {
     id: 'system',
-    label: '標準（Segoe UI / 游ゴシック UI）',
+    label: N_('標準（Segoe UI / 游ゴシック UI）'),
     stack: '"Segoe UI Variable Text", "Segoe UI", "Yu Gothic UI", "Meiryo UI", system-ui, sans-serif',
   },
-  { id: 'yugothic', label: '游ゴシック UI', stack: '"Yu Gothic UI", "Yu Gothic", "Meiryo UI", system-ui, sans-serif' },
-  { id: 'meiryo', label: 'メイリオ UI', stack: '"Meiryo UI", "Meiryo", "Yu Gothic UI", system-ui, sans-serif' },
-  { id: 'biz', label: 'BIZ UDPゴシック', stack: '"BIZ UDPGothic", "Yu Gothic UI", "Meiryo UI", system-ui, sans-serif' },
+  { id: 'yugothic', label: '游ゴシック UI', stack: '"Yu Gothic UI", "Yu Gothic", "Meiryo UI", system-ui, sans-serif' }, // i18n-ignore: フォントの固有名
+  { id: 'meiryo', label: 'メイリオ UI', stack: '"Meiryo UI", "Meiryo", "Yu Gothic UI", system-ui, sans-serif' }, // i18n-ignore: フォントの固有名
+  { id: 'biz', label: 'BIZ UDPゴシック', stack: '"BIZ UDPGothic", "Yu Gothic UI", "Meiryo UI", system-ui, sans-serif' }, // i18n-ignore: フォントの固有名
   { id: 'noto', label: 'Noto Sans JP', stack: '"Noto Sans JP", "Yu Gothic UI", "Meiryo UI", system-ui, sans-serif' },
 ];
 
@@ -57,8 +58,8 @@ export const TERM_FONTS: { id: string; label: string; stack: string }[] = [
     stack: '"Cascadia Mono", "Cascadia Code", Consolas, "BIZ UDGothic", "MS Gothic", "Noto Sans Mono CJK JP", monospace',
   },
   { id: 'consolas', label: 'Consolas', stack: 'Consolas, "BIZ UDGothic", "MS Gothic", "Noto Sans Mono CJK JP", monospace' },
-  { id: 'bizud', label: 'BIZ UDゴシック', stack: '"BIZ UDGothic", "MS Gothic", "Noto Sans Mono CJK JP", monospace' },
-  { id: 'msgothic', label: 'MS ゴシック', stack: '"MS Gothic", "BIZ UDGothic", "Noto Sans Mono CJK JP", monospace' },
+  { id: 'bizud', label: 'BIZ UDゴシック', stack: '"BIZ UDGothic", "MS Gothic", "Noto Sans Mono CJK JP", monospace' }, // i18n-ignore: フォントの固有名
+  { id: 'msgothic', label: 'MS ゴシック', stack: '"MS Gothic", "BIZ UDGothic", "Noto Sans Mono CJK JP", monospace' }, // i18n-ignore: フォントの固有名
   { id: 'courier', label: 'Courier New', stack: '"Courier New", "BIZ UDGothic", "MS Gothic", monospace' },
 ];
 
@@ -75,10 +76,10 @@ const ansi = (c: string[]): Partial<ITheme> => ({
 });
 
 export const TERM_SCHEMES: Scheme[] = [
-  { id: 'auto', label: '画面のテーマに合わせる' },
+  { id: 'auto', label: N_('画面のテーマに合わせる') },
   {
     id: 'campbell',
-    label: 'Campbell（Windows標準）',
+    label: N_('Campbell（Windows標準）'),
     theme: {
       background: '#0c0c0c', foreground: '#cccccc', cursor: '#ffffff', selectionBackground: '#264f78',
       ...ansi(['#0c0c0c', '#c50f1f', '#13a10e', '#c19c00', '#0037da', '#881798', '#3a96dd', '#cccccc',
@@ -105,7 +106,7 @@ export const TERM_SCHEMES: Scheme[] = [
   },
   {
     id: 'light',
-    label: '明るい（紙のような白）',
+    label: N_('明るい（紙のような白）'),
     theme: {
       background: '#fbfbf9', foreground: '#2b2b2b', cursor: '#2b2b2b', selectionBackground: '#cfe3f5',
       ...ansi(['#2b2b2b', '#c0392b', '#1e8449', '#9a7d0a', '#1f5fa8', '#8e44ad', '#117a8b', '#d5d8dc',

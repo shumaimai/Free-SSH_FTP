@@ -1,4 +1,5 @@
 // 画面とRust側の境界。本番はTauriのcommand/eventだけを使い、試験用(VITE_MOCK)は偽の実装へ差し替える。
+import { tr } from './i18n';
 import type { Appearance } from './appearance';
 import type {
   AppSettings,
@@ -162,9 +163,29 @@ export interface Api {
   onSessionState(handler: (event: SessionStateEvent) => void): Promise<() => void>;
 }
 
+// Rustが日本語で書いた説明文を持つ項目。英語のときだけ tr() で訳す(ファイル名やAIの返答などの値は触らない)。
+const MESSAGE_KEYS = new Set(['message', 'error', 'warning', 'note', 'notes']);
+
+function localize<T>(value: T, key?: string): T {
+  if (typeof value === 'string') return (key && MESSAGE_KEYS.has(key) ? tr(value) : value) as T;
+  if (Array.isArray(value)) return value.map((v) => localize(v, key)) as T;
+  if (value && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype) {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, localize(v, k)])) as T;
+  }
+  return value;
+}
+
 async function tauriApi(): Promise<Api> {
-  const { invoke, Channel } = await import('@tauri-apps/api/core');
-  const { listen } = await import('@tauri-apps/api/event');
+  const core = await import('@tauri-apps/api/core');
+  const events = await import('@tauri-apps/api/event');
+  const { Channel } = core;
+  const invoke = <T>(...args: Parameters<typeof core.invoke>): Promise<T> =>
+    core.invoke<T>(...args).then(
+      (value) => localize(value),
+      (error) => Promise.reject(typeof error === 'string' ? tr(error) : error),
+    );
+  const listen = <T>(name: string, handler: (event: { payload: T }) => void) =>
+    events.listen<T>(name, (event) => handler({ ...event, payload: localize(event.payload) }));
   const channelFor = (sink: DataSink) => {
     const channel = new Channel<ArrayBuffer>();
     channel.onmessage = (data) => sink(new Uint8Array(data));

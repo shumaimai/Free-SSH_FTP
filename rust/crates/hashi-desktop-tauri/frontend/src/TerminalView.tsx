@@ -18,6 +18,7 @@ import {
 import type { Api } from './api';
 import type { SessionInfo } from './types';
 import { InputQueue } from './inputQueue';
+import { t } from './i18n';
 import { TERM_FONTS, termTheme, type Appearance } from './appearance';
 
 const useStyles = makeStyles({
@@ -179,13 +180,13 @@ export function TerminalView({ api, active, dark, appearance, start, onOpened, o
       <Dialog open={pasteAsk !== null} onOpenChange={(_, d) => !d.open && setPasteAsk(null)}>
         <DialogSurface aria-describedby={undefined} style={{ maxWidth: 560 }}>
           <DialogBody>
-            <DialogTitle>{lines}行を貼り付けますか？</DialogTitle>
+            <DialogTitle>{t('{lines}行を貼り付けますか？', { lines })}</DialogTitle>
             <DialogContent style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <Caption1>各行がコマンドとして実行されることがあります。内容を確認してください。</Caption1>
+              <Caption1>{t('各行がコマンドとして実行されることがあります。内容を確認してください。')}</Caption1>
               <pre className={styles.pastePreview}>{pasteAsk}</pre>
             </DialogContent>
             <DialogActions>
-              <Button onClick={() => setPasteAsk(null)}>やめる</Button>
+              <Button onClick={() => setPasteAsk(null)}>{t('やめる')}</Button>
               <Button
                 appearance="primary"
                 onClick={() => {
@@ -195,7 +196,7 @@ export function TerminalView({ api, active, dark, appearance, start, onOpened, o
                   term.current?.focus();
                 }}
               >
-                貼り付ける
+                {t('貼り付ける')}
               </Button>
             </DialogActions>
           </DialogBody>
