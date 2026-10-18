@@ -496,3 +496,4 @@ ruff check .
 - CI/リリースで動くPythonスクリプトは、子プロセス出力とstdoutをUTF-8に固定すること（Windows runnerはcp1252。v2.0.0の初回リリースがこれで失敗した）。
 - Windows実機での確認はオーナーの手元でもできない。実機未確認のことを確認済みと書かないこと。
 - README.mdとREADME.en.mdは内容を揃えること。winget/Scoopへの提出や外部への投稿を勝手にしないこと（オーナーが行う）。
+- 画面の文言は`t('日本語の原文')`で書き、英訳を`frontend/src/i18n/en/`へ足すこと（日本語の直書きは`npm run build`が止める）。Rustが返す日本語の文を足したら`frontend/src/i18n/rust/*.json`の台帳へ英訳（画面に出ない文は`null`）を足すこと。Rustの日本語の文を比較して分岐しないこと（`rustHas`を使う）。

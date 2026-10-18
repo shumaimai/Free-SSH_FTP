@@ -13,7 +13,9 @@ and has no telemetry.
 
 > **Status:** v2.x is a ground-up rewrite in Rust + Tauri. It is young: I have no Windows machine of my own,
 > so testing relies on CI and bug reports from users. Please read [Known limitations](#known-limitations).
-> The in-app UI is currently **Japanese only**; English UI is planned.
+> The UI is available in **English and Japanese** (Settings → Language; "Automatic" follows your system language).
+> English text has only been checked in a browser mock so far, not on a real Windows build, and some strings are still
+> Japanese-only: see [Known limitations](#known-limitations).
 
 ## Download
 
@@ -76,6 +78,8 @@ Settings → General. Details: [privacy section](docs/code-signing-policy.md#pri
 - **Little testing on real Windows machines.** Development is verified by CI (Windows build and tests) and on Linux;
   IME behavior, high-DPI scaling and real drag & drop are unverified. Please report problems in
   [Issues](https://github.com/shumaimai/Free-SSH_FTP/issues).
+- English UI: the OS-native exit-warning dialog, already-open tab titles and on-screen notices (until recreated) stay in the
+  language they were created in, and documentation other than this README, SECURITY and CONTRIBUTING is Japanese.
 - Launching the official Claude Code CLI inside Hashi is not ported (use the local MCP integration instead).
 - Sign in with ChatGPT has been tested against a fake auth server only, not a real ChatGPT account yet.
 - P2P sharing, cloud sync, sshd / netplan configuration and sudo-based permission assist from the old Python

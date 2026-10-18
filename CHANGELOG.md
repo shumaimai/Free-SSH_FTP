@@ -11,6 +11,8 @@
 - コード署名の準備(SignPath Foundation)。[コード署名ポリシー](docs/code-signing-policy.md)(通信とプライバシーの説明を含む)、
   `release.yml` の署名手順(Secrets を登録するまでは飛ばす)、MCP ヘルパーへの版情報の埋め込み。
 
+- **画面の英語化**。設定に「言語」(自動 / 日本語 / English。自動はOSの言語)。Rustが返すエラー文なども英語に訳して表示する
+  (台帳 `frontend/src/i18n/rust/`)。日本語の直書きや訳の抜けは `npm run build` と CI が止める。実機(Windows)での表示確認は未実施。
 - 英語の README(`README.en.md`)、ダウンロードの確認手順(`docs/verify-download.md`)。
 - リリースに `SHA256SUMS.txt` とビルド証明(GitHub artifact attestation)を付ける。winget / Scoop 用マニフェストの
   テンプレート(`packaging/`)と生成スクリプト(`tools/package_manifests.py`)。提出は未実施。
