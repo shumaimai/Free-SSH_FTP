@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+## [2.0.2] - 2026-10-23
+Claude Desktop への MCP 登録先と、リンクで外部ブラウザが開かない問題を直した版。
+
 ### 修正
 - Claude Desktop への MCP 登録が、Claude の読まない古い設定ファイル(`%APPDATA%\Claude\`)へ書かれていた。
   新しい Claude Desktop は `%LOCALAPPDATA%\Claude-Data\claude_<発行者ID>\` を読むため、こちらを最優先にし、
