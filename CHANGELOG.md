@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### 修正
+- Claude Desktop への MCP 登録が、Claude の読まない古い設定ファイル(`%APPDATA%\Claude\`)へ書かれていた。
+  新しい Claude Desktop は `%LOCALAPPDATA%\Claude-Data\claude_<発行者ID>\` を読むため、こちらを最優先にし、
+  移転済みの印(`.user-data-left.*`)がある古いフォルダは使わない。既にあるファイルの有無では選ばない。
+- Hashi 内のリンク(キーの取得ページ・更新のお知らせ・ChatGPT サインイン)で外部ブラウザが開かないことがあった。
+  Windows ではエクスプローラと同じ `ShellExecuteW` で開くようにした(http(s) の URL だけ)。
+
 ## [2.0.1] - 2026-10-18
 ChatGPT サインイン・画面の英語化・配布物の確認手段(SHA-256 とビルド証明)を加えた版。
 

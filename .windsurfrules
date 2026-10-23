@@ -380,6 +380,8 @@ ruff check .
 
 - AI/MCPの端末操作はCommandBrokerを通す。許可と対象ID/世代はユーザーが選ぶ。モデルからモード変更禁止。
 - MCPヘルパーは引数なしで接続情報を毎回読み直す(未起動でも落とさない)。登録は`mcpServers.hashi-rust-preview`1項目だけ、バックアップを残し壊れたファイルは上書きしない。
+- Claude Desktopの登録先は`Claude-Data\claude_*`→Store版→`%APPDATA%\Claude`の順で、移転済みの印`.user-data-left.*`のあるフォルダを使わないこと。既存ファイルの有無で選ばないこと。
+- 外部ブラウザは`browser.rs`経由でhttp(s)だけを開くこと。画面からURLを受け取るcommandを作らないこと。
 - send_keysは名前付きキー(Ctrl+X/Esc/矢印等)専用で未知名は確認前に拒否。
 - send_inputは`enter`必須。Enter未送信を結果と承認窓で明示し、完了/終了コードは推測しない。
 - send_inputの本文にCR・ESCなどの制御文字(改行とタブ以外)を通さないこと(確認窓に見えずに実行されるため)。

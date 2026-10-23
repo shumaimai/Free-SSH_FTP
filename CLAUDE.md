@@ -640,6 +640,9 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - `send_keys`はCtrl+X/Esc/矢印などの名前付きキー専用（Broker経由、未知名は確認前に拒否）。文字入力は`send_input`。
 - `send_input`は`enter`必須（本文の改行に頼らない）。結果の`enter_sent`/`note`でEnter未送信を明示し、承認窓にもEnterの有無を出す。本文のCR・ESCなどの制御文字(改行とタブ以外)はBrokerが確認前に拒否する(確認窓に見えずに実行されるため)。
 - MCPの接続情報は固定の本人専用フォルダ。stdioヘルパーは引数なしで要求ごとに読み直し、未起動でも落ちず、新しいHashiへは初期化を再生する。登録（`mcp_register.rs`）は`mcpServers.hashi-rust-preview`だけを書き、バックアップを残し、読めないファイルは上書きしない。
+  Claude Desktopの設定の場所は版で変わる。候補は`%LOCALAPPDATA%\Claude-Data\claude_*`→Store版の`Packages\Claude_*\LocalCache\Roaming\Claude`→`%APPDATA%\Claude`の順で、
+  フォルダがあり移転済みの印`.user-data-left.*`が無い最初の場所を使う。既存ファイルの有無で選ばない(古い場所にHashiが書いたファイルを選び続けた事故がある)。
+- 外部ブラウザは`browser.rs`だけで開く。URLはRust側が決めたhttp(s)だけで、画面から受け取らない。WindowsはSTAで初期化した専用スレッドの`ShellExecuteW`(`webbrowser`クレートはDelegateExecute型のブラウザで開けないことがある)。
 - Rust MCP（`hashi-mcp`）は本人限定フォルダのendpoint、instance/token照合、notificationからの実行禁止、切断で取消。stdioヘルパーはstdoutへJSON-RPCだけ。
 - 独立実行は専用exec/別プロセス。対話端末のcwd・環境を継承しない。子孫のパイプ保持でEOF待ちに停止を塞がない。
 - Rust AI（`hashi-ai`）: APIキーはAI専用暗号化ストアだけ。完了イベントのない応答のツールを実行しない。相談専用ではtoolsを送らず返されたツール要求も実行しない。認証付き通信のリダイレクト禁止・POST自動再送なし。共有対象がある送信は観測データを送信前に確認/編集させる。

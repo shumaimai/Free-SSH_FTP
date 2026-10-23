@@ -6,6 +6,7 @@ mod ai;
 mod ai_models;
 mod app;
 mod attach;
+mod browser;
 mod chatgpt;
 mod editor;
 mod external;

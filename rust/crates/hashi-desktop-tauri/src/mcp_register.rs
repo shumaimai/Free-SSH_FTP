@@ -90,17 +90,73 @@ pub fn merged(existing: Option<&[u8]>, command: &str) -> Result<Vec<u8>, String>
     Ok(out)
 }
 
-/// Claude Desktopの設定ファイルの場所。既存のファイルを優先し、無ければ親フォルダがある場所。
+/// Claude Desktopが古い保存先に残す印。この印があるフォルダの設定はもう読まれない。
+const LEFT_MARKER: &str = ".user-data-left.";
+
+fn is_left_behind(folder: &Path) -> bool {
+    std::fs::read_dir(folder)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|entry| entry.file_name().to_string_lossy().starts_with(LEFT_MARKER))
+}
+
+/// Claude Desktopの設定ファイルの場所。候補は優先順に並んでいて、フォルダがあり、
+/// 移転済みの印が無い最初のものを使う。既存のファイルがあるかでは選ばない
+/// (古い保存先にHashiが書いたファイルが残っていると、そちらを選び続けてしまうため)。
 pub fn config_path_in(candidates: &[PathBuf]) -> Option<PathBuf> {
     candidates
         .iter()
-        .find(|path| path.is_file())
-        .or_else(|| {
-            candidates
-                .iter()
-                .find(|path| path.parent().is_some_and(Path::is_dir))
+        .find(|path| {
+            path.parent()
+                .is_some_and(|folder| folder.is_dir() && !is_left_behind(folder))
         })
         .cloned()
+}
+
+/// `parent`直下で、名前が`prefix`で始まる(大文字小文字は区別しない)フォルダ。名前順。
+fn folders_starting_with(parent: &Path, prefix: &str) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = std::fs::read_dir(parent)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .to_lowercase()
+                .starts_with(prefix)
+                && entry.path().is_dir()
+        })
+        .map(|entry| entry.path())
+        .collect();
+    out.sort();
+    out
+}
+
+/// Windowsでの候補(優先順)。保存先はClaude Desktopの版と入れ方で違う。
+/// 1. `%LOCALAPPDATA%\Claude-Data\claude_<発行者ID>\`(2026-10ごろからの版。利用者の環境で確認済み)
+/// 2. Store版(MSIX)の仮想領域 `%LOCALAPPDATA%\Packages\Claude_<発行者ID>\LocalCache\Roaming\Claude\`
+/// 3. `%APPDATA%\Claude\`(exe版)
+pub fn windows_candidates(appdata: Option<&Path>, local: Option<&Path>) -> Vec<PathBuf> {
+    let mut out = vec![];
+    if let Some(local) = local {
+        // 複数あるときは、Claude自身のデータ(config.json)か設定ファイルがあるフォルダを先にする。
+        let mut data = folders_starting_with(&local.join("Claude-Data"), "claude_");
+        data.sort_by_key(|folder| {
+            !(folder.join("config.json").is_file() || folder.join(CONFIG_NAME).is_file())
+        });
+        for folder in data {
+            out.push(folder.join(CONFIG_NAME));
+        }
+        for folder in folders_starting_with(&local.join("Packages"), "claude_") {
+            out.push(folder.join("LocalCache/Roaming/Claude").join(CONFIG_NAME));
+        }
+    }
+    if let Some(appdata) = appdata {
+        out.push(appdata.join("Claude").join(CONFIG_NAME));
+    }
+    out
 }
 
 fn candidates() -> Vec<PathBuf> {
@@ -109,27 +165,11 @@ fn candidates() -> Vec<PathBuf> {
             .filter(|v| !v.is_empty())
             .map(PathBuf::from)
     };
-    let mut out = vec![];
     if cfg!(windows) {
-        if let Some(appdata) = var("APPDATA") {
-            out.push(appdata.join("Claude").join(CONFIG_NAME));
-        }
-        // Microsoft Store版は設定がパッケージ内の仮想領域に置かれる。
-        if let Some(local) = var("LOCALAPPDATA") {
-            if let Ok(entries) = std::fs::read_dir(local.join("Packages")) {
-                for entry in entries.flatten() {
-                    if entry.file_name().to_string_lossy().starts_with("Claude_") {
-                        out.push(
-                            entry
-                                .path()
-                                .join("LocalCache/Roaming/Claude")
-                                .join(CONFIG_NAME),
-                        );
-                    }
-                }
-            }
-        }
-    } else if let Some(home) = var("HOME") {
+        return windows_candidates(var("APPDATA").as_deref(), var("LOCALAPPDATA").as_deref());
+    }
+    let mut out = vec![];
+    if let Some(home) = var("HOME") {
         out.push(
             home.join("Library/Application Support/Claude")
                 .join(CONFIG_NAME),
@@ -379,24 +419,92 @@ mod tests {
     }
 
     #[test]
-    fn config_path_prefers_an_existing_file_then_an_existing_folder() {
+    fn config_path_takes_the_first_live_folder_not_an_existing_file() {
         let directory = tempfile::tempdir().unwrap();
-        let missing_folder = directory.path().join("none/x.json");
-        let folder_only = directory.path().join("have").join(CONFIG_NAME);
-        std::fs::create_dir(directory.path().join("have")).unwrap();
+        let missing_folder = directory.path().join("none").join(CONFIG_NAME);
+        let preferred = directory.path().join("new");
+        std::fs::create_dir(&preferred).unwrap();
+        let preferred = preferred.join(CONFIG_NAME);
+        // 優先度の低い場所にファイルがあっても、優先度の高いフォルダを選ぶ。
+        let old = directory.path().join("old");
+        std::fs::create_dir(&old).unwrap();
+        let old = old.join(CONFIG_NAME);
+        std::fs::write(&old, b"{}").unwrap();
         assert_eq!(
-            config_path_in(&[missing_folder.clone(), folder_only.clone()]),
-            Some(folder_only.clone())
-        );
-        let existing = directory.path().join("have2");
-        std::fs::create_dir(&existing).unwrap();
-        let existing = existing.join(CONFIG_NAME);
-        std::fs::write(&existing, b"{}").unwrap();
-        assert_eq!(
-            config_path_in(&[folder_only, existing.clone()]),
-            Some(existing)
+            config_path_in(&[missing_folder.clone(), preferred.clone(), old.clone()]),
+            Some(preferred.clone())
         );
         assert_eq!(config_path_in(&[missing_folder]), None);
+        // 移転済みの印があるフォルダは飛ばす。
+        std::fs::write(
+            preferred.with_file_name(".user-data-left.claude_pzs8sxrjxfjjc"),
+            b"",
+        )
+        .unwrap();
+        assert_eq!(config_path_in(&[preferred, old.clone()]), Some(old));
+    }
+
+    #[test]
+    fn windows_layouts_are_tried_newest_first() {
+        let root = tempfile::tempdir().unwrap();
+        let appdata = root.path().join("Roaming");
+        let local = root.path().join("Local");
+        // 利用者の環境の再現: 古い%APPDATA%にはHashiが書いた設定、Claudeが読むのはClaude-Data。
+        std::fs::create_dir_all(appdata.join("Claude")).unwrap();
+        std::fs::write(appdata.join("Claude").join(CONFIG_NAME), b"{}").unwrap();
+        std::fs::write(
+            appdata.join("Claude/.user-data-left.claude_pzs8sxrjxfjjc"),
+            b"",
+        )
+        .unwrap();
+        let data = local.join("Claude-Data/claude_pzs8sxrjxfjjc");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::create_dir_all(local.join("Claude-Data/claude_aaaaaaaaaaaaa")).unwrap();
+        std::fs::write(local.join("Claude-Data/README.txt"), b"x").unwrap();
+        let store = local.join("Packages/Claude_pzs8sxrjxfjjc/LocalCache/Roaming/Claude");
+        std::fs::create_dir_all(&store).unwrap();
+        std::fs::create_dir_all(local.join("Packages/Other_x")).unwrap();
+
+        let list = windows_candidates(Some(&appdata), Some(&local));
+        assert_eq!(
+            list,
+            vec![
+                local
+                    .join("Claude-Data/claude_aaaaaaaaaaaaa")
+                    .join(CONFIG_NAME),
+                data.join(CONFIG_NAME),
+                store.join(CONFIG_NAME),
+                appdata.join("Claude").join(CONFIG_NAME),
+            ],
+            "Claude-Data → Store版 → %APPDATA%、同じ層は名前順"
+        );
+        assert_eq!(
+            config_path_in(&list),
+            Some(
+                local
+                    .join("Claude-Data/claude_aaaaaaaaaaaaa")
+                    .join(CONFIG_NAME)
+            )
+        );
+        // Claude自身のデータ(config.json)があるフォルダを先にする。
+        std::fs::write(data.join("config.json"), b"{}").unwrap();
+        assert_eq!(
+            config_path_in(&windows_candidates(Some(&appdata), Some(&local))),
+            Some(data.join(CONFIG_NAME))
+        );
+
+        // Claude-Dataが無い(古い版)ならStore版、それも無ければ%APPDATA%。
+        std::fs::remove_dir_all(local.join("Claude-Data")).unwrap();
+        assert_eq!(
+            config_path_in(&windows_candidates(Some(&appdata), Some(&local))),
+            Some(store.join(CONFIG_NAME))
+        );
+        std::fs::remove_dir_all(local.join("Packages")).unwrap();
+        std::fs::remove_file(appdata.join("Claude/.user-data-left.claude_pzs8sxrjxfjjc")).unwrap();
+        assert_eq!(
+            config_path_in(&windows_candidates(Some(&appdata), Some(&local))),
+            Some(appdata.join("Claude").join(CONFIG_NAME))
+        );
     }
 
     #[test]
