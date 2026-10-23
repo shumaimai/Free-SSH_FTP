@@ -175,5 +175,8 @@
  "スニペットの名前を入力してください（200バイトまで）": "Enter a snippet name (up to 200 bytes)",
  "スニペットの本文が長すぎます": "The snippet body is too long",
  "変数の値が長すぎます": "The variable value is too long",
- "スニペットが見つかりません": "Snippet not found"
+ "スニペットが見つかりません": "Snippet not found",
+ "ブラウザで開けないURLです": "This URL cannot be opened in a browser.",
+ "http(s)以外のURLは開きません": "Only http(s) URLs are opened.",
+ "ブラウザの起動処理が異常終了しました": "Opening the browser failed unexpectedly."
 }

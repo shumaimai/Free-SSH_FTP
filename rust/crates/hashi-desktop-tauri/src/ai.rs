@@ -239,7 +239,7 @@ pub fn ai_open_key_page(service: String) -> Result<(), String> {
     if service.key_page.is_empty() {
         return Err("このサービスにはキーの取得ページがありません".into());
     }
-    webbrowser::open(service.key_page).map_err(|error| format!("ブラウザを開けません: {error}"))
+    crate::browser::open(service.key_page)
 }
 
 #[derive(Serialize)]

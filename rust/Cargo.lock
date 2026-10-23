@@ -2527,8 +2527,10 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
+ "url",
  "uuid",
  "webbrowser",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -71,7 +71,7 @@ pub async fn chatgpt_sign_in(registration: Option<String>) -> Result<String, Str
     blocking(move || {
         accounts()?
             .sign_in(&cancel, registration.as_deref(), &mut |url| {
-                webbrowser::open(url).is_ok()
+                crate::browser::open(url).is_ok()
             })
             .map_err(|e| e.to_string())
     })

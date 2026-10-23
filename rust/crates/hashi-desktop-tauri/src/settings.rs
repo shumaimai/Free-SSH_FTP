@@ -146,5 +146,5 @@ pub fn update_open_page(state: State<'_, AppState>) -> Result<(), String> {
         .map_err(|_| "状態が不正です")?
         .clone()
         .ok_or("新しい版はありません")?;
-    webbrowser::open(&info.url).map_err(|error| format!("ブラウザを開けません: {error}"))
+    crate::browser::open(&info.url)
 }

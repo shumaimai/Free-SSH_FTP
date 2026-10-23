@@ -29,6 +29,12 @@ anyhow = "1"
 russh-sftp = "=3.0.1"
 russh = { version = "=0.64.1", default-features = false, features = ["ring", "rsa", "flate2"] }
 rfd = "0.17"
-webbrowser = "1"
 uuid = { version = "1", features = ["v4"] }
 base64 = "0.22"
+url = "2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Com", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
+[target.'cfg(not(windows))'.dependencies]
+webbrowser = "1"
