@@ -1,14 +1,6 @@
 // 2ペインの左側: このPCのフォルダ。開いているフォルダはRust側が持ち、送る項目は名前だけで依頼する。
-import { Button, Caption1, Checkbox, Input, Menu, MenuItem, MenuList, MenuPopover, MenuTrigger, Spinner, makeStyles, mergeClasses, MessageBar, MessageBarBody, tokens } from '@fluentui/react-components';
-import {
-  ArrowSync20Regular,
-  ArrowUp20Regular,
-  ArrowUpload20Regular,
-  Document20Regular,
-  Folder20Filled,
-  FolderOpen20Regular,
-  HardDrive20Regular,
-} from '@fluentui/react-icons';
+import { Button, Caption1, Checkbox, Tooltip, Input, Menu, MenuItem, MenuList, MenuPopover, MenuTrigger, Spinner, makeStyles, mergeClasses, MessageBar, MessageBarBody, tokens } from '@fluentui/react-components';
+import { Icon } from './icons';
 import type { FileEntry } from './types';
 import { humanSize } from './FileDock';
 import { t } from './i18n';
@@ -73,8 +65,12 @@ export function LocalPane(p: Props) {
   return (
     <div className={styles.root} data-pane="local">
       <div className={styles.row}>
-        <Button size="small" icon={<ArrowUp20Regular />} aria-label={t('ローカルの親フォルダへ')} disabled={!p.parent} onClick={() => p.parent && p.onGo(p.parent)} />
-        <Button size="small" icon={<ArrowSync20Regular />} aria-label={t('ローカルを再読み込み')} onClick={p.onRefresh} />
+        <Tooltip content={t('ローカルの親フォルダへ')} relationship="label">
+          <Button size="small" icon={<Icon.parentFolder />} disabled={!p.parent} onClick={() => p.parent && p.onGo(p.parent)} />
+        </Tooltip>
+        <Tooltip content={t('ローカルを再読み込み')} relationship="label">
+          <Button size="small" icon={<Icon.refresh />} onClick={p.onRefresh} />
+        </Tooltip>
         <Input
           className={styles.grow}
           size="small"
@@ -87,7 +83,9 @@ export function LocalPane(p: Props) {
         />
         <Menu onOpenChange={(_, d) => d.open && p.onRoots()}>
           <MenuTrigger disableButtonEnhancement>
-            <Button size="small" icon={<HardDrive20Regular />} aria-label={t('ドライブ・ルート')} />
+            <Tooltip content={t('ドライブ・ルート')} relationship="label">
+              <Button size="small" icon={<Icon.drive />} />
+            </Tooltip>
           </MenuTrigger>
           <MenuPopover>
             <MenuList>
@@ -101,10 +99,10 @@ export function LocalPane(p: Props) {
         </Menu>
       </div>
       <div className={styles.wrap}>
-        <Button appearance="primary" size="small" icon={<ArrowUpload20Regular />} disabled={!p.canSend || p.selected.size === 0} onClick={p.onSend}>
+        <Button appearance="primary" size="small" icon={<Icon.upload />} disabled={!p.canSend || p.selected.size === 0} onClick={p.onSend}>
           {t('リモートへ送信')}
         </Button>
-        <Button size="small" icon={<FolderOpen20Regular />} onClick={p.onPick}>
+        <Button size="small" icon={<Icon.pickFolder />} onClick={p.onPick}>
           {t('フォルダを選ぶ')}
         </Button>
         <div className={styles.grow} />
@@ -149,7 +147,7 @@ export function LocalPane(p: Props) {
               }
             }}
           >
-            {entry.directory ? <Folder20Filled className={styles.dir} /> : <Document20Regular />}
+            {entry.directory ? <Icon.folder className={styles.dir} /> : <Icon.file />}
             <span className={mergeClasses(styles.name, entry.directory && styles.dir)} title={entry.name}>
               {entry.name}
               {entry.symlink && ' ' + t('（リンク）')}

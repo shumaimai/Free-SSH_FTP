@@ -23,9 +23,10 @@ import {
   TabList,
   Text,
   ToggleButton,
+  Tooltip,
   tokens,
 } from '@fluentui/react-components';
-import { Bot20Regular, Dismiss12Regular, DocumentEdit20Regular, FolderOpen20Regular, Key20Regular, PanelRight20Regular, PlugConnected20Filled, Wrench20Regular, Home20Regular, Settings20Regular, WindowConsole20Regular, PlugConnected20Regular } from '@fluentui/react-icons';
+import { Icon } from './icons';
 import type { Api } from './api';
 import type { OpenedDoc, UpdateInfo, ApprovalRequest, Challenge, ChallengeAnswer, Profile, SessionInfo, SessionState } from './types';
 import { emptyProfile } from './types';
@@ -367,12 +368,25 @@ export function App({ api }: { api: Api }) {
       ? tabSession
       : null;
   const activeState = tabSession ? states[tabSession] : undefined;
-  const dotColor = (tab: TabInfo) => {
+  // 接続の状態は色だけでなく形(アイコン)と名前でも示す。
+  const StateMark = ({ tab }: { tab: TabInfo }) => {
     const s = tab.sessionId ? states[tab.sessionId]?.state : undefined;
-    if (s === 'connected') return tokens.colorPaletteGreenForeground1;
-    if (s === 'error') return tokens.colorPaletteRedForeground1;
-    if (s === 'closed') return tokens.colorNeutralForeground4;
-    return tokens.colorPaletteYellowForeground1;
+    const [Mark, color, label] =
+      s === 'connected'
+        ? [Icon.stateConnected, tokens.colorPaletteGreenForeground1, t('接続済み')]
+        : s === 'error'
+          ? [Icon.stateError, tokens.colorPaletteRedForeground1, t('エラー')]
+          : s === 'closed'
+            ? [Icon.stateClosed, tokens.colorNeutralForeground4, t('切断')]
+            : [Icon.stateConnecting, tokens.colorPaletteYellowForeground1, t('接続しています')];
+    return (
+      <Mark
+        role="img"
+        aria-label={label}
+        title={label}
+        style={{ color, marginRight: 6, flexShrink: 0 }}
+      />
+    );
   };
 
   return (
@@ -385,7 +399,7 @@ export function App({ api }: { api: Api }) {
             onTabSelect={(_, d) => setActive(String(d.value))}
             size="medium"
           >
-            <Tab value="home" icon={<Home20Regular />}>
+            <Tab value="home" icon={<Icon.home />}>
               {t('ホーム')}
             </Tab>
             {tabs.map((tab) => (
@@ -394,29 +408,18 @@ export function App({ api }: { api: Api }) {
                 value={tab.key}
                 icon={
                   tab.kind === 'ssh' ? (
-                    <PlugConnected20Regular />
+                    <Icon.sshSession />
                   ) : tab.kind === 'editor' ? (
-                    <DocumentEdit20Regular />
+                    <Icon.editFile />
                   ) : tab.kind === 'aimodels' ? (
-                    <Bot20Regular />
+                    <Icon.aiModels />
                   ) : (
-                    <WindowConsole20Regular />
+                    <Icon.localTerminal />
                   )
                 }
               >
                 <span style={{ display: 'inline-flex', alignItems: 'center' }}>
-                  {tab.kind !== 'editor' && tab.kind !== 'aimodels' && (
-                    <span
-                      style={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: 4,
-                        background: dotColor(tab),
-                        marginRight: 8,
-                        display: 'inline-block',
-                      }}
-                    />
-                  )}
+                  {tab.kind !== 'editor' && tab.kind !== 'aimodels' && <StateMark tab={tab} />}
                   {tab.label}
                   {tab.dirty && <span aria-label={t('未保存')} style={{ marginLeft: 4, color: tokens.colorBrandForeground1 }}>●</span>}
                   <span
@@ -428,7 +431,7 @@ export function App({ api }: { api: Api }) {
                       closeTab(tab.key);
                     }}
                   >
-                    <Dismiss12Regular />
+                    <Icon.close />
                   </span>
                 </span>
               </Tab>
@@ -446,25 +449,25 @@ export function App({ api }: { api: Api }) {
           )}
           <Menu>
             <MenuTrigger disableButtonEnhancement>
-              <Button appearance="subtle" icon={<Wrench20Regular />}>
+              <Button appearance="subtle" icon={<Icon.tools />}>
                 {t('ツール')}
               </Button>
             </MenuTrigger>
             <MenuPopover>
               <MenuList>
-                <MenuItem icon={<FolderOpen20Regular />} onClick={() => openEditor(api.editorOpenLocal())}>
+                <MenuItem icon={<Icon.editFile />} onClick={() => openEditor(api.editorOpenLocal())}>
                   {t('この PC のファイルを開く...')}
                 </MenuItem>
-                <MenuItem icon={<Key20Regular />} onClick={() => setKeygenOpen(true)}>
+                <MenuItem icon={<Icon.sshKey />} onClick={() => setKeygenOpen(true)}>
                   {t('SSH鍵を作る...')}
                 </MenuItem>
-                <MenuItem icon={<Bot20Regular />} onClick={openAiModels}>
+                <MenuItem icon={<Icon.aiModels />} onClick={openAiModels}>
                   {t('AIモデルの管理')}
                 </MenuItem>
-                <MenuItem icon={<Bot20Regular />} onClick={() => setExternalOpen(true)}>
+                <MenuItem icon={<Icon.externalTools />} onClick={() => setExternalOpen(true)}>
                   {t('外部連携（MCP）...')}
                 </MenuItem>
-                <MenuItem icon={<PlugConnected20Filled />} onClick={() => setForwardOpen(true)}>
+                <MenuItem icon={<Icon.portForward />} onClick={() => setForwardOpen(true)}>
                   {t('ポート転送...')}
                 </MenuItem>
               </MenuList>
@@ -473,18 +476,15 @@ export function App({ api }: { api: Api }) {
           <ToggleButton
             appearance="subtle"
             checked={dockOpen}
-            icon={<PanelRight20Regular />}
+            icon={<Icon.dockPanel />}
             aria-label={t('ファイル・AIパネル')}
             onClick={() => setDockOpen((open) => !open)}
           >
             {t('ファイル・AI')}
           </ToggleButton>
-          <Button
-            appearance="subtle"
-            aria-label={t('外観の設定')}
-            icon={<Settings20Regular />}
-            onClick={() => setSettingsOpen(true)}
-          />
+          <Tooltip content={t('外観の設定')} relationship="label">
+            <Button appearance="subtle" icon={<Icon.settings />} onClick={() => setSettingsOpen(true)} />
+          </Tooltip>
         </div>
         <div className={styles.work}>
         <div className={styles.main}>

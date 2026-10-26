@@ -20,7 +20,7 @@ import {
   Tooltip,
   tokens,
 } from '@fluentui/react-components';
-import { Attach20Regular, Bot20Regular, ChatAdd20Regular, Dismiss12Regular, Send20Filled, Stop20Regular } from '@fluentui/react-icons';
+import { Icon } from './icons';
 import type { Api } from './api';
 import type { AiAttachment, AiModelsList, AiStatus, ShareMode } from './types';
 import { N_, t } from './i18n';
@@ -350,12 +350,12 @@ export function AiDock({ api, targets, onManage }: Props) {
           ))}
         </Select>
         <Tooltip content={t('AIモデルの管理')} relationship="label">
-          <Button appearance="subtle" icon={<Bot20Regular />} onClick={onManage} />
+          <Button appearance="subtle" icon={<Icon.aiModels />} onClick={onManage} />
         </Tooltip>
         <Tooltip content={t('新しい会話')} relationship="label">
           <Button
             appearance="subtle"
-            icon={<ChatAdd20Regular />}
+            icon={<Icon.newChat />}
             disabled={running || !status.connected}
             onClick={() => void api.aiClear().then(() => setMessages([]))}
           />
@@ -452,7 +452,7 @@ export function AiDock({ api, targets, onManage }: Props) {
                 size="small"
                 appearance="transparent"
                 aria-label={t('{name}を外す', { name: f.name })}
-                icon={<Dismiss12Regular />}
+                icon={<Icon.close />}
                 onClick={() => setFiles((old) => old.filter((_, j) => j !== i))}
               />
             </span>
@@ -473,7 +473,7 @@ export function AiDock({ api, targets, onManage }: Props) {
         <Tooltip content={t('ファイルを添付(画像・テキスト。Ctrl+Vで貼り付けも可)')} relationship="label">
           <Button
             appearance="subtle"
-            icon={<Attach20Regular />}
+            icon={<Icon.attach />}
             disabled={running || files.length >= MAX_FILES}
             onClick={() => fileInput.current?.click()}
           />
@@ -502,11 +502,11 @@ export function AiDock({ api, targets, onManage }: Props) {
         />
         {running ? (
           <Tooltip content={t('停止')} relationship="label">
-            <Button appearance="outline" icon={<Stop20Regular />} onClick={stop} />
+            <Button appearance="outline" icon={<Icon.stop />} onClick={stop} />
           </Tooltip>
         ) : (
           <Tooltip content={t('送信')} relationship="label">
-            <Button appearance="primary" icon={<Send20Filled />} disabled={!question.trim() && files.length === 0} onClick={() => void send()} />
+            <Button appearance="primary" icon={<Icon.send />} disabled={!question.trim() && files.length === 0} onClick={() => void send()} />
           </Tooltip>
         )}
       </div>

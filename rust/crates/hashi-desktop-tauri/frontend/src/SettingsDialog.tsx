@@ -23,7 +23,7 @@ import {
   Slider,
   tokens,
 } from '@fluentui/react-components';
-import { Checkmark16Filled } from '@fluentui/react-icons';
+import { Icon } from './icons';
 import type { Api } from './api';
 import { setLanguage, t, useLanguage, type LangSetting } from './i18n';
 import type { AppSettings } from './types';
@@ -180,7 +180,7 @@ export function SettingsDialog({ api, open, value, dark, onChange, onClose }: Pr
                     style={{ backgroundColor: a.color }}
                     onClick={() => set('accent', a.id)}
                   >
-                    {value.accent === a.id && <Checkmark16Filled />}
+                    {value.accent === a.id && <Icon.selectedSmall />}
                   </button>
                 ))}
               </div>

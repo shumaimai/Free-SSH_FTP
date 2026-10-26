@@ -684,6 +684,9 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
   (比較は `rustHas(error, '原文の一部')`。表示は訳されるため)。Rust側の日本語リテラルを足したら台帳へ足す(CI の `tools/rust_messages.py check` が止める)。
   AIへ送る指示文・ツール説明・保存形式の識別子は訳さない(`null`)。既知の限界: Rust から直接出るOSのネイティブ窓(終了時の警告)は日本語のまま、
   タブ名・表示中の通知は作った時点の言語で固定、AIの返答の言語はモデル任せ。画面での英語表示は実機(Tauri)では未確認(ブラウザのモックと型検査まで)。
+- アイコン: 画面のアイコンは`frontend/src/icons.tsx`の`Icon`だけから使う(`scripts/check-icons.mjs`がbuildで止める)。1つの機能に1つのアイコン、
+  塗り(Filled)は選択中・有効の状態だけ、大きさは20pxにそろえる。アイコンだけのボタンにはTooltipで名前を付け、状態は色だけで示さない(ISO/IEC 11581-1の一般原則。JIS X 9303-1の本文は未確認)。
+  アプリのアイコン(`icons/`)は`tools/make_app_icon.py`で大きさごとに描き分けて作る(縮小で作らない)。旧Python版の`assets/hashi.*`は別物。
 - コード署名（SignPath）: 署名するのは`Hashi.exe`と`HashiMCP-RustPreview.exe`だけ。どちらも製品名`Hashi`・版を埋め込む
   （ヘルパーは`hashi-mcp/build.rs`）。`.signpath/artifact-configuration.xml`はSignPath画面へ貼る控え。署名後は
   `Get-AuthenticodeSignature`で確かめてから差し替える。

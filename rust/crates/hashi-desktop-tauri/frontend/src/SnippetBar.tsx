@@ -24,7 +24,7 @@ import {
   Textarea,
   tokens,
 } from '@fluentui/react-components';
-import { Add20Regular, Code20Regular, Delete20Regular, Edit20Regular } from '@fluentui/react-icons';
+import { Icon } from './icons';
 import { t } from './i18n';
 import type { Api } from './api';
 import type { Snippet } from './types';
@@ -91,7 +91,7 @@ export function SnippetBar({ api, sessionId, onError }: Props) {
     <div className={styles.bar}>
       <Menu onOpenChange={(_, d) => d.open && void reload()}>
         <MenuTrigger disableButtonEnhancement>
-          <Button size="small" appearance="subtle" icon={<Code20Regular />} disabled={!sessionId}>
+          <Button size="small" appearance="subtle" icon={<Icon.snippets />} disabled={!sessionId}>
             {t('スニペット')}
           </Button>
         </MenuTrigger>
@@ -105,7 +105,7 @@ export function SnippetBar({ api, sessionId, onError }: Props) {
             ))}
             {list.length === 0 && !loadError && <MenuItem disabled>{t('スニペットはまだありません')}</MenuItem>}
             <MenuDivider />
-            <MenuItem icon={<Edit20Regular />} onClick={() => setManaging(true)}>
+            <MenuItem icon={<Icon.edit />} onClick={() => setManaging(true)}>
               {t('管理...')}
             </MenuItem>
           </MenuList>
@@ -209,7 +209,7 @@ function SnippetManager({
                   </Button>
                 ))}
                 <Button
-                  icon={<Add20Regular />}
+                  icon={<Icon.add />}
                   disabled={loadError !== null}
                   onClick={() => {
                     setDraft((old) => [...old, { name: t('新しいスニペット'), body: '', send_enter: true }]);
@@ -238,7 +238,7 @@ function SnippetManager({
                     label={t('送ったあとにEnterを押す')}
                   />
                   <Button
-                    icon={<Delete20Regular />}
+                    icon={<Icon.remove />}
                     appearance="subtle"
                     style={{ alignSelf: 'flex-start', color: tokens.colorPaletteRedForeground1 }}
                     onClick={() => {

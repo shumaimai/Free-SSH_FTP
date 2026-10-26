@@ -11,8 +11,9 @@ import {
   SearchBox,
   Subtitle1,
   Title2,
+  Tooltip,
 } from '@fluentui/react-components';
-import { Add24Regular, ArrowImport20Regular, DocumentEdit20Regular, Settings20Regular, Window24Regular } from '@fluentui/react-icons';
+import { Icon } from './icons';
 import { N_, t } from './i18n';
 import type { Profile } from './types';
 
@@ -66,16 +67,16 @@ export function Home({ profiles, disabled, onConnect, onEdit, onNew, onLocal, on
           onChange={(_, d) => setQuery(d.value)}
           style={{ width: 240 }}
         />
-        <Button appearance="primary" icon={<Add24Regular />} disabled={disabled} onClick={onNew}>
+        <Button appearance="primary" icon={<Icon.add />} disabled={disabled} onClick={onNew}>
           {t('新しい接続')}
         </Button>
       </div>
       <div className={styles.quick}>
         <Caption1>{t('すぐ使う')}</Caption1>
-        <Button icon={<Window24Regular />} onClick={onLocal}>
+        <Button icon={<Icon.localTerminal />} onClick={onLocal}>
           {t('ローカル端末')}
         </Button>
-        <Button icon={<ArrowImport20Regular />} disabled={disabled} onClick={onImport}>
+        <Button icon={<Icon.importOld />} disabled={disabled} onClick={onImport}>
           {t('旧版から取り込む')}
         </Button>
       </div>
@@ -110,15 +111,16 @@ export function Home({ profiles, disabled, onConnect, onEdit, onNew, onLocal, on
                     </Caption1>
                   }
                   action={
-                    <Button
-                      appearance="subtle"
-                      aria-label={t('編集')}
-                      icon={<DocumentEdit20Regular />}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onEdit(index);
-                      }}
-                    />
+                    <Tooltip content={t('編集')} relationship="label">
+                      <Button
+                        appearance="subtle"
+                        icon={<Icon.edit />}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onEdit(index);
+                        }}
+                      />
+                    </Tooltip>
                   }
                 />
                 <div className={styles.meta}>
@@ -126,7 +128,7 @@ export function Home({ profiles, disabled, onConnect, onEdit, onNew, onLocal, on
                     {t(AUTH_LABEL[p.auth_method])}
                   </Badge>
                   {p.proxy_jump && (
-                    <Badge appearance="tint" color="warning" icon={<Settings20Regular />}>
+                    <Badge appearance="tint" color="warning" icon={<Icon.jumpHost />}>
                       {t('踏み台')}
                     </Badge>
                   )}
