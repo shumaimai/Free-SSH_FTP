@@ -24,7 +24,7 @@ import {
   Title2,
   tokens,
 } from '@fluentui/react-components';
-import { Add20Regular, Checkmark20Regular } from '@fluentui/react-icons';
+import { Icon } from './icons';
 import type { Api } from './api';
 import {
   emptyAiModel,
@@ -327,7 +327,7 @@ export function AiModelsPage({ api }: Props) {
       </div>
       <div className={styles.body}>
         <div className={styles.list}>
-          <Button appearance="primary" icon={<Add20Regular />} onClick={() => select('new')}>
+          <Button appearance="primary" icon={<Icon.add />} onClick={() => select('new')}>
             {t('AIモデルを追加')}
           </Button>
           {entries.map((e) => (
@@ -340,7 +340,7 @@ export function AiModelsPage({ api }: Props) {
               <Text weight="semibold">{e.label}</Text>
               <div className={styles.itemRow}>
                 {list?.active === e.id && (
-                  <Badge appearance="filled" color="brand" icon={<Checkmark20Regular />}>
+                  <Badge appearance="filled" color="brand" icon={<Icon.selected />}>
                     {t('使用中')}
                   </Badge>
                 )}

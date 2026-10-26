@@ -31,24 +31,11 @@ import {
   RadioGroup,
   SearchBox,
   Spinner,
+  ToggleButton,
+  Tooltip,
   tokens,
 } from '@fluentui/react-components';
-import {
-  ArrowDownload20Regular,
-  ArrowSync20Regular,
-  ArrowUp20Regular,
-  ArrowUpload20Regular,
-  Delete20Regular,
-  Document20Regular,
-  Edit20Regular,
-  Dismiss16Regular,
-  Folder20Filled,
-  FolderArrowUp20Regular,
-  Options20Regular,
-  PanelLeft20Regular,
-  ShieldKeyhole20Regular,
-  Star20Regular,
-} from '@fluentui/react-icons';
+import { Icon } from './icons';
 import type { Api } from './api';
 import { PermissionDialog } from './PermissionDialog';
 import { LocalPane } from './LocalPane';
@@ -440,14 +427,12 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
   const remotePane = (
     <div className={styles.root} data-pane="remote" ref={remoteBox}>
       <div className={styles.row}>
-        <Button
-          size="small"
-          icon={<ArrowUp20Regular />}
-          aria-label={t('親フォルダへ')}
-          disabled={!path || path === '/'}
-          onClick={() => void load(parentOf(path))}
-        />
-        <Button size="small" icon={<ArrowSync20Regular />} aria-label={t('再読み込み')} onClick={() => void load(path)} />
+        <Tooltip content={t('親フォルダへ')} relationship="label">
+          <Button size="small" icon={<Icon.parentFolder />} disabled={!path || path === '/'} onClick={() => void load(parentOf(path))} />
+        </Tooltip>
+        <Tooltip content={t('再読み込み')} relationship="label">
+          <Button size="small" icon={<Icon.refresh />} onClick={() => void load(path)} />
+        </Tooltip>
         <Input
           className={styles.grow}
           size="small"
@@ -460,7 +445,9 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
         />
         <Menu>
           <MenuTrigger disableButtonEnhancement>
-            <Button size="small" icon={<Star20Regular />} aria-label={t('ブックマーク')} />
+            <Tooltip content={t('ブックマーク')} relationship="label">
+              <Button size="small" icon={<Icon.bookmark />} />
+            </Tooltip>
           </MenuTrigger>
           <MenuPopover>
             <MenuList>
@@ -483,7 +470,7 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
         <Button
           appearance="primary"
           size="small"
-          icon={<ArrowDownload20Regular />}
+          icon={<Icon.download />}
           disabled={!current}
           onClick={() =>
             current &&
@@ -498,7 +485,7 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
         </Button>
         <Button
           size="small"
-          icon={<Edit20Regular />}
+          icon={<Icon.editFile />}
           disabled={!current || current.directory}
           onClick={() => current && onEdit(sessionId, current.path)}
         >
@@ -506,7 +493,7 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
         </Button>
         <Button
           size="small"
-          icon={<ArrowUpload20Regular />}
+          icon={<Icon.upload />}
           disabled={!path}
           onClick={() => void run(api.filesUploadPick(sessionId, path, false, policy, mode))}
         >
@@ -514,7 +501,7 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
         </Button>
         <Button
           size="small"
-          icon={<FolderArrowUp20Regular />}
+          icon={<Icon.uploadFolder />}
           disabled={!path}
           onClick={() => void run(api.filesUploadPick(sessionId, path, true, policy, mode))}
         >
@@ -523,7 +510,7 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
         <Button
           size="small"
           appearance="subtle"
-          icon={<Delete20Regular />}
+          icon={<Icon.remove />}
           style={{ color: tokens.colorPaletteRedForeground1 }}
           disabled={!current}
           onClick={() => {
@@ -534,21 +521,15 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
           {t('削除')}
         </Button>
         <div className={styles.grow} />
-        <Button
-          size="small"
-          appearance={twoPane ? 'primary' : 'subtle'}
-          icon={<PanelLeft20Regular />}
-          aria-pressed={twoPane}
-          onClick={() => onTwoPane(!twoPane)}
-        >
+        <ToggleButton size="small" appearance="subtle" checked={twoPane} icon={<Icon.twoPane />} onClick={() => onTwoPane(!twoPane)}>
           {t('2ペイン')}
-        </Button>
-        <Button size="small" appearance="subtle" icon={<ShieldKeyhole20Regular />} onClick={() => setPermOpen(true)}>
+        </ToggleButton>
+        <Button size="small" appearance="subtle" icon={<Icon.permission />} onClick={() => setPermOpen(true)}>
           {t('権限補助')}
         </Button>
         <Popover positioning="below-end">
           <PopoverTrigger disableButtonEnhancement>
-            <Button size="small" appearance="subtle" icon={<Options20Regular />}>
+            <Button size="small" appearance="subtle" icon={<Icon.transferOptions />}>
               {t('転送の設定')}
             </Button>
           </PopoverTrigger>
@@ -603,7 +584,7 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
         <MessageBar intent="info">
           <MessageBarBody>
             {t('「{query}」の検索結果 {n}件', { query: searching, n: entries.length })}
-            <Button size="small" appearance="transparent" icon={<Dismiss16Regular />} onClick={() => void load(path)}>
+            <Button size="small" appearance="transparent" icon={<Icon.closeMessage />} onClick={() => void load(path)}>
               {t('閉じる')}
             </Button>
           </MessageBarBody>
@@ -644,7 +625,7 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
               }
             }}
           >
-            {entry.directory ? <Folder20Filled className={styles.dir} /> : <Document20Regular />}
+            {entry.directory ? <Icon.folder className={styles.dir} /> : <Icon.file />}
             <span className={mergeClasses(styles.name, entry.directory && styles.dir)} title={entry.name}>
               {entry.name}
               {entry.symlink && ' ' + t('（リンク）')}

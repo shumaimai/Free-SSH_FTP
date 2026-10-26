@@ -2,7 +2,7 @@
 // 保存先のパスや外部変更の照合はRust側が持つ。ここは表示と編集内容を渡すだけ。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Caption1, MessageBar, MessageBarBody, makeStyles, tokens } from '@fluentui/react-components';
-import { Save20Regular, SaveEdit20Regular } from '@fluentui/react-icons';
+import { Icon } from './icons';
 import { EditorState, Compartment, type Extension, type Text } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { basicSetup } from 'codemirror';
@@ -122,10 +122,10 @@ function Bar({
   const styles = useStyles();
   return (
     <div className={styles.bar}>
-      <Button appearance="primary" size="small" icon={<Save20Regular />} disabled={busy || !dirty} onClick={save}>
+      <Button appearance="primary" size="small" icon={<Icon.save />} disabled={busy || !dirty} onClick={save}>
         {t('保存')}
       </Button>
-      <Button size="small" icon={<SaveEdit20Regular />} disabled={busy} onClick={saveAs}>
+      <Button size="small" icon={<Icon.saveAs />} disabled={busy} onClick={saveAs}>
         {t('名前を付けて保存...')}
       </Button>
       <Caption1 className={styles.path} title={path}>
