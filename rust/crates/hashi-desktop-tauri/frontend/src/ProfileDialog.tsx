@@ -27,7 +27,7 @@ import type { Profile } from './types';
 
 const useStyles = makeStyles({
   form: { display: 'flex', flexDirection: 'column', gap: '12px' },
-  row: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 120px', gap: '12px', '> *': { minWidth: 0 } },
+  row: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 120px', gap: '12px', alignItems: 'start', '> *': { minWidth: 0 } },
   actions: { whiteSpace: 'nowrap', minWidth: 'auto' },
   keyRow: { display: 'flex', gap: '8px' },
   grow: { flex: 1 },
@@ -45,18 +45,32 @@ interface Props {
   /** この接続先に保存されている秘密の種類（値は持たない）。 */
   savedSecrets: string[];
   onForgetSecrets(): Promise<void>;
+  /** この接続先だけを選んだ状態で書き出し画面を開く。 */
+  onExport(): void;
 }
 
-export function ProfileDialog({ open, initial, existing, error, onSave, onDelete, onClose, onPickKey, savedSecrets, onForgetSecrets }: Props) {
+/** ポート欄の文字列を番号にする。空・範囲外・数字以外は null。 */
+export function parsePort(text: string): number | null {
+  if (!/^\d{1,5}$/.test(text.trim())) return null;
+  const n = Number(text.trim());
+  return n >= 1 && n <= 65535 ? n : null;
+}
+
+export function ProfileDialog({ open, initial, existing, error, onSave, onDelete, onClose, onPickKey, savedSecrets, onForgetSecrets, onExport }: Props) {
   const styles = useStyles();
   const [p, setP] = useState<Profile>(initial);
   const [armed, setArmed] = useState(false);
+  // ポートは入力中の文字列のまま持つ（空にして打ち直せるように）。保存するときに番号へ変える。
+  const [portText, setPortText] = useState(String(initial.port));
   useEffect(() => {
     setP(initial);
+    setPortText(String(initial.port));
     setArmed(false);
   }, [initial, open]);
   const set = <K extends keyof Profile>(key: K, value: Profile[K]) => setP((old) => ({ ...old, [key]: value }));
-  const ready = p.host.trim() !== '' && p.username.trim() !== '';
+  const port = parsePort(portText);
+  const ready = p.host.trim() !== '' && p.username.trim() !== '' && port !== null;
+  const save = (connect: boolean) => port !== null && onSave({ ...p, port }, connect);
   return (
     <Dialog open={open} onOpenChange={(_, d) => !d.open && onClose()}>
       <DialogSurface aria-describedby={undefined} style={{ maxWidth: 560 }}>
@@ -74,12 +88,19 @@ export function ProfileDialog({ open, initial, existing, error, onSave, onDelete
               <Field label={t('ホスト')} required>
                 <Input value={p.host} placeholder="example.com" onChange={(_, d) => set('host', d.value)} />
               </Field>
-              <Field label={t('ポート')}>
+              <Field
+                label={t('ポート')}
+                validationState={port === null ? 'error' : 'none'}
+                validationMessage={port === null ? t('1〜65535') : undefined}
+              >
                 <Input
-                  type="number"
+                  inputMode="numeric"
                   style={{ width: '100%', minWidth: 0 }}
-                  value={String(p.port)}
-                  onChange={(_, d) => set('port', Math.min(65535, Math.max(1, Number(d.value) || 22)))}
+                  value={portText}
+                  placeholder="22"
+                  maxLength={5}
+                  onChange={(_, d) => setPortText(d.value.replace(/[^0-9]/g, ''))}
+                  onBlur={() => portText.trim() === '' && setPortText('22')}
                 />
               </Field>
             </div>
@@ -116,8 +137,19 @@ export function ProfileDialog({ open, initial, existing, error, onSave, onDelete
             )}
             {p.auth_method === 'password' && (
               <Caption1>
-                {savedSecrets.includes('password') ? t('保存済みのパスワードを使います。拒否されたときは入力を求めます。') : t('パスワードは接続するときに入力します。')}
+                {savedSecrets.includes('password')
+                  ? t('保存済みのパスワードを使います。拒否されたときは入力を求めます。')
+                  : p.save_secrets
+                    ? t('パスワードは最初に接続するときに入力します。接続できたら保存して、次からは自動で使います。')
+                    : t('パスワードは接続するときに入力します。')}
               </Caption1>
+            )}
+            {p.auth_method !== 'agent' && (
+              <Checkbox
+                checked={p.save_secrets}
+                onChange={(_, d) => set('save_secrets', d.checked === true)}
+                label={t('入力したパスワード・パスフレーズを保存する（Windows資格情報マネージャ／暗号化ファイル）')}
+              />
             )}
             {existing && savedSecrets.length > 0 && (
               <div className={styles.keyRow}>
@@ -168,19 +200,24 @@ export function ProfileDialog({ open, initial, existing, error, onSave, onDelete
             {existing && (
               <Button
                 appearance="subtle"
-                style={{ marginRight: 'auto', color: tokens.colorPaletteRedForeground1 }}
+                style={{ color: tokens.colorPaletteRedForeground1 }}
                 onClick={() => (armed ? onDelete() : setArmed(true))}
               >
                 {armed ? t('もう一度押すと削除') : t('削除')}
               </Button>
             )}
+            {existing && (
+              <Button appearance="subtle" style={{ marginRight: 'auto' }} onClick={onExport}>
+                {t('書き出す…')}
+              </Button>
+            )}
             <Button className={styles.actions} onClick={onClose}>
               {t('キャンセル')}
             </Button>
-            <Button className={styles.actions} disabled={!ready} onClick={() => onSave(p, false)}>
+            <Button className={styles.actions} disabled={!ready} onClick={() => save(false)}>
               {t('保存')}
             </Button>
-            <Button className={styles.actions} appearance="primary" disabled={!ready} onClick={() => onSave(p, true)}>
+            <Button className={styles.actions} appearance="primary" disabled={!ready} onClick={() => save(true)}>
               {t('保存して接続')}
             </Button>
           </DialogActions>

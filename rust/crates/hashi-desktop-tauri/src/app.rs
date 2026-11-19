@@ -160,18 +160,30 @@ pub fn profile_save(
     index: Option<usize>,
     profile: Profile,
 ) -> Result<Vec<Profile>, String> {
-    state.update_profiles(|profiles| {
+    let mut edited: Option<(Profile, Profile, bool)> = None;
+    let updated = state.update_profiles(|profiles| {
         profile.validate()?;
         if profile.host.trim().is_empty() || profile.username.trim().is_empty() {
             return Err(std::io::Error::other("ホストと利用者名を入力してください"));
         }
         match index {
-            Some(index) if index < profiles.len() => profiles[index] = profile,
+            Some(index) if index < profiles.len() => {
+                let old = std::mem::replace(&mut profiles[index], profile.clone());
+                let still_used = profiles.iter().any(|p| p.id() == old.id());
+                edited = Some((old, profile, still_used));
+            }
             Some(_) => return Err(std::io::Error::other("接続設定がありません")),
             None => profiles.push(profile),
         }
         Ok(())
-    })
+    })?;
+    // 接続設定の保存が済んでから、保存済みの秘密を追随させる。失敗しても設定は保存済み。
+    if let Some((old, new, still_used)) = edited {
+        if let Err(error) = crate::import::follow_profile_edit(&old, &new, still_used) {
+            eprintln!("保存済みの秘密を移せませんでした: {error}");
+        }
+    }
+    Ok(updated)
 }
 
 #[tauri::command]

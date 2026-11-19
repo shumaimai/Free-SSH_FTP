@@ -2,6 +2,7 @@
 import { RustMessage, tr } from './i18n';
 import type { Appearance } from './appearance';
 import type {
+  ExportResult,
   AppSettings,
   UpdateInfo,
   ForwardInfo,
@@ -145,6 +146,8 @@ export interface Api {
   importApply(options: ImportOptions): Promise<[ImportResult, Profile[]]>;
   secretsStatus(index: number): Promise<SecretsStatus>;
   secretsForget(index: number): Promise<void>;
+  /** 選んだ接続先を書き出す。保存先はOSのファイル選択。passphraseがあれば保存済みの秘密を暗号化して含める。 */
+  exportBundle(indices: number[], passphrase: string | null): Promise<ExportResult | null>;
   keygenDefaults(): Promise<KeygenDefaults>;
   keygenPathExists(path: string): Promise<boolean>;
   keygenPickPath(): Promise<string | null>;
@@ -294,6 +297,7 @@ async function tauriApi(): Promise<Api> {
     importApply: (options) => invoke('import_apply', { options }),
     secretsStatus: (index) => invoke('secrets_status', { index }),
     secretsForget: (index) => invoke('secrets_forget', { index }),
+    exportBundle: (indices, passphrase) => invoke('export_bundle', { indices, passphrase }),
     keygenDefaults: () => invoke('keygen_defaults'),
     keygenPathExists: (path) => invoke('keygen_path_exists', { path }),
     keygenPickPath: () => invoke('keygen_pick_path'),

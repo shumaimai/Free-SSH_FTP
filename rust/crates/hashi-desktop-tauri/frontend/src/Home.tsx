@@ -12,7 +12,7 @@ import {
   Subtitle1,
   Title2,
 } from '@fluentui/react-components';
-import { Add24Regular, ArrowImport20Regular, DocumentEdit20Regular, Settings20Regular, Window24Regular } from '@fluentui/react-icons';
+import { Add24Regular, ArrowExport20Regular, ArrowImport20Regular, DocumentEdit20Regular, Settings20Regular, Window24Regular } from '@fluentui/react-icons';
 import { N_, t } from './i18n';
 import type { Profile } from './types';
 
@@ -49,9 +49,10 @@ interface Props {
   onNew(): void;
   onLocal(): void;
   onImport(): void;
+  onExport(): void;
 }
 
-export function Home({ profiles, disabled, onConnect, onEdit, onNew, onLocal, onImport }: Props) {
+export function Home({ profiles, disabled, onConnect, onEdit, onNew, onLocal, onImport, onExport }: Props) {
   const styles = useStyles();
   const [query, setQuery] = useState('');
   const shown = useMemo(() => matching(profiles, query), [profiles, query]);
@@ -76,14 +77,17 @@ export function Home({ profiles, disabled, onConnect, onEdit, onNew, onLocal, on
           {t('ローカル端末')}
         </Button>
         <Button icon={<ArrowImport20Regular />} disabled={disabled} onClick={onImport}>
-          {t('旧版から取り込む')}
+          {t('取り込む')}
+        </Button>
+        <Button icon={<ArrowExport20Regular />} disabled={profiles.length === 0} onClick={onExport}>
+          {t('書き出す')}
         </Button>
       </div>
       {profiles.length === 0 ? (
         <Card className={styles.empty}>
           <Subtitle1>{t('まだ接続先がありません')}</Subtitle1>
           <Body1>
-            {t('ホスト名と利用者名を入れるだけで登録できます。パスワードや秘密鍵は接続するときに入力します。旧版（Python）をお使いだった場合は、「旧版から取り込む」で接続先や保存済みのパスワードを引き継げます。')}
+            {t('ホスト名と利用者名を入れるだけで登録できます。パスワードやパスフレーズは最初に接続するときに入力すると保存され、次からは自動で使います。書き出したファイルや旧版（Python）の接続先は「取り込む」で引き継げます。')}
           </Body1>
         </Card>
       ) : shown.length === 0 ? (

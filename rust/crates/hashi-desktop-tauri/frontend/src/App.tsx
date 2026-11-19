@@ -41,6 +41,7 @@ import { SnippetBar } from './SnippetBar';
 import { EditorPane } from './EditorView';
 import { KeygenDialog } from './KeygenDialog';
 import { ImportDialog } from './ImportDialog';
+import { ExportDialog } from './ExportDialog';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ForwardDialog } from './ForwardDialog';
 import { ExternalDialog } from './ExternalDialog';
@@ -52,7 +53,7 @@ import { DEFAULT_APPEARANCE, UI_FONTS, fluentTheme, sanitize, type Appearance } 
 /** ファイル/AIパネルの既定幅と下限、端末側に残す最低幅(px)。 */
 const DOCK_WIDTH = 420;
 const DUAL_WIDTH = 980;
-const MIN_DOCK = 280;
+const MIN_DOCK = 200;
 const MIN_MAIN = 360;
 
 const useStyles = makeStyles({
@@ -145,6 +146,8 @@ export function App({ api }: { api: Api }) {
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [keygenOpen, setKeygenOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  /** 書き出し画面で最初から選んでおく接続先。null なら閉じている。 */
+  const [exportInitial, setExportInitial] = useState<number[] | null>(null);
   const [savedSecrets, setSavedSecrets] = useState<string[]>([]);
   const [forwardOpen, setForwardOpen] = useState(false);
   const [externalOpen, setExternalOpen] = useState(false);
@@ -157,6 +160,7 @@ export function App({ api }: { api: Api }) {
   const [dualWidth, setDualWidth] = useState(DUAL_WIDTH);
   const [paneRatio, setPaneRatio] = useState(0.5);
   const dragStart = useRef(0);
+  const dockRef = useRef<HTMLElement>(null);
   // 保存済みの小さな表示設定を読み込み終えるまでは、書き戻さない。
   const [prefsLoaded, setPrefsLoaded] = useState(false);
   const [filesState, setFilesState] = useState<Record<string, { available: boolean; message: string }>>({});
@@ -520,6 +524,7 @@ export function App({ api }: { api: Api }) {
               onNew={() => setDialog({ index: null, profile: emptyProfile(), error: null })}
               onLocal={() => openTab({ kind: 'local', label: 'CMD' })}
               onImport={() => setImportOpen(true)}
+              onExport={() => setExportInitial([])}
             />
           </div>
           {tabs.map((tab) => (
@@ -599,7 +604,8 @@ export function App({ api }: { api: Api }) {
           <Grip
             label={t('パネルの幅')}
             onBegin={() => {
-              dragStart.current = wide ? dualWidth : dockWidth;
+              // 保存値が画面の上限を超えていても、見えている幅から動かす（縮めても動かない区間を作らない）。
+              dragStart.current = dockRef.current?.getBoundingClientRect().width ?? (wide ? dualWidth : dockWidth);
             }}
             onMove={(dx) => {
               // 右へ動かすとパネルが狭くなる。端末側に最低限の幅を残す。
@@ -612,6 +618,7 @@ export function App({ api }: { api: Api }) {
         )}
         {dockOpen && (
           <aside
+            ref={dockRef}
             className={styles.dock}
             style={{ width: wide ? dualWidth : dockWidth, maxWidth: `calc(100vw - ${MIN_MAIN}px)` }}
           >
@@ -674,6 +681,11 @@ export function App({ api }: { api: Api }) {
         }}
         onClose={() => setDialog(null)}
         onPickKey={() => api.pickKeyFile()}
+        onExport={() => {
+          if (dialog?.index === null || dialog?.index === undefined) return;
+          setExportInitial([dialog.index]);
+          setDialog(null);
+        }}
         savedSecrets={savedSecrets}
         onForgetSecrets={async () => {
           if (dialog?.index === null || dialog?.index === undefined) return;
@@ -685,6 +697,14 @@ export function App({ api }: { api: Api }) {
             setDialog({ ...dialog, error: String(error) });
           }
         }}
+      />
+      <ExportDialog
+        api={api}
+        open={exportInitial !== null}
+        profiles={profiles}
+        initial={exportInitial ?? []}
+        onClose={() => setExportInitial(null)}
+        onDone={setNotice}
       />
       <ImportDialog
         api={api}
@@ -760,7 +780,17 @@ export function App({ api }: { api: Api }) {
           </DialogBody>
         </DialogSurface>
       </Dialog>
-      <ChallengeDialog challenge={challenges[0] ?? null} error={challengeError} onAnswer={(a) => void answer(a)} />
+      <ChallengeDialog
+        challenge={challenges[0] ?? null}
+        error={challengeError}
+        onAnswer={(a) => void answer(a)}
+        willSave={(() => {
+          const id = challenges[0]?.scope.stamp.terminal_id;
+          const tab = tabs.find((x) => x.kind === 'ssh' && x.sessionId === id);
+          const profile = tab?.index !== undefined ? profiles[tab.index] : undefined;
+          return profile ? profile.save_secrets : null;
+        })()}
+      />
     </FluentProvider>
   );
 }

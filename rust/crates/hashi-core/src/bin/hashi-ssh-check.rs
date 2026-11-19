@@ -24,6 +24,80 @@ struct Request {
     expected_agent_key: Option<String>,
     #[serde(default)]
     compat_only: bool,
+    /// 秘密鍵のパスフレーズ。指定すると「入力した秘密を認証成功後に保存し、次回は入力なしで使う」だけを確認する。
+    #[serde(default)]
+    secret_store_passphrase: Option<String>,
+}
+
+/// 保存の呼び出しを記録するだけの保存先。
+#[derive(Default)]
+struct Recorder(std::sync::Mutex<Vec<(String, String)>>);
+impl hashi_core::ssh::SavedSecrets for Recorder {
+    fn get(&self, _: &str, _: u16, _: &str, kind: &str) -> Option<String> {
+        let saved = self.0.lock().unwrap();
+        saved
+            .iter()
+            .rev()
+            .find(|(k, _)| k == kind)
+            .map(|(_, v)| v.clone())
+    }
+    fn store(&self, kind: &str, value: &str) {
+        self.0.lock().unwrap().push((kind.into(), value.into()));
+    }
+}
+
+/// 1回目は入力したパスフレーズで接続して保存されること、2回目は入力を求めずに接続できることを確かめる。
+async fn verify_secret_store(req: &Request, known: KnownHosts, passphrase: &str) -> Result<()> {
+    use hashi_core::interaction::{Challenge, Reply};
+    let recorder = Arc::new(Recorder::default());
+    // 違うパスフレーズが保存されていても、入力した正しい値で上書きされること。
+    hashi_core::ssh::SavedSecrets::store(recorder.as_ref(), "passphrase", "wrong-saved");
+    for round in 0..2 {
+        let (interaction, mut requests) = Interaction::new();
+        let answering = interaction.clone();
+        let answer = passphrase.to_owned();
+        let prompts = tokio::spawn(async move {
+            let mut count = 0usize;
+            while let Some(request) = requests.recv().await {
+                let reply = match request.challenge {
+                    Challenge::Secret { .. } => {
+                        count += 1;
+                        Reply::Secret(answer.clone())
+                    }
+                    Challenge::HostKey { .. } => Reply::Cancel,
+                };
+                let _ = answering.reply(&request.challenge_id, &request.scope, reply);
+            }
+            count
+        });
+        let saved: Arc<dyn hashi_core::ssh::SavedSecrets> = recorder.clone();
+        let session = SshSession::connect_with_config(
+            &req.profile,
+            Stamp::default(),
+            known.clone(),
+            interaction,
+            CancellationToken::new(),
+            req.ssh_config.as_deref(),
+            Some(saved),
+        )
+        .await?;
+        session.close().await?;
+        prompts.abort();
+        let count = prompts.await.unwrap_or_default();
+        let stored = recorder.0.lock().unwrap().clone();
+        let last = stored.last().cloned();
+        match round {
+            0 => anyhow::ensure!(
+                count == 1 && last == Some(("passphrase".into(), passphrase.into())),
+                "入力したパスフレーズが保存されていません: prompts={count}"
+            ),
+            _ => anyhow::ensure!(
+                count == 0 && stored.len() == 2,
+                "保存済みのパスフレーズで接続できません: prompts={count}"
+            ),
+        }
+    }
+    Ok(())
 }
 
 #[tokio::main]
@@ -39,10 +113,15 @@ async fn main() -> Result<()> {
     };
     let known: KnownHosts = [(
         format!("{}:{}", resolved.host, resolved.port),
-        req.expected_key,
+        req.expected_key.clone(),
     )]
     .into_iter()
     .collect();
+    if let Some(passphrase) = req.secret_store_passphrase.as_deref() {
+        verify_secret_store(&req, known, passphrase).await?;
+        println!("ssh-secret-store-verified");
+        return Ok(());
+    }
     let (interaction, _requests) = Interaction::new();
     let cancel = CancellationToken::new();
     let session = Arc::new(

@@ -178,5 +178,12 @@
  "スニペットが見つかりません": "Snippet not found",
  "ブラウザで開けないURLです": "This URL cannot be opened in a browser.",
  "http(s)以外のURLは開きません": "Only http(s) URLs are opened.",
- "ブラウザの起動処理が異常終了しました": "Opening the browser failed unexpectedly."
+ "ブラウザの起動処理が異常終了しました": "Opening the browser failed unexpectedly.",
+ "保存済みの秘密を移せませんでした: {error}": null,
+ "書き出す接続先を選んでください": "Choose the connections to export",
+ "パスフレーズは{MIN_PASSPHRASE}文字以上にしてください": "Use a passphrase of at least {1} characters",
+ "保存済みの秘密を読めません: {error}": "Cannot read saved secrets: {1}",
+ "書き出せませんでした: {error}": "Could not export: {1}",
+ "書き出しに失敗しました": "Export failed",
+ "{kind}を保存できませんでした: {error}": null
 }

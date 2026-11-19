@@ -1,4 +1,4 @@
-// 旧Python版からの取り込み。旧版の保存先を直接読む方法と、旧版が書き出したファイルを読む方法がある。
+// 接続先の取り込み。旧版の保存先を直接読む方法と、書き出しファイル（このアプリ・旧版のどちらで作ったものでも）を読む方法がある。
 // パスワード等の値は画面へ来ない（有無だけ）。取り込みは確認のあと、選んだ項目だけを保存する。
 import { useEffect, useState } from 'react';
 import {
@@ -131,14 +131,14 @@ export function ImportDialog({ api, open, onClose, onDone }: Props) {
     <Dialog open={open} onOpenChange={(_, d) => !d.open && close()}>
       <DialogSurface aria-describedby={undefined} style={{ maxWidth: 'min(680px, calc(100vw - 32px))' }}>
         <DialogBody>
-          <DialogTitle>{t('旧版（Python）から取り込む')}</DialogTitle>
+          <DialogTitle>{t('接続先を取り込む')}</DialogTitle>
           <DialogContent className={styles.body}>
             {!preview && !result && (
               <>
-                <Body1>{t('旧版の接続先・既知のホスト鍵・スニペット・保存済みのパスワードを、このアプリへコピーします。旧版のデータは読むだけで、変更しません。')}</Body1>
+                <Body1>{t('書き出したファイルや旧版（Python）から、接続先・既知のホスト鍵・保存済みのパスワードをこのアプリへコピーします。元のファイルやデータは読むだけで、変更しません。')}</Body1>
                 <div className={styles.choose}>
                   <Card className={styles.card}>
-                    <Subtitle2>{t('旧版のデータを直接読む')}</Subtitle2>
+                    <Subtitle2>{t('旧版（Python）のデータを直接読む')}</Subtitle2>
                     <Caption1>
                       {t('旧版の設定フォルダと、旧版が使っていた保存先（Windows資格情報マネージャ／暗号化ファイル）から読みます。')}
                     </Caption1>
@@ -158,7 +158,7 @@ export function ImportDialog({ api, open, onClose, onDone }: Props) {
                   <Card className={styles.card}>
                     <Subtitle2>{t('書き出しファイルを選ぶ')}</Subtitle2>
                     <Caption1>
-                      {t('旧版の「接続情報の書き出し」で作ったファイル（hashi-export）を読みます。パスワードは書き出し時のパスフレーズで復号します。')}
+                      {t('「書き出す」（旧版では「接続情報の書き出し」）で作ったファイル（hashi-export）を読みます。パスワードは書き出し時のパスフレーズで復号します。')}
                     </Caption1>
                     <Button
                       disabled={busy}
@@ -234,7 +234,7 @@ export function ImportDialog({ api, open, onClose, onDone }: Props) {
                   <Checkbox
                     checked={overwrite}
                     onChange={(_, d) => setOverwrite(Boolean(d.checked))}
-                    label={t('登録済みの接続先も、旧版の内容で置き換える')}
+                    label={t('登録済みの接続先も、取り込む内容で置き換える')}
                   />
                 )}
 

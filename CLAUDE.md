@@ -661,6 +661,11 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
 - 旧版からの取り込み（`import.rs`・`hashi_storage::legacy_import`）は読み取り専用。旧版の保存先・資格情報（Windows資格情報マネージャ/`creds.dat`）へ書かない。
   旧版停止の確認＋`shared_legacy_lease`（権限補助と共有）を保つ。秘密の値はRust側だけが持ち、画面へは名前・件数・有無だけ返す。
   ホスト鍵は無いものだけ追加し、食い違いは上書きしない。保存済みの秘密（`hashi_storage::vault`）は接続時の最初の1回だけ使い、拒否されたら入力へ戻す。踏み台には使わない。
+- 入力した秘密の保存（`SavedSecrets::store`、2026-11）: 最終の接続先で認証が**通ってから**保存する。拒否された値・踏み台の値は保存しない。
+  `save_secrets`（編集画面のチェック）が偽なら保存も利用もせず、偽で保存すると消す。`user@host:port`を変えたら値を移す（`import::follow_profile_edit`）。
+- 接続先の書き出し（`export.rs`）は旧版と同じ`hashi-export` v1。選んだ接続先と踏み台のホスト鍵だけ含める。秘密は8文字以上のパスフレーズで
+  暗号化したときだけ含め、平文で書かない。取り込み側（`import_bundle_pick`）で読み戻せることを試験で固定している。
+- ポート欄は入力中の文字列で持ち、保存時に検証する（空欄を22へ戻すと「2」が消せなくなる。2026-11に報告あり）。
 - 配布zip・動作確認用exeは必ず`tools/rust_artifact.py`で作る（手で`cp`しない）。本体は`Hashi.exe`（Tauri版。v2.0.0で`Hashi-Preview.exe`から改名）。
   `Hashi-RustPreview.exe`はegui版で、配布の本体にしない（名前を付け替えて同梱した事故がある）。
   スクリプトは名前・中身（`hashi-desktop-tauri`の有無）・アイコン資源(.rsrc)を検査し、違えば止まる。ローカルのGNU cross-buildでも`--zip`まで同じ経路を使う。
