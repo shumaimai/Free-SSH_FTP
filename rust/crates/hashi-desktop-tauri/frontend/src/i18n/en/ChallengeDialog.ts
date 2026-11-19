@@ -1,4 +1,6 @@
 export default {
+  '接続できたら保存して、次からは自動で使います。': 'Once connected, this is saved and used automatically next time.',
+  'この接続先は保存しない設定です（接続の編集で変えられます）。': 'Saving is turned off for this connection (you can change it in Edit connection).',
   '（踏み台{n}）': ' (jump host {n})',
   'このサーバーの鍵が、前に信頼した鍵と違います': 'This server\'s key is different from the key you trusted before',
   'サーバーの入れ替えか、通信の乗っ取りの可能性があります。心当たりがなければ中止してください。': 'The server may have been replaced, or the connection may be hijacked. If you do not expect this, abort.',

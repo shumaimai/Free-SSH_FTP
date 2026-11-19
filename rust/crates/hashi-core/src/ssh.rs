@@ -177,6 +177,8 @@ impl Drop for ConnectingHops {
 /// 保存済みの秘密を引く窓口。踏み台には使わない（接続先の秘密を流用しない）。
 pub trait SavedSecrets: Send + Sync {
     fn get(&self, host: &str, port: u16, username: &str, kind: &str) -> Option<String>;
+    /// 入力された秘密で最終の接続先の認証に成功したときに呼ぶ。保存しない実装は何もしない。
+    fn store(&self, _kind: &str, _value: &str) {}
 }
 
 #[derive(Clone)]
@@ -316,19 +318,28 @@ async fn authenticate_once(
             let mut saved_password = lookup("password");
             let mut prompts = 0;
             loop {
-                let password = match saved_password.take() {
-                    Some(password) => password,
+                let (password, typed) = match saved_password.take() {
+                    Some(password) => (password, false),
                     None if prompts < 3 => {
                         prompts += 1;
-                        secret(target, scope, "password", interaction, cancel).await?
+                        (
+                            secret(target, scope, "password", interaction, cancel).await?,
+                            true,
+                        )
                     }
                     None => break,
                 };
                 if connection
-                    .authenticate_password(&target.username, password)
+                    .authenticate_password(&target.username, password.clone())
                     .await?
                     .success()
                 {
+                    // 通った入力だけを保存する（拒否された値は残さない）。
+                    if typed {
+                        if let Some(saved) = saved {
+                            saved.store("password", &password);
+                        }
+                    }
                     accepted = true;
                     break;
                 }
@@ -348,6 +359,8 @@ async fn authenticate_once(
             if target.key_path.is_empty() || !path.is_file() {
                 bail!("秘密鍵ファイルを指定してください");
             }
+            // 入力したパスフレーズは、その鍵で認証が通ってから保存する。
+            let mut typed_passphrase = None;
             let key = match russh::keys::load_secret_key(&path, None) {
                 Ok(key) => key,
                 Err(_) => {
@@ -358,8 +371,10 @@ async fn authenticate_once(
                         None => {
                             let passphrase =
                                 secret(target, scope, "passphrase", interaction, cancel).await?;
-                            russh::keys::load_secret_key(&path, Some(&passphrase))
-                                .context("秘密鍵を復号できません")?
+                            let key = russh::keys::load_secret_key(&path, Some(&passphrase))
+                                .context("秘密鍵を復号できません")?;
+                            typed_passphrase = Some(passphrase);
+                            key
                         }
                     }
                 }
@@ -369,13 +384,17 @@ async fn authenticate_once(
                 .await?
                 .flatten()
                 .or(Some(russh::keys::HashAlg::Sha512));
-            connection
+            let accepted = connection
                 .authenticate_publickey(
                     &target.username,
                     PrivateKeyWithHashAlg::new(Arc::new(key), hash),
                 )
                 .await?
-                .success()
+                .success();
+            if let (true, Some(passphrase), Some(saved)) = (accepted, &typed_passphrase, saved) {
+                saved.store("passphrase", passphrase);
+            }
+            accepted
         }
         "agent" => {
             let mut agent = connect_agent().await?;

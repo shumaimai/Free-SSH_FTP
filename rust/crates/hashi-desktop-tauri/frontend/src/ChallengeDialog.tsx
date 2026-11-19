@@ -36,10 +36,12 @@ interface Props {
   challenge: Challenge | null;
   error: string | null;
   onAnswer(answer: ChallengeAnswer): void;
+  /** 認証に成功したら、入力した秘密をこの接続先に保存する設定か。どの接続か分からなければ null（何も書かない）。 */
+  willSave: boolean | null;
 }
 
 /** ホスト鍵の確認と秘密入力。ここでの応答は、Rust側が控えた要求と照合される。閉じる操作は取消として扱う。 */
-export function ChallengeDialog({ challenge, error, onAnswer }: Props) {
+export function ChallengeDialog({ challenge, error, onAnswer, willSave }: Props) {
   const styles = useStyles();
   const [text, setText] = useState('');
   useEffect(() => setText(''), [challenge?.challenge_id]);
@@ -80,7 +82,16 @@ export function ChallengeDialog({ challenge, error, onAnswer }: Props) {
                 )}
               </>
             ) : (
-              <Field label={body.prompt}>
+              <Field
+                label={body.prompt}
+                hint={
+                  willSave !== null && scope.hop === null && (scope.kind === 'password' || scope.kind === 'passphrase')
+                    ? willSave
+                      ? t('接続できたら保存して、次からは自動で使います。')
+                      : t('この接続先は保存しない設定です（接続の編集で変えられます）。')
+                    : undefined
+                }
+              >
                 <Input
                   type="password"
                   autoFocus

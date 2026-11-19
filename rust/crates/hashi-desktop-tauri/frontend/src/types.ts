@@ -352,6 +352,14 @@ export interface ImportResult {
   notes: string[];
 }
 
+/** 接続先の書き出しの結果（保存先のフォルダは返らない）。 */
+export interface ExportResult {
+  profiles: number;
+  hosts: number;
+  secrets: number;
+  file_name: string;
+}
+
 /** 接続先に保存されている秘密の種類（値は返らない）。 */
 export interface SecretsStatus {
   saved: string[];

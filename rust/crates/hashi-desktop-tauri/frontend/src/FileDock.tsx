@@ -111,6 +111,9 @@ const useStyles = makeStyles({
   error: { color: tokens.colorPaletteRedForeground1, overflowWrap: 'anywhere' },
 });
 
+/** これより狭いとファイル操作のボタンを絵だけにする(px)。 */
+const COMPACT_WIDTH = 360;
+
 export function humanSize(bytes: number): string {
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
   let value = bytes;
@@ -313,6 +316,17 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
 
   const dualBox = useRef<HTMLDivElement>(null);
   const remoteBox = useRef<HTMLDivElement>(null);
+  // 狭いときは操作ボタンを絵だけにする（名前はツールチップと読み上げで出す）。
+  const [compact, setCompact] = useState(false);
+  useEffect(() => {
+    const box = remoteBox.current;
+    if (!box) return;
+    const observer = new ResizeObserver(([entry]) => setCompact(entry.contentRect.width < COMPACT_WIDTH));
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, [sessionId, available, twoPane]);
+  /** ボタンの名前。狭いときは本文にせず、title と aria-label にする。 */
+  const named = (text: string) => (compact ? { title: text, 'aria-label': text } : { children: text });
   const ratioStart = useRef(0.5);
   const twoPaneRef = useRef(twoPane);
   twoPaneRef.current = twoPane;
@@ -493,33 +507,29 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
                 : api.filesDownload(sessionId, current.path, current.name, current.directory, policy, mode),
             )
           }
-        >
-          {twoPane ? t('受信（左のフォルダへ）') : t('受信')}
-        </Button>
+          {...named(twoPane ? t('受信（左のフォルダへ）') : t('受信'))}
+        />
         <Button
           size="small"
           icon={<Edit20Regular />}
           disabled={!current || current.directory}
           onClick={() => current && onEdit(sessionId, current.path)}
-        >
-          {t('編集')}
-        </Button>
+          {...named(t('編集'))}
+        />
         <Button
           size="small"
           icon={<ArrowUpload20Regular />}
           disabled={!path}
           onClick={() => void run(api.filesUploadPick(sessionId, path, false, policy, mode))}
-        >
-          {t('アップロード')}
-        </Button>
+          {...named(t('アップロード'))}
+        />
         <Button
           size="small"
           icon={<FolderArrowUp20Regular />}
           disabled={!path}
           onClick={() => void run(api.filesUploadPick(sessionId, path, true, policy, mode))}
-        >
-          {t('フォルダ送信')}
-        </Button>
+          {...named(t('フォルダ送信'))}
+        />
         <Button
           size="small"
           appearance="subtle"
@@ -530,9 +540,8 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
             setDeleteTarget(current);
             setConfirmation('');
           }}
-        >
-          {t('削除')}
-        </Button>
+          {...named(t('削除'))}
+        />
         <div className={styles.grow} />
         <Button
           size="small"
@@ -540,17 +549,18 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
           icon={<PanelLeft20Regular />}
           aria-pressed={twoPane}
           onClick={() => onTwoPane(!twoPane)}
-        >
-          {t('2ペイン')}
-        </Button>
-        <Button size="small" appearance="subtle" icon={<ShieldKeyhole20Regular />} onClick={() => setPermOpen(true)}>
-          {t('権限補助')}
-        </Button>
+          {...named(t('2ペイン'))}
+        />
+        <Button
+          size="small"
+          appearance="subtle"
+          icon={<ShieldKeyhole20Regular />}
+          onClick={() => setPermOpen(true)}
+          {...named(t('権限補助'))}
+        />
         <Popover positioning="below-end">
           <PopoverTrigger disableButtonEnhancement>
-            <Button size="small" appearance="subtle" icon={<Options20Regular />}>
-              {t('転送の設定')}
-            </Button>
+            <Button size="small" appearance="subtle" icon={<Options20Regular />} {...named(t('転送の設定'))} />
           </PopoverTrigger>
           <PopoverSurface style={{ width: 320 }}>
             <Field label={t('すでに同名のファイルがあるとき')}>
@@ -575,9 +585,10 @@ export function FileDock({ api, sessionId, available, unavailableMessage, onEdit
           </PopoverSurface>
         </Popover>
       </div>
-      <div className={styles.row}>
+      <div className={styles.row} style={compact ? { flexWrap: 'wrap' } : undefined}>
         <SearchBox
           className={styles.grow}
+          style={{ minWidth: 140 }}
           size="small"
           placeholder={t('このフォルダ以下を検索')}
           value={query}

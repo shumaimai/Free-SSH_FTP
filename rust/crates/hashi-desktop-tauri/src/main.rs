@@ -9,6 +9,7 @@ mod attach;
 mod browser;
 mod chatgpt;
 mod editor;
+mod export;
 mod external;
 mod files;
 mod forwards;
@@ -87,6 +88,7 @@ fn main() {
             import::import_apply,
             import::secrets_status,
             import::secrets_forget,
+            export::export_bundle,
             app::pick_key_file,
             app::appearance_get,
             app::appearance_set,

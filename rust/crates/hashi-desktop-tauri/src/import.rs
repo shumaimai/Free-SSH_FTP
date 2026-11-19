@@ -496,6 +496,70 @@ impl SavedSecrets for ProfileSecrets {
             })
             .flatten()
     }
+
+    fn store(&self, kind: &str, value: &str) {
+        if !vault::KINDS.contains(&kind) || value.is_empty() {
+            return;
+        }
+        if let Err(error) = self
+            .vault
+            .set(&vault::key(&self.profile_id, kind), Some(value))
+        {
+            // 値は出さない。保存できなくても接続は続ける（次回も入力を求めるだけ）。
+            eprintln!("{kind}を保存できませんでした: {error}");
+        }
+    }
+}
+
+/// 接続設定を編集したときの保存済みの秘密の扱い。
+/// 保存しない設定にしたら消し、接続先（利用者名・ホスト・ポート）を変えたら新しい名前へ移す。
+/// 古い名前を別の接続設定がまだ使っていれば、そちらのために残す。
+pub fn follow_profile_edit(
+    old: &Profile,
+    new: &Profile,
+    old_still_used: bool,
+) -> Result<(), String> {
+    if old.id() == new.id() && new.save_secrets {
+        return Ok(());
+    }
+    let vault = Vault::open(Channel::Preview).map_err(|error| error.to_string())?;
+    follow_edit_in(&vault, old, new, old_still_used)
+}
+
+fn follow_edit_in(
+    vault: &Vault,
+    old: &Profile,
+    new: &Profile,
+    old_still_used: bool,
+) -> Result<(), String> {
+    let (old_id, new_id) = (old.id(), new.id());
+    if old_id == new_id && new.save_secrets {
+        return Ok(());
+    }
+    if new.save_secrets && old_id != new_id {
+        for kind in vault::KINDS {
+            let Some(value) = vault
+                .get(&vault::key(&old_id, kind))
+                .map_err(|error| error.to_string())?
+            else {
+                continue;
+            };
+            // 移し先に別の値があれば上書きしない。
+            if vault
+                .get(&vault::key(&new_id, kind))
+                .map_err(|error| error.to_string())?
+                .is_none()
+            {
+                vault
+                    .set(&vault::key(&new_id, kind), Some(&value))
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+    }
+    if old_still_used {
+        return Ok(());
+    }
+    vault.forget(&old_id).map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
@@ -527,6 +591,52 @@ mod tests {
             .map(|s| (s.name.as_str(), s.body.as_str()))
             .collect();
         assert_eq!(names, vec![("稼働", "uptime -p"), ("新規", "ls")]);
+    }
+
+    fn editing(user: &str, port: u16, save: bool) -> Profile {
+        Profile {
+            host: "h.example".into(),
+            username: user.into(),
+            port,
+            save_secrets: save,
+            ..Profile::default()
+        }
+    }
+
+    #[test]
+    fn edits_move_or_forget_saved_secrets_without_touching_others() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::file_at(dir.path().to_owned()).unwrap();
+        let get = |id: &str, kind: &str| vault.get(&vault::key(id, kind)).unwrap();
+        let old = editing("a", 22, true);
+        vault
+            .set(&vault::key(&old.id(), "password"), Some("p1"))
+            .unwrap();
+        vault
+            .set(&vault::key(&old.id(), "passphrase"), Some("k1"))
+            .unwrap();
+        // 移し先に別の値があれば上書きしない。
+        let moved = editing("a", 2222, true);
+        vault
+            .set(&vault::key(&moved.id(), "passphrase"), Some("k-other"))
+            .unwrap();
+        follow_edit_in(&vault, &old, &moved, false).unwrap();
+        assert_eq!(get(&moved.id(), "password").as_deref(), Some("p1"));
+        assert_eq!(get(&moved.id(), "passphrase").as_deref(), Some("k-other"));
+        assert!(get(&old.id(), "password").is_none());
+        // 古い名前を別の接続設定が使っていれば残す。
+        vault
+            .set(&vault::key(&old.id(), "password"), Some("p1"))
+            .unwrap();
+        follow_edit_in(&vault, &old, &editing("b", 22, true), true).unwrap();
+        assert_eq!(get(&old.id(), "password").as_deref(), Some("p1"));
+        assert_eq!(get("b@h.example:22", "password").as_deref(), Some("p1"));
+        // 保存しない設定にしたら消す(移さない)。
+        follow_edit_in(&vault, &old, &editing("a", 22, false), false).unwrap();
+        assert!(vault.kinds_present(&old.id()).unwrap().is_empty());
+        // 何も変えなければ何もしない。
+        follow_edit_in(&vault, &moved, &moved.clone(), false).unwrap();
+        assert_eq!(get(&moved.id(), "password").as_deref(), Some("p1"));
     }
 
     #[test]

@@ -425,6 +425,10 @@ export function mockApi(): Api {
     ],
     secretsStatus: async () => ({ saved: ['password'], backend: 'Windows資格情報マネージャ' }),
     secretsForget: async () => {},
+    exportBundle: async (indices, passphrase) => {
+      if (passphrase !== null && passphrase.length < 8) throw new Error('パスフレーズは8文字以上にしてください');
+      return { profiles: indices.length, hosts: indices.length, secrets: passphrase ? 1 : 0, file_name: 'hashi-export-demo.json' };
+    },
     permissionsStatus: async () => ({ enabled: permEnabled, busy: false, note: permEnabled ? '旧版の残存マーカー0件、復旧記録の確認先1件（未復元0件）。旧記録は変更していません。' : null }),
     permissionsEnable: async () => {
       permEnabled = true;
