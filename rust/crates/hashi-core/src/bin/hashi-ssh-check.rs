@@ -56,19 +56,19 @@ async fn verify_secret_store(req: &Request, known: KnownHosts, passphrase: &str)
         let (interaction, mut requests) = Interaction::new();
         let answering = interaction.clone();
         let answer = passphrase.to_owned();
+        let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = asked.clone();
         let prompts = tokio::spawn(async move {
-            let mut count = 0usize;
             while let Some(request) = requests.recv().await {
                 let reply = match request.challenge {
                     Challenge::Secret { .. } => {
-                        count += 1;
+                        counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                         Reply::Secret(answer.clone())
                     }
                     Challenge::HostKey { .. } => Reply::Cancel,
                 };
                 let _ = answering.reply(&request.challenge_id, &request.scope, reply);
             }
-            count
         });
         let saved: Arc<dyn hashi_core::ssh::SavedSecrets> = recorder.clone();
         let session = SshSession::connect_with_config(
@@ -83,7 +83,7 @@ async fn verify_secret_store(req: &Request, known: KnownHosts, passphrase: &str)
         .await?;
         session.close().await?;
         prompts.abort();
-        let count = prompts.await.unwrap_or_default();
+        let count = asked.load(std::sync::atomic::Ordering::SeqCst);
         let stored = recorder.0.lock().unwrap().clone();
         let last = stored.last().cloned();
         match round {

@@ -5,6 +5,7 @@ use crate::app::AppState;
 use hashi_storage::{
     config::{Bundle, KnownHosts, Profile},
     crypto,
+    legacy_import::Secrets,
     paths::Channel,
     vault::{self, Vault},
 };
@@ -62,7 +63,7 @@ fn hosts_for(profiles: &[Profile], known: &KnownHosts) -> KnownHosts {
 fn build(
     profiles: Vec<Profile>,
     known: &KnownHosts,
-    secrets: Option<(&str, BTreeMap<String, BTreeMap<String, String>>)>,
+    secrets: Option<(&str, Secrets)>,
 ) -> Result<(Bundle, usize), String> {
     let mut bundle = Bundle {
         format: "hashi-export".into(),
@@ -164,7 +165,7 @@ pub async fn export_bundle(
             Some(passphrase) => {
                 let vault = Vault::open(Channel::Preview)
                     .map_err(|error| format!("保存済みの秘密を読めません: {error}"))?;
-                let mut secrets: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+                let mut secrets = Secrets::new();
                 for profile in profiles.iter().filter(|p| p.save_secrets) {
                     let id = profile.id();
                     for kind in vault::KINDS {
