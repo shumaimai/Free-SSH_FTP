@@ -19,7 +19,13 @@ import type { Api } from './api';
 import type { SessionInfo } from './types';
 import type { Candidate, ShellKind } from './completion/types.ts';
 import { complete } from './completion/engine.ts';
-import { LineTracker, echoConfirmed, looksLikeSecretPrompt } from './completion/lineTracker.ts';
+import {
+  LineTracker,
+  echoConfirmed,
+  isCursorReport,
+  isTerminalReport,
+  looksLikeSecretPrompt,
+} from './completion/lineTracker.ts';
 import { onExternalInput } from './inputEvents';
 import { InputQueue } from './inputQueue';
 import { t } from './i18n';
@@ -339,7 +345,23 @@ export function TerminalView({ api, active, dark, appearance, completion, start,
       return true;
     };
 
+    // カーソル位置の問い合わせ(CSI 6 n)への xterm.js の返事も onData に出る。Windows のローカル端末(ConPTY)は
+    // 起動時に必ず問い合わせるので、打った文字として数えると最初の行がずっと「不明」になる。
+    // 返事は修飾キー付き F3 と同じ形なので、問い合わせを見た回数だけ外す。
+    let pendingCursorReports = 0;
+    const cursorQuery = terminal.parser.registerCsiHandler({ final: 'n' }, (params) => {
+      if (params[0] === 6) pendingCursorReports += 1;
+      return false; // 返事そのものは xterm.js に任せる
+    });
+
     const input = terminal.onData((data) => {
+      // 端末が自動で送った報告は行の推定に入れず、表示中の候補もそのままにする。
+      const cursorReport = pendingCursorReports > 0 && isCursorReport(data);
+      if (cursorReport || isTerminalReport(data)) {
+        if (cursorReport) pendingCursorReports -= 1;
+        queue.push(data);
+        return;
+      }
       if (pasting) {
         // 貼り付けの文字は行推定に feed しない(改行で「不明」が解除されるのを防ぐ)。送るだけ。
         queue.push(data);
@@ -463,6 +485,7 @@ export function TerminalView({ api, active, dark, appearance, completion, start,
       scrolled.dispose();
       bufferChanged.dispose();
       input.dispose();
+      cursorQuery.dispose();
       ghostEl.remove();
       terminal.dispose();
       term.current = null;

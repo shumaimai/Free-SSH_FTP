@@ -24,6 +24,11 @@ export class LineTracker {
       }
       if (this.unknown) continue; // 不明のあいだは追跡しない(追加・削除しても null のまま)
       const cp = ch.codePointAt(0) ?? 0;
+      if (cp === 0x00) {
+        // Ctrl+Space(NUL)は一覧を開けなかったときにシェルへ素通しされる。readline では set-mark、
+        // CMD では何もしないので、行の中身は変わらない。不明にしない(画面が変わればエコー確認で止まる)。
+        continue;
+      }
       if (cp === 0x7f || cp === 0x08) {
         // Backspace は最後の1文字を消す。空なら何もしない。
         this.buf = this.buf.slice(0, -1);
@@ -48,6 +53,24 @@ export class LineTracker {
     this.buf = '';
     this.unknown = false;
   }
+}
+
+// 端末(xterm.js)が問い合わせに自動で答えた報告も onData に出る。打った文字ではないので行の推定に入れない。
+// フォーカスの出入り(CSI I / CSI O)、端末の種類(DA1/DA2)、モードの問い合わせ(DECRPM)、色などの OSC の返事。
+// どれもキー1つでは送られない形なので、1回の onData がまるごとこの形のときだけ報告とみなす。
+const TERMINAL_REPORT_RE = /^(?:\x1b\[[IO]|\x1b\[[?>][\d;]*c|\x1b\[\??[\d;]*\$y|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\))$/;
+
+/** 端末が自動で送った報告か(打った文字ではない)。 */
+export function isTerminalReport(data: string): boolean {
+  return TERMINAL_REPORT_RE.test(data);
+}
+
+/**
+ * カーソル位置の報告(CSI 行;列 R)の形か。Shift+F3 など修飾キー付きの F3 も同じ形(CSI 1;2 R)になるので、
+ * 呼び出し側は「位置を問い合わせられた(CSI 6 n)直後」に限って報告とみなすこと。
+ */
+export function isCursorReport(data: string): boolean {
+  return /^\x1b\[\d+;\d+R$/.test(data);
 }
 
 /** 画面のカーソル行の「カーソルより前」の文字列が、推定した行で終わっているか(= エコーで確認できたか)。 */

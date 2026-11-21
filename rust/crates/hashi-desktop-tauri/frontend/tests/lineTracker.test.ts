@@ -1,6 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { LineTracker, echoConfirmed, looksLikeSecretPrompt } from '../src/completion/lineTracker.ts';
+import {
+  LineTracker,
+  echoConfirmed,
+  isCursorReport,
+  isTerminalReport,
+  looksLikeSecretPrompt,
+} from '../src/completion/lineTracker.ts';
 
 test('印字可能な ASCII を追加する', () => {
   const t = new LineTracker();
@@ -150,4 +156,30 @@ test('looksLikeSecretPrompt: パスワード等の入力欄を検知', () => {
   assert.equal(looksLikeSecretPrompt('C:\\pins> '), false);
   assert.equal(looksLikeSecretPrompt('u@h:~$ '), false);
   assert.equal(looksLikeSecretPrompt('spinning up worker'), false);
+});
+
+test('Ctrl+Space の NUL では行の中身を変えず、不明にもしない', () => {
+  const t = new LineTracker();
+  t.feed('ipc');
+  t.feed('\x00');
+  assert.equal(t.line, 'ipc');
+  t.feed('\x7f');
+  assert.equal(t.line, 'ip');
+});
+
+test('端末が自動で送る報告を見分ける', () => {
+  for (const r of ['\x1b[I', '\x1b[O', '\x1b[?1;2c', '\x1b[>0;276;0c', '\x1b[?2004;1$y', '\x1b]11;rgb:0000/0000/0000\x1b\\', '\x1b]10;rgb:ffff/ffff/ffff\x07']) {
+    assert.equal(isTerminalReport(r), true, JSON.stringify(r));
+  }
+  // キー入力(矢印・修飾付き矢印・Alt+文字・Delete・F3)は報告ではない
+  for (const k of ['\x1b[A', '\x1b[1;5C', '\x1bI', '\x1b[3~', '\x1bOR', 'I', '\x1b[1;2R', '\x1b[I\x1b[A']) {
+    assert.equal(isTerminalReport(k), false, JSON.stringify(k));
+  }
+});
+
+test('カーソル位置の報告の形', () => {
+  assert.equal(isCursorReport('\x1b[1;1R'), true);
+  assert.equal(isCursorReport('\x1b[24;80R'), true);
+  assert.equal(isCursorReport('\x1b[A'), false);
+  assert.equal(isCursorReport('\x1b[24;80R\x1b[A'), false);
 });
