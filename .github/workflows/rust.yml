@@ -64,6 +64,9 @@ jobs:
       - name: Web frontend (type check and build)
         working-directory: rust/crates/hashi-desktop-tauri/frontend
         run: npm ci && npm run build
+      - name: Web frontend (node --test)
+        working-directory: rust/crates/hashi-desktop-tauri/frontend
+        run: npm test
       - name: Rust messages catalog (English translations of Japanese messages)
         run: python tools/rust_messages.py check
       - name: Linux test daemon directory
