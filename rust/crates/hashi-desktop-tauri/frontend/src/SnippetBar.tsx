@@ -79,9 +79,9 @@ export function SnippetBar({ api, sessionId, onError }: Props) {
     try {
       const variables = await api.snippetVariables(list[index].body);
       if (variables.length === 0) {
-        await api.snippetSend(sessionId, index, {});
-        // 端末のonDataを通らない入力なので、補完の行推定へ別途知らせる。
+        // 端末のonDataを通らない入力なので、補完の行推定へ別途知らせる(エコーとの競合を避けるため送信前に)。
         notifyExternalInput(sessionId);
+        await api.snippetSend(sessionId, index, {});
       } else {
         setValues({});
         setPending({ index, variables });
@@ -138,11 +138,12 @@ export function SnippetBar({ api, sessionId, onError }: Props) {
                 onClick={() => {
                   const current = pending;
                   setPending(null);
-                  if (current && sessionId)
+                  if (current && sessionId) {
+                    notifyExternalInput(sessionId);
                     void api
                       .snippetSend(sessionId, current.index, values)
-                      .then(() => notifyExternalInput(sessionId))
                       .catch((e) => onError(String(e)));
+                  }
                 }}
               >
                 {t('送る')}

@@ -126,11 +126,10 @@ export function TerminalView({ api, active, dark, appearance, completion, start,
   const term = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const idRef = useRef<string | null>(null);
-  const trackerRef = useRef<LineTracker | null>(null);
   // 開いている補完一覧。キー操作は mount 時の1回だけ登録されるので、最新の状態は menuRef を見る。
   const [menu, setMenu] = useState<MenuView | null>(null);
   const menuRef = useRef<MenuView | null>(null);
-  const compCtl = useRef<{ hideAll(): void } | null>(null);
+  const compCtl = useRef<{ hideAll(): void; paste(text: string): void } | null>(null);
   // 複数行の貼り付けは、確認してから端末へ送る。
   const [pasteAsk, setPasteAsk] = useState<string | null>(null);
   // 親の再描画で関数が変わっても、マウント時の1回だけ開始する。
@@ -176,7 +175,6 @@ export function TerminalView({ api, active, dark, appearance, completion, start,
     terminal.open(element);
     // いま打っている行の推定。補完はエコーで確認できるときだけ出すので、追えなくなったら必ず「不明」に倒す。
     const tracker = new LineTracker();
-    trackerRef.current = tracker;
     // 貼り付けは端末より先に受け取り、制御文字を除いてから送る。複数行なら確認する。
     const onPaste = (event: ClipboardEvent) => {
       const text = event.clipboardData?.getData('text/plain') ?? '';
@@ -185,11 +183,7 @@ export function TerminalView({ api, active, dark, appearance, completion, start,
       const clean = cleanPaste(text);
       if (!clean) return;
       if (clean.replace(/\r\n?/g, '\n').replace(/\n+$/, '').includes('\n')) setPasteAsk(clean);
-      else {
-        // terminal.paste は onData を発火するので、先に不明へ倒しておく。
-        tracker.markUnknown();
-        terminal.paste(clean);
-      }
+      else pasteText(clean);
     };
     element.addEventListener('paste', onPaste, true);
     fit.fit();
@@ -206,6 +200,8 @@ export function TerminalView({ api, active, dark, appearance, completion, start,
     // ことを確認してからにする。パスワード入力のように画面に出ない入力では候補を出さない。
     let shell: ShellKind | null = null;
     let ghost: string | null = null;
+    // terminal.paste() が発火する onData を、行推定の feed から外すための旗。
+    let pasting = false;
     const ghostEl = document.createElement('div');
     ghostEl.style.position = 'absolute';
     ghostEl.style.display = 'none';
@@ -229,7 +225,20 @@ export function TerminalView({ api, active, dark, appearance, completion, start,
       hideGhost();
       setMenuBoth(null);
     };
-    compCtl.current = { hideAll };
+    // 貼り付けは中身を行推定で追わない。bracketed paste が無効な環境では terminal.paste() が
+    // 同期で onData を呼び、貼った文字の改行が「不明」を解除してしまうので、pasting で囲む。
+    const pasteText = (text: string) => {
+      tracker.markUnknown();
+      pasting = true;
+      try {
+        terminal.paste(text);
+      } finally {
+        pasting = false;
+      }
+      tracker.markUnknown();
+      hideAll();
+    };
+    compCtl.current = { hideAll, paste: pasteText };
 
     // セル1個の大きさと、.xterm-screen の host 内での位置(hostにはpaddingがあるので差分で求める)。
     const measure = () => {
@@ -237,6 +246,7 @@ export function TerminalView({ api, active, dark, appearance, completion, start,
       if (!screen) return null;
       const s = screen.getBoundingClientRect();
       const h = element.getBoundingClientRect();
+      if (s.width <= 0 || s.height <= 0 || terminal.cols <= 0 || terminal.rows <= 0) return null;
       return {
         x: s.left - h.left,
         y: s.top - h.top,
@@ -271,13 +281,22 @@ export function TerminalView({ api, active, dark, appearance, completion, start,
         before = (buffer.getLine(row)?.translateToString(false) ?? '') + before;
       }
       before += cursorLine.translateToString(false, 0, buffer.cursorX);
+      // カーソル前が空(接続前・切断後など、プロンプトすら無い)なら出さない。
+      if (before === '') return null;
       // 画面のエコーが推定した行で終わること。パスワード入力(エコーなし)ではここで落ちる。
       if (!echoConfirmed(before, tracked)) return null;
-      if (looksLikeSecretPrompt(before)) return null;
+      // 秘密入力らしいプロンプトかは「打った行」を除いた部分だけで見る
+      // (打った文字に password 等が含まれていても止まらないようにする)。
+      if (looksLikeSecretPrompt(before.slice(0, before.length - tracked.length))) return null;
       return { line: tracked, x: buffer.cursorX, y: buffer.cursorY };
     };
 
     const updateGhost = () => {
+      // 一覧を開いているあいだは ghost を出さない。
+      if (menuRef.current) {
+        hideGhost();
+        return;
+      }
       const g = gate();
       const found = g && shell ? complete(shell, g.line).ghost : null;
       const at = g && found ? measure() : null;
@@ -294,28 +313,38 @@ export function TerminalView({ api, active, dark, appearance, completion, start,
       ghostEl.style.top = `${at.y + g.y * at.cellH}px`;
       ghostEl.style.height = `${at.cellH}px`;
       ghostEl.style.lineHeight = `${at.cellH}px`;
+      ghostEl.style.maxWidth = `${remain * at.cellW}px`;
       const look = latest.current;
       const fg = termTheme(look.appearance.termScheme, look.dark, look.appearance.accent).foreground;
       if (fg) ghostEl.style.color = fg;
       ghostEl.style.display = 'block';
     };
 
-    const openMenu = () => {
+    // 一覧を開けたら true。開けなければ false(呼び出し側はキーを端末へ素通しさせる)。
+    const openMenu = (): boolean => {
       const g = gate();
       const items = g && shell ? complete(shell, g.line).items : [];
       const at = g && items.length > 0 ? measure() : null;
-      if (!g || items.length === 0 || !at) return;
+      if (!g || items.length === 0 || !at) return false;
+      hideGhost();
       const width = Math.min(MENU_W, Math.max(160, at.hostW - 8));
       let left = at.x + g.x * at.cellW;
       if (left + width > at.hostW) left = Math.max(4, at.hostW - width - 4);
-      // カーソルの下に出し、入らなければカーソル行の上へ。
+      // カーソルの下に出し、入らなければカーソル行の上へ。高さは候補数から見積もる。
+      const height = Math.min(MENU_MAX_H, items.length * MENU_ROW + 10);
       let top = at.y + (g.y + 1) * at.cellH;
-      if (top + MENU_MAX_H > at.hostH) top = at.y + g.y * at.cellH - MENU_MAX_H;
+      if (top + height > at.hostH) top = at.y + g.y * at.cellH - height;
       if (top < 0) top = 4;
       setMenuBoth({ items, index: 0, left, top, width });
+      return true;
     };
 
     const input = terminal.onData((data) => {
+      if (pasting) {
+        // 貼り付けの文字は行推定に feed しない(改行で「不明」が解除されるのを防ぐ)。送るだけ。
+        queue.push(data);
+        return;
+      }
       send(data);
       // キー入力の直後は ghost を消すだけ。次の出力のあとに改めて候補を作る。
       hideGhost();
@@ -325,6 +354,12 @@ export function TerminalView({ api, active, dark, appearance, completion, start,
       if (e.type !== 'keydown' || e.isComposing) return true;
       const open = menuRef.current;
       if (open) {
+        // 開いている一覧は Ctrl+Space で閉じる(NUL をシェルへ送らない)。
+        if (e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey && (e.key === ' ' || e.code === 'Space')) {
+          setMenuBoth(null);
+          e.preventDefault();
+          return false;
+        }
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
           const delta = e.key === 'ArrowDown' ? 1 : -1;
           setMenuBoth({ ...open, index: (open.index + delta + open.items.length) % open.items.length });
@@ -334,6 +369,7 @@ export function TerminalView({ api, active, dark, appearance, completion, start,
         if (e.key === 'Enter' || e.key === 'Tab') {
           const item = open.items[open.index];
           setMenuBoth(null);
+          hideGhost();
           if (item) send(item.insert);
           e.preventDefault();
           return false;
@@ -348,17 +384,10 @@ export function TerminalView({ api, active, dark, appearance, completion, start,
         return true;
       }
       // 一覧を開くのは Ctrl+Space だけ。Tab・Enter・矢印は端末(リモートのシェル)のものとして奪わない。
-      // 補完がOFFのときは Ctrl+Space もシェルへ渡す(readline の set-mark など)。
-      if (
-        latest.current.completion &&
-        e.ctrlKey &&
-        !e.altKey &&
-        !e.shiftKey &&
-        !e.metaKey &&
-        (e.key === ' ' || e.code === 'Space')
-      ) {
+      // 一覧が開けなかった(補完OFF・代替画面・候補なしなど)ときもシェルへ渡す(readline の set-mark など)。
+      if (e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey && (e.key === ' ' || e.code === 'Space')) {
+        if (!openMenu()) return true;
         e.preventDefault();
-        openMenu();
         return false;
       }
       if (
@@ -367,7 +396,9 @@ export function TerminalView({ api, active, dark, appearance, completion, start,
         !e.altKey &&
         !e.shiftKey &&
         !e.metaKey &&
-        (e.key === 'ArrowRight' || e.key === 'End')
+        (e.key === 'ArrowRight' || e.key === 'End') &&
+        // 状態がずれていて矢印を誤って奪わないよう、確定の直前にも出せる状態か確かめる。
+        gate() !== null
       ) {
         const insert = ghost;
         hideGhost();
@@ -396,15 +427,21 @@ export function TerminalView({ api, active, dark, appearance, completion, start,
     const scrolled = terminal.onScroll(() => hideAll());
     const bufferChanged = terminal.buffer.onBufferChange(() => hideAll());
     // スニペット送信など onData を通らない入力は、別経路で「不明」へ倒す。
+    // AIドックやMCP(Rust側のBroker)からの入力は今のところ通知されない(既知の限界)。
     const offExternal = onExternalInput((sessionId) => {
-      if (sessionId === idRef.current) tracker.markUnknown();
+      if (sessionId !== idRef.current) return;
+      tracker.markUnknown();
+      hideAll();
     });
     latest.current
       .start({ cols: terminal.cols, rows: terminal.rows }, (bytes) => {
         if (!alive) return;
         // 出力の描画が終わってから候補を作る(画面のエコーを見て判断するため)。
         terminal.write(bytes, () => {
-          if (alive) updateGhost();
+          if (!alive) return;
+          // 出力が届いたら開いている一覧は閉じる(古い位置・古い候補での誤確定を防ぐ)。
+          if (menuRef.current) hideAll();
+          else updateGhost();
         });
       })
       .then((info) => {
@@ -431,7 +468,6 @@ export function TerminalView({ api, active, dark, appearance, completion, start,
       term.current = null;
       fitRef.current = null;
       idRef.current = null;
-      trackerRef.current = null;
       menuRef.current = null;
       compCtl.current = null;
     };
@@ -497,10 +533,7 @@ export function TerminalView({ api, active, dark, appearance, completion, start,
                 onClick={() => {
                   const text = pasteAsk;
                   setPasteAsk(null);
-                  if (text) {
-                    trackerRef.current?.markUnknown();
-                    term.current?.paste(text);
-                  }
+                  if (text) compCtl.current?.paste(text);
                   term.current?.focus();
                 }}
               >
