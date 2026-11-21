@@ -58,6 +58,9 @@ pub struct Session {
 pub struct SessionInfo {
     pub id: String,
     pub label: String,
+    /// コマンド補完の辞書を選ぶシェルの種類（"posix" / "cmd"）。SSH先はリモートのシェルを
+    /// 推測しないため、常に "posix" を返す。ローカル端末はWindowsなら "cmd"。
+    pub shell: &'static str,
 }
 
 #[derive(Serialize, Clone)]
@@ -411,6 +414,7 @@ pub async fn session_open_local(
     Ok(SessionInfo {
         id: session.id.clone(),
         label: session.label.clone(),
+        shell: if cfg!(windows) { "cmd" } else { "posix" },
     })
 }
 
@@ -621,6 +625,7 @@ pub async fn session_connect(
     Ok(SessionInfo {
         id: session.id.clone(),
         label: session.label.clone(),
+        shell: "posix",
     })
 }
 

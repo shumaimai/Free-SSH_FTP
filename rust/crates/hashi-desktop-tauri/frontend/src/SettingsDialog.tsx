@@ -74,10 +74,12 @@ interface Props {
   value: Appearance;
   dark: boolean;
   onChange(value: Appearance): void;
+  /** 「全般」タブの保存が成功したあとに、新しい設定を親へ知らせる。 */
+  onGeneralChange?(settings: AppSettings): void;
   onClose(): void;
 }
 
-export function SettingsDialog({ api, open, value, dark, onChange, onClose }: Props) {
+export function SettingsDialog({ api, open, value, dark, onChange, onGeneralChange, onClose }: Props) {
   const styles = useStyles();
   const language = useLanguage();
   const [tab, setTab] = useState<'look' | 'general'>('look');
@@ -92,7 +94,13 @@ export function SettingsDialog({ api, open, value, dark, onChange, onClose }: Pr
   }, [open, api]);
   const saveGeneral = (next: AppSettings) => {
     setGeneral(next);
-    void api.settingsSet(next).then(() => setGeneralError(null)).catch((e) => setGeneralError(String(e)));
+    void api
+      .settingsSet(next)
+      .then(() => {
+        setGeneralError(null);
+        onGeneralChange?.(next);
+      })
+      .catch((e) => setGeneralError(String(e)));
   };
   const set = <K extends keyof Appearance>(key: K, v: Appearance[K]) => onChange({ ...value, [key]: v });
   const term = termTheme(value.termScheme, dark, value.accent);
@@ -144,6 +152,14 @@ export function SettingsDialog({ api, open, value, dark, onChange, onClose }: Pr
                 </div>
               </Field>
               <Caption1>{t('改行で確定した行だけを記録します。vimなどの全画面表示は記録しません。新しい接続から適用します。')}</Caption1>
+              <Checkbox
+                checked={general.commandCompletion}
+                onChange={(_, d) => saveGeneral({ ...general, commandCompletion: d.checked === true })}
+                label={t('コマンド補完')}
+              />
+              <Caption1>
+                {t('入力中に、組み込みの辞書からコマンドの続きを灰色で表示します。→キーで確定、Ctrl+Spaceで候補の一覧を開きます。')}
+              </Caption1>
               {generalError && (
                 <MessageBar intent="error">
                   <MessageBarBody>{generalError}</MessageBarBody>

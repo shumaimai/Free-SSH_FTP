@@ -36,6 +36,9 @@ extract it, and run `Hashi.exe`. There is no installer.
 - SSH terminal and local CMD on xterm.js. 256 colors / truecolor, IME input, full-width characters, mouse-aware TUIs
 - Scrollback search, copy-on-select, right-click paste (multi-line or control-character pastes ask for confirmation)
 - Snippets (frequently used commands) and automatic session logs
+- **Command completion** from a built-in dictionary (about 160 Linux and 70 CMD commands): the rest of the word appears in gray
+  as you type; press Right arrow to accept, or Ctrl+Space for a list. Tab stays with the shell's own completion. Nothing is shown
+  while input is not echoed (passwords), nothing you type is stored, and it can be turned off in Settings
 
 ### Files (SFTP)
 - Dockable file list with recursive upload / download, a transfer queue, search, and two-step delete confirmation

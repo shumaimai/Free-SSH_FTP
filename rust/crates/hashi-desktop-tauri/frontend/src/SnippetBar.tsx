@@ -26,6 +26,7 @@ import {
 } from '@fluentui/react-components';
 import { Add20Regular, Code20Regular, Delete20Regular, Edit20Regular } from '@fluentui/react-icons';
 import { t } from './i18n';
+import { notifyExternalInput } from './inputEvents';
 import type { Api } from './api';
 import type { Snippet } from './types';
 
@@ -77,8 +78,11 @@ export function SnippetBar({ api, sessionId, onError }: Props) {
     if (!sessionId) return;
     try {
       const variables = await api.snippetVariables(list[index].body);
-      if (variables.length === 0) await api.snippetSend(sessionId, index, {});
-      else {
+      if (variables.length === 0) {
+        // 端末のonDataを通らない入力なので、補完の行推定へ別途知らせる(エコーとの競合を避けるため送信前に)。
+        notifyExternalInput(sessionId);
+        await api.snippetSend(sessionId, index, {});
+      } else {
         setValues({});
         setPending({ index, variables });
       }
@@ -134,8 +138,12 @@ export function SnippetBar({ api, sessionId, onError }: Props) {
                 onClick={() => {
                   const current = pending;
                   setPending(null);
-                  if (current && sessionId)
-                    void api.snippetSend(sessionId, current.index, values).catch((e) => onError(String(e)));
+                  if (current && sessionId) {
+                    notifyExternalInput(sessionId);
+                    void api
+                      .snippetSend(sessionId, current.index, values)
+                      .catch((e) => onError(String(e)));
+                  }
                 }}
               >
                 {t('送る')}

@@ -681,6 +681,18 @@ tests/                 pytest 43 ファイル(ネットワーク不要。フェ�
   サインアウトは遠隔失効を試み、結果に関係なくトークンを消す（名前は残す）。接続は要求ごとに`TokenSource`からトークンを得て、
   関数はnamespace `hashi`へまとめる（返った`hashi.名前`は戻す）。登録は`ai_models`の`service: chatgpt`＋`account`。
   旧Python版のChatGPT登録は取り込まない（もう一度サインインする）。実アカウントでの確認は未実施（偽サーバーまで）。
+- 端末のコマンド補完(2026-11、`frontend/src/completion/`・`TerminalView.tsx`): 候補の元は組み込み辞書(`dict.ts`)だけで、入力履歴は保存しない(オーナー判断)。
+  エンジンと行の推定は TS 側に置き、キーごとに Rust を呼ばない。`completion/` は React・Vite・`i18n.ts` を import せず、`frontend/tests/*.test.ts` を `npm test`(`node --test`)で直接動かす
+  (CI は rust.yml)。辞書の説明文は同じファイル内で定義した `N_()` で包み、英訳は `src/i18n/en/completion.ts`。
+  表示は**エコー確認ゲート**: キー入力の直後は消すだけで、出力を描いた後(`terminal.write` の callback)に、通常画面・アプリカーソルモードでない・スクロールバックを見ていない・
+  行末・推定した行が画面のカーソル前の文字列で終わる・パスワード欄らしくない、をすべて満たしたときだけ出す(パスワード入力はエコーが無いので出ない)。
+  `LineTracker` は矢印・Tab・Ctrl+R などの編集や非ASCII、貼り付け・スニペット送信(`inputEvents.ts`)で「不明」にし、Enter・Ctrl+C・Ctrl+U まで出さない。
+  xterm.js が自動で返す報告(カーソル位置・フォーカス・DA など)も onData に出るので、打った文字として数えない(`isTerminalReport`。カーソル位置の返事は
+  修飾キー付き F3 と同じ形なので、CSI 6 n を見た回数だけ外す)。ConPTY は起動時に必ず位置を問い合わせるため、数えると最初の行で候補が出なくなる。
+  確定は打っていない残り(`insert`)だけ送る(削除文字を送らない)。→/End は修飾キーなし・候補表示中だけ、Ctrl+Space は一覧が実際に開くときだけ奪う
+  (開けなければ NUL を素通しし、行の推定では NUL を無視する)。Tab は奪わない。
+  シェルの種類は `SessionInfo.shell`(SSH は posix、ローカルは Windows なら cmd)。設定は `command_completion`(既定 true)。
+  既知の限界: Python の対話モードや `read` など代替画面を使わない対話プログラムでも出ることがある(設定で止められる)。Windows 実機(ローカル CMD、表示倍率 100/125/150%)で表示を確認済み、SSH 先での実機確認はまだ。
 - 画面の多言語化: 文言の原文は日本語で、`frontend/src/i18n.ts` の `t('原文', {名前: 値})` がキーにそのまま使う。英語は `src/i18n/en/<ファイル>.ts`。
   表のラベルは定義時に訳せないので `N_('原文')` で印を付け、表示で `t(label)`。日本語の直書き(コメント以外)は `npm run build` 前の `scripts/check-i18n.mjs` が止める
   (例外は行末の `// i18n-ignore: 理由`)。言語は設定の「言語」(自動はOSの言語。保存先は webview の localStorage `hashi.language`)。

@@ -206,7 +206,7 @@ export function mockApi(): Api {
     { name: 'サービス再起動', body: 'sudo systemctl restart {{service}}', send_enter: false },
   ];
   let forwards: ForwardInfo[] = [];
-  let appSettings: AppSettings = { updateCheck: true, sessionLog: false, sessionLogDir: '' };
+  let appSettings: AppSettings = { updateCheck: true, sessionLog: false, sessionLogDir: '', commandCompletion: true };
   const challengeHandlers = new Set<(c: Challenge) => void>();
   const stateHandlers = new Set<(e: SessionStateEvent) => void>();
   const sinks = new Map<string, DataSink>();
@@ -506,7 +506,7 @@ export function mockApi(): Api {
         emitState({ id, state: 'connected', message: 'ローカル端末' });
         banner(id);
       }, 50);
-      return { id, label: 'CMD' };
+      return { id, label: 'CMD', shell: 'cmd' };
     },
     connect: async (index, _cols, _rows, sink): Promise<SessionInfo> => {
       const id = `ssh-${next++}`;
@@ -526,11 +526,11 @@ export function mockApi(): Api {
         };
         challengeHandlers.forEach((h) => h(challenge));
       }, 50);
-      return { id, label: p.name || p.host };
+      return { id, label: p.name || p.host, shell: 'posix' };
     },
     input: async (id, data) => {
-      // 打った文字をそのまま返し、Enterで次の行へ進める。
-      write(id, data.replace(/\r/g, '\r\n'));
+      // 打った文字をそのまま返し、Enterで次の行へ進める。後退は画面の文字を1つ消す。
+      write(id, data.replace(/\x7f/g, '\b \b').replace(/\r/g, '\r\n'));
       if (data.includes('\r')) prompt(id);
     },
     resize: async () => {},

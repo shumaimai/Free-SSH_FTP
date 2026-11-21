@@ -13,6 +13,8 @@ pub struct Settings {
     pub update_check: bool,
     pub session_log: bool,
     pub session_log_dir: String,
+    /// 端末のコマンド補完（組み込みの辞書から灰色の続きを出す）。既定は有効。
+    pub command_completion: bool,
 }
 
 impl Settings {
@@ -31,6 +33,10 @@ impl Settings {
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_owned(),
+            command_completion: map
+                .get("command_completion")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
         }
     }
 }
@@ -44,6 +50,7 @@ pub fn read(state: &AppState) -> Settings {
             update_check: true,
             session_log: false,
             session_log_dir: String::new(),
+            command_completion: true,
         })
 }
 
@@ -82,6 +89,10 @@ pub fn settings_set(state: State<'_, AppState>, settings: Settings) -> Result<()
             snapshot
                 .settings
                 .insert("session_log_dir".into(), Value::String(dir));
+            snapshot.settings.insert(
+                "command_completion".into(),
+                Value::Bool(settings.command_completion),
+            );
             Ok(())
         })
         .map_err(|error| error.to_string())?;
@@ -147,4 +158,29 @@ pub fn update_open_page(state: State<'_, AppState>) -> Result<(), String> {
         .clone()
         .ok_or("新しい版はありません")?;
     crate::browser::open(&info.url)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_completion_defaults_to_on_when_absent() {
+        // 保存キーが無い以前の設定ファイルでも、既定は有効。
+        let map = serde_json::Map::new();
+        assert!(Settings::from_map(&map).command_completion);
+    }
+
+    #[test]
+    fn settings_round_trip_keeps_command_completion() {
+        let mut map = serde_json::Map::new();
+        map.insert("command_completion".into(), Value::Bool(false));
+        let settings = Settings::from_map(&map);
+        assert!(!settings.command_completion);
+        // 画面へ返すJSONはcamelCaseのキーで往復する。
+        let value = serde_json::to_value(&settings).unwrap();
+        assert_eq!(value["commandCompletion"], Value::Bool(false));
+        let back: Settings = serde_json::from_value(value).unwrap();
+        assert_eq!(back, settings);
+    }
 }
