@@ -3,4 +3,5 @@ export default {
   '各行がコマンドとして実行されることがあります。内容を確認してください。': 'Each line may run as a command. Check the content.',
   'やめる': 'Cancel',
   '貼り付ける': 'Paste',
+  'コマンドの候補': 'Command candidates',
 } as Record<string, string>;

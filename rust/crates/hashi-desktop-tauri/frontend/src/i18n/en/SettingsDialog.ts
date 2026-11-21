@@ -8,6 +8,8 @@ export default {
   '保存先（空なら設定フォルダ/logs）': 'Save to (empty: settings folder/logs)',
   '参照': 'Browse',
   '改行で確定した行だけを記録します。vimなどの全画面表示は記録しません。新しい接続から適用します。': 'Only lines ended by a line break are recorded. Full-screen programs such as vim are not recorded. Applies to new connections.',
+  'コマンド補完': 'Command completion',
+  '入力中に、組み込みの辞書からコマンドの続きを灰色で表示します。→キーで確定、Ctrl+Spaceで候補の一覧を開きます。': 'Shows the rest of a command in gray from the built-in dictionary while you type. Press → to accept, Ctrl+Space for a list of candidates.',
   'テーマ': 'Theme',
   'アクセント色': 'Accent color',
   '画面のフォント': 'Interface font',

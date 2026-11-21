@@ -1,4 +1,6 @@
 // Rust側（hashi-storage::config::Profile ほか）と同じ形。変えるときは両方を直す。
+import type { ShellKind } from './completion/types.ts';
+
 export interface Profile {
   name: string;
   host: string;
@@ -62,6 +64,8 @@ export interface SessionStateEvent {
 export interface SessionInfo {
   id: string;
   label: string;
+  /** コマンド補完の辞書を選ぶシェルの種類。SSH先はposix、Windowsのローカル端末はcmd。 */
+  shell: ShellKind;
 }
 
 export type DataSink = (bytes: Uint8Array) => void;
@@ -230,6 +234,7 @@ export interface AppSettings {
   updateCheck: boolean;
   sessionLog: boolean;
   sessionLogDir: string;
+  commandCompletion: boolean;
 }
 
 export interface UpdateInfo {
