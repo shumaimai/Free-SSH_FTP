@@ -141,6 +141,8 @@ export function App({ api }: { api: Api }) {
   useLanguage(); // 言語を切り替えたら全体を描き直す
   const systemDark = useDark();
   const [appearance, setAppearance] = useState<Appearance>(DEFAULT_APPEARANCE);
+  // 端末のコマンド補完。読み込めなくても既定(有効)で動かす。
+  const [completion, setCompletion] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [dockOpen, setDockOpen] = useState(false);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
@@ -216,6 +218,10 @@ export function App({ api }: { api: Api }) {
       setStartupError(r.error);
     });
     void api.updateStatus().then((u) => u && setUpdate(u));
+    void api
+      .settingsGet()
+      .then((s) => setCompletion(s.commandCompletion))
+      .catch(() => undefined);
     const subscriptions: Array<Promise<() => void>> = [
       api.onUpdateAvailable(setUpdate),
       api.onSessionLogError((e) => setNotice(e.message)),
@@ -584,6 +590,7 @@ export function App({ api }: { api: Api }) {
                 active={active === tab.key}
                 dark={dark}
                 appearance={appearance}
+                completion={completion}
                 start={(size, sink) =>
                   tab.kind === 'local'
                     ? api.openLocal(size.cols, size.rows, sink)
@@ -721,6 +728,7 @@ export function App({ api }: { api: Api }) {
         value={appearance}
         dark={dark}
         onChange={changeAppearance}
+        onGeneralChange={(s) => setCompletion(s.commandCompletion)}
         onClose={() => setSettingsOpen(false)}
       />
       <KeygenDialog api={api} open={keygenOpen} registerSession={filesSessionId} onClose={() => setKeygenOpen(false)} />
