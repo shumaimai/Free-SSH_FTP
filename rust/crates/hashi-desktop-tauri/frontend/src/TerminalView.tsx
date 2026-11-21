@@ -348,7 +348,15 @@ export function TerminalView({ api, active, dark, appearance, completion, start,
         return true;
       }
       // 一覧を開くのは Ctrl+Space だけ。Tab・Enter・矢印は端末(リモートのシェル)のものとして奪わない。
-      if (e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey && (e.key === ' ' || e.code === 'Space')) {
+      // 補完がOFFのときは Ctrl+Space もシェルへ渡す(readline の set-mark など)。
+      if (
+        latest.current.completion &&
+        e.ctrlKey &&
+        !e.altKey &&
+        !e.shiftKey &&
+        !e.metaKey &&
+        (e.key === ' ' || e.code === 'Space')
+      ) {
         e.preventDefault();
         openMenu();
         return false;
