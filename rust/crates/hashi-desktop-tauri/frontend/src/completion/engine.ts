@@ -122,8 +122,11 @@ export function complete(shell: ShellKind, line: string, limit = 50): Completion
   }
 
   const dict = dictFor(shell);
-  const fold = (s: string) => (posix ? s : s.toLowerCase()); // cmd は大小文字を区別しない
-  const findChild = (list: DictNode[] | undefined, tok: string) => list?.find((n) => fold(n.word) === fold(tok));
+  // 照合キー。cmd は大小文字を区別しないが、`-` で始まるオプション語は区別する
+  // (ssh の -l と -L、curl の -o と -O のように大小文字で意味が違う)。
+  // `/` オプションとコマンド名・サブコマンド名は従来どおり区別しない。
+  const keyOf = (s: string) => (!posix && !s.startsWith('-') ? s.toLowerCase() : s);
+  const findChild = (list: DictNode[] | undefined, tok: string) => list?.find((n) => keyOf(n.word) === keyOf(tok));
 
   // カーソルより前のトークンを左から読み、辞書上の現在位置を進める。
   let atStart = true; // 新しいコマンドの先頭にいる
@@ -163,7 +166,8 @@ export function complete(shell: ShellKind, line: string, limit = 50): Completion
       continue;
     }
     if (node === null) continue; // 未知コマンドの引数位置
-    if (tok.startsWith('-')) continue; // オプションはいくつ並んでもよい
+    // オプションはいくつ並んでもよい(cmd では / 始まりもオプション扱い。posix の / はパスなので位置引数)。
+    if (tok.startsWith('-') || (!posix && tok.startsWith('/'))) continue;
     const sub: DictNode | undefined = subsOpen ? findChild(node.subs, tok) : undefined;
     if (sub) {
       node = sub;
@@ -184,13 +188,16 @@ export function complete(shell: ShellKind, line: string, limit = 50): Completion
     children = [...(subsOpen ? (node.subs ?? []) : []), ...[...optsPath].reverse().flat()];
   }
 
-  const prefix = fold(lastToken);
+  const prefix = keyOf(lastToken);
   const items: Candidate[] = [];
+  const seen = new Set<string>(); // 親とサブコマンドで同名オプションがあるとき 1 回だけ出す(先に出た=内側のものを残す)
   for (const child of children) {
     if (items.length >= limit) break;
-    const w = fold(child.word);
+    const w = keyOf(child.word);
     if (!w.startsWith(prefix)) continue;
     if (w === prefix) continue; // 完全一致は続きが無いので出さない
+    if (seen.has(w)) continue;
+    seen.add(w);
     // insert は「打った文字はそのままに残りだけ」(cmd で IPCO → nfig)。
     items.push({ word: child.word, insert: child.word.slice(lastToken.length), description: child.desc });
   }

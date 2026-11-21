@@ -134,12 +134,20 @@ test('echoConfirmed: 画面のカーソル前が行で終わるか', () => {
 });
 
 test('looksLikeSecretPrompt: パスワード等の入力欄を検知', () => {
+  // 末尾が `:` や `?` の入力待ちに見えるものは true
   assert.equal(looksLikeSecretPrompt("user@host's password:"), true);
-  assert.equal(looksLikeSecretPrompt('Enter passphrase for key ~/.ssh/id_ed25519:'), true);
-  assert.equal(looksLikeSecretPrompt('[sudo] password for user:'), true);
+  assert.equal(looksLikeSecretPrompt('Password: '), true);
+  assert.equal(looksLikeSecretPrompt("Enter passphrase for key '/home/u/.ssh/id_ed25519': "), true);
+  assert.equal(looksLikeSecretPrompt('[sudo] password for u: '), true);
   assert.equal(looksLikeSecretPrompt('Enter PIN:'), true);
-  assert.equal(looksLikeSecretPrompt('Verification code:'), true);
-  assert.equal(looksLikeSecretPrompt('パスワード:'), true);
+  assert.equal(looksLikeSecretPrompt('PIN: '), true);
+  assert.equal(looksLikeSecretPrompt('Verification code: '), true);
+  assert.equal(looksLikeSecretPrompt('Token:'), true);
+  assert.equal(looksLikeSecretPrompt('パスワード: '), true); // i18n-ignore: 照合用
+  // 普通のプロンプト(語が末尾の :/? に結び付かない)は false
   assert.equal(looksLikeSecretPrompt('user@host:~$ ls'), false);
-  assert.equal(looksLikeSecretPrompt('spinning up worker'), false); // 'pin' は単語境界で見る
+  assert.equal(looksLikeSecretPrompt('u@h:~/password-tool$ '), false); // ディレクトリ名で誤爆しない
+  assert.equal(looksLikeSecretPrompt('C:\\pins> '), false);
+  assert.equal(looksLikeSecretPrompt('u@h:~$ '), false);
+  assert.equal(looksLikeSecretPrompt('spinning up worker'), false);
 });

@@ -209,3 +209,40 @@ test('cmd: サブコマンド(net use)', () => {
 test('cmd: 区切りの後は新しいコマンド', () => {
   assert.equal(complete('cmd', 'dir & ip').items[0].word, 'ipconfig');
 });
+
+test('親とサブコマンドの同名オプションは1回だけ出す', () => {
+  const p = complete('posix', 'git add -').items.filter((i) => i.word === '-p');
+  assert.equal(p.length, 1);
+  assert.equal(p[0].description, '変更を選んでステージ'); // 内側(git add)の説明を残す
+  const v = complete('posix', 'docker run -').items.filter((i) => i.word === '-v');
+  assert.equal(v.length, 1);
+  assert.equal(v[0].description, 'ボリュームをマウント'); // docker の -v(バージョン)は出さない
+  const f = complete('posix', 'docker compose logs -').items.filter((i) => i.word === '-f');
+  assert.equal(f.length, 1);
+  assert.equal(f[0].description, '新着を追い続ける'); // compose の -f(ファイル指定)は出さない
+});
+
+test('cmd: / オプションも位置引数にしない(その後もサブコマンドを出す)', () => {
+  // /foo はオプション扱いで読み飛ばすので、次の u で use が候補になる
+  assert.ok(words('cmd', 'net /foo u').includes('use'));
+  // posix の / はパス(位置引数)なので、その後はサブコマンドを出さない
+  assert.ok(!words('posix', 'git /x st').includes('status'));
+});
+
+test('cmd: - で始まるオプションは大小文字を区別する', () => {
+  // ssh の -l(ユーザー名)と -L(ローカルフォワード)は別物
+  const afterL = words('cmd', 'ssh -l');
+  assert.ok(!afterL.includes('-L'));
+  assert.ok(!afterL.includes('-l')); // 完全一致は除く
+  assert.ok(!words('cmd', 'ssh -L').includes('-l'));
+  // curl の -o と -O も別物
+  assert.ok(!words('cmd', 'curl -o').includes('-O'));
+  assert.ok(!words('cmd', 'curl -O').includes('-o'));
+  // `-` だけなら大小両方が出る(重複除去も大小文字を区別する)
+  const all = words('cmd', 'ssh -');
+  assert.ok(all.includes('-l'));
+  assert.ok(all.includes('-L'));
+  // / オプションとサブコマンドは従来どおり区別しない
+  assert.equal(complete('cmd', 'IPCONFIG /FLU').items[0].word, '/flushdns');
+  assert.ok(words('cmd', 'NET U').includes('use'));
+});

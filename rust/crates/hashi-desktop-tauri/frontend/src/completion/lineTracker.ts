@@ -56,16 +56,11 @@ export function echoConfirmed(screenBeforeCursor: string, line: string): boolean
   return screenBeforeCursor.endsWith(line);
 }
 
+// [sudo] 以外の語は「プロンプト部分の末尾」(`:` や `?` で終わる)に出るときだけ疑う。
+// `u@h:~/password-tool$ ` のようなパス名での誤爆を避けるため。
+const SECRET_TAIL_RE = /(?:password|passphrase|passcode|verification code|secret|token|otp|\bpin\b|パスワード)[^$#%>]*[:?？：]\s*$/i; // i18n-ignore: 画面の文言ではなく照合用
+
 /** カーソル行がパスワード等の入力欄に見えるか。見えるなら候補を出さない。 */
 export function looksLikeSecretPrompt(screenLine: string): boolean {
-  const s = screenLine.toLowerCase();
-  return (
-    s.includes('password') ||
-    s.includes('passphrase') ||
-    s.includes('passcode') ||
-    s.includes('verification code') ||
-    s.includes('[sudo]') ||
-    /\bpin\b/.test(s) || // "spinning" 等の誤爆を避けるため単語境界で見る
-    s.includes('パスワード') // i18n-ignore: 画面の文言ではなく照合用
-  );
+  return screenLine.toLowerCase().includes('[sudo]') || SECRET_TAIL_RE.test(screenLine);
 }
